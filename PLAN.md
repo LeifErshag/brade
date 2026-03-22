@@ -309,8 +309,8 @@ All UI text, labels, win type names, and rules reference available in both Swedi
 | Phase 4 — Five-Prime & Forcing | ✅ Done | Forceable points, forced jan, junker, visual cues |
 | Phase 5 — AI Opponents | ✅ Done | Beginner/Journeyman/Master, AI dice display, move animation |
 | Phase 6 — UX Polish & Game Modes | ✅ Done | Move log, rules reference, undo, match length, random opponent |
-| Phase 7 — Infrastructure & CI/CD | ⏳ Pending | |
-| Phase 8 — OAuth Auth | ⏳ Pending | |
+| Phase 7 — Infrastructure & CI/CD | ✅ Done | |
+| Phase 8 — OAuth Auth | ✅ Done | |
 | Phase 9 — Game Rooms & Invitations | ⏳ Pending | |
 | Phase 10 — WebSocket Game Server | ⏳ Pending | |
 | Phase 11 — Match History & ELO | ⏳ Pending | |

@@ -15,8 +15,7 @@ function makeOAuthHandler(provider) {
         `INSERT INTO users (oauth_provider, oauth_id, display_name, avatar_url)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (oauth_provider, oauth_id)
-         DO UPDATE SET display_name = EXCLUDED.display_name,
-                       avatar_url   = EXCLUDED.avatar_url
+         DO UPDATE SET avatar_url = EXCLUDED.avatar_url
          RETURNING id, display_name, elo`,
         [provider, oauthId, name, avatar]
       );
