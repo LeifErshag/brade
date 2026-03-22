@@ -1,16 +1,18 @@
 import { WebSocketServer } from "ws";
 import { verifyAccessToken } from "../auth/tokens.js";
 import { handleMessage } from "./handlers.js";
+import { getRedis, keys, TTL } from "../db/redis.js";
+import { query } from "../db/postgres.js";
 
 // rooms: Map<roomId, Set<{ws, userId}>>
-const rooms = new Map();
+export const rooms = new Map();
+// userConnections: Map<userId, Set<ws>> — for in-app invite delivery
+export const userConnections = new Map();
 
 export function initWebSocketServer(httpServer) {
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
-  wss.on("connection", (ws, req) => {
-    // Auth: expect token in query string ?token=...
-    // (Access token only — short-lived, so safe to pass in URL once)
+  wss.on("connection", async (ws, req) => {
     const url    = new URL(req.url, "http://localhost");
     const token  = url.searchParams.get("token");
     const roomId = url.searchParams.get("room");
@@ -25,42 +27,85 @@ export function initWebSocketServer(httpServer) {
       ws.close(4001, "Invalid token"); return;
     }
 
-    // Validate roomId format
     if (!/^[A-Z0-9]{8}$/.test(roomId)) { ws.close(4002, "Invalid room"); return; }
 
-    // Join room channel
+    const redis = getRedis();
+    const rawRoom = await redis.get(keys.room(roomId));
+    if (!rawRoom) { ws.close(4003, "Room not found"); return; }
+
+    let room = JSON.parse(rawRoom);
+
+    // Auto-assign black seat if empty and this is not the white player
+    if (!room.players.black && room.players.white !== userId) {
+      const { rows: [player] } = await query(
+        `SELECT display_name, avatar_url FROM users WHERE id = $1`,
+        [userId]
+      );
+      room.players.black = userId;
+      room.playerInfo    = room.playerInfo ?? { white: null, black: null };
+      room.playerInfo.black = {
+        display_name: player?.display_name ?? "Player",
+        avatar_url:   player?.avatar_url   ?? null,
+      };
+      await redis.set(keys.room(roomId), JSON.stringify(room), "EX", TTL.room);
+    }
+
+    // Add to rooms and userConnections before broadcasting so count is accurate
     if (!rooms.has(roomId)) rooms.set(roomId, new Set());
     const client = { ws, userId };
     rooms.get(roomId).add(client);
 
+    if (!userConnections.has(userId)) userConnections.set(userId, new Set());
+    userConnections.get(userId).add(ws);
+
+    // Send full room state to every client in the room (including new arrival)
+    broadcastState(roomId, room);
+
     ws.on("message", async (data) => {
       let msg;
-      try { msg = JSON.parse(data); } catch { return; } // ignore malformed messages
-      await handleMessage({ msg, userId, roomId, rooms, ws });
+      try { msg = JSON.parse(data); } catch { return; }
+      await handleMessage({ msg, userId, roomId, ws });
     });
 
     ws.on("close", () => {
       rooms.get(roomId)?.delete(client);
       if (rooms.get(roomId)?.size === 0) rooms.delete(roomId);
-      broadcastToRoom(roomId, rooms, { type: "PLAYER_DISCONNECTED", userId });
+
+      userConnections.get(userId)?.delete(ws);
+      if (userConnections.get(userId)?.size === 0) userConnections.delete(userId);
+
+      broadcastToRoom(roomId, { type: "PLAYER_DISCONNECTED", userId });
     });
 
     ws.on("error", (err) => console.error(`WS error [${roomId}]:`, err.message));
-
-    // Acknowledge connection
-    send(ws, { type: "CONNECTED", userId, roomId });
   });
 
   console.log("WebSocket server initialised");
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
 export function send(ws, payload) {
   if (ws.readyState === 1) ws.send(JSON.stringify(payload));
 }
 
-export function broadcastToRoom(roomId, rooms, payload, excludeUserId = null) {
+// Signature changed: rooms is now module-level, no longer passed as argument
+export function broadcastToRoom(roomId, payload, excludeUserId = null) {
   rooms.get(roomId)?.forEach(({ ws, userId }) => {
     if (userId !== excludeUserId) send(ws, payload);
   });
+}
+
+// Broadcasts ROOM_STATE with live spectator count (not persisted to Redis)
+export function broadcastState(roomId, room) {
+  const connected = rooms.get(roomId);
+  const playerIds = [room.players.white, room.players.black].filter(Boolean);
+  const spectatorCount = connected
+    ? [...connected].filter(c => !playerIds.includes(c.userId)).length
+    : 0;
+  broadcastToRoom(roomId, { type: "ROOM_STATE", room, spectatorCount });
+}
+
+export function sendToUser(userId, payload) {
+  userConnections.get(userId)?.forEach(ws => send(ws, payload));
 }

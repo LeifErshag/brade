@@ -9,28 +9,39 @@ import { query } from "../db/postgres.js";
 const router = Router();
 
 const CreateGameSchema = z.object({
-  matchLength: z.number().int().min(1).max(7).default(5),
+  matchLength: z.union([
+    z.literal(1), z.literal(3), z.literal(5), z.literal(7),
+  ]).default(5),
 });
 
 // ── POST /api/games — create a new game room ──────────────────────────────────
 router.post("/", requireAuth, validate(CreateGameSchema), async (req, res) => {
   const { matchLength } = req.body;
-  const roomId = uuid().slice(0, 8).toUpperCase(); // e.g. "A3F9B2C1"
+  const roomId = uuid().slice(0, 8).toUpperCase();
+
+  const { rows: [creator] } = await query(
+    `SELECT display_name, avatar_url FROM users WHERE id = $1`,
+    [req.userId]
+  );
 
   const roomState = {
     roomId,
     matchLength,
     createdBy: req.userId,
-    players: { white: req.userId, black: null },
-    status: "waiting",          // waiting | playing | finished
-    gameState: null,            // populated when game starts
+    players:    { white: req.userId, black: null },
+    playerInfo: {
+      white: { display_name: creator?.display_name ?? "Player", avatar_url: creator?.avatar_url ?? null },
+      black: null,
+    },
+    ready:     { white: false, black: false },
+    status:    "waiting",
+    gameState: null,
     createdAt: Date.now(),
   };
 
   const redis = getRedis();
   await redis.set(keys.room(roomId), JSON.stringify(roomState), "EX", TTL.room);
 
-  // Also store in postgres for history (without full game state)
   await query(
     `INSERT INTO games (room_id, white_id, match_length) VALUES ($1, $2, $3)`,
     [roomId, req.userId, matchLength]
@@ -43,7 +54,6 @@ router.post("/", requireAuth, validate(CreateGameSchema), async (req, res) => {
 // ── GET /api/games/:roomId — get room info ────────────────────────────────────
 router.get("/:roomId", requireAuth, async (req, res) => {
   const { roomId } = req.params;
-  // Validate roomId format — 8 alphanumeric chars
   if (!/^[A-Z0-9]{8}$/.test(roomId)) {
     return res.status(400).json({ error: "Invalid room ID" });
   }
@@ -51,13 +61,17 @@ router.get("/:roomId", requireAuth, async (req, res) => {
   const raw = await redis.get(keys.room(roomId));
   if (!raw) return res.status(404).json({ error: "Room not found or expired" });
   const room = JSON.parse(raw);
-  // Don't expose internal state fields to non-participants
   const isParticipant = [room.players.white, room.players.black].includes(req.userId);
   if (!isParticipant && room.status !== "waiting") {
     return res.status(403).json({ error: "Forbidden" });
   }
-  return res.json({ roomId: room.roomId, status: room.status,
-    matchLength: room.matchLength, players: room.players });
+  return res.json({
+    roomId:      room.roomId,
+    status:      room.status,
+    matchLength: room.matchLength,
+    players:     room.players,
+    playerInfo:  room.playerInfo,
+  });
 });
 
 // ── GET /api/games — current user's match history ─────────────────────────────

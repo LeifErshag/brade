@@ -1,4 +1,5 @@
-import { Link } from "react-router-dom";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../AuthContext.jsx";
 
 const API = import.meta.env.VITE_API_URL ?? "";
@@ -9,9 +10,9 @@ const S = {
     alignItems: "center", justifyContent: "center", fontFamily: "Georgia, serif",
   },
   center: { textAlign: "center" },
-  title: { color: "#e8b86d", fontSize: 48, letterSpacing: 4, margin: 0 },
+  title:    { color: "#e8b86d", fontSize: 48, letterSpacing: 4, margin: 0 },
   subtitle: { color: "#a07840", fontSize: 16, marginTop: 8 },
-  row: { marginTop: 32, display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" },
+  row:      { marginTop: 32, display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" },
   btnPrimary: {
     background: "#6b3a10", color: "#e8b86d", padding: "10px 24px",
     borderRadius: 8, textDecoration: "none", fontSize: 14, border: "none", cursor: "pointer",
@@ -27,11 +28,67 @@ const S = {
     color: "#e8b86d", fontSize: 22, fontFamily: "Georgia, serif",
   },
   name: { color: "#e8b86d", fontSize: 18, marginTop: 12 },
-  elo: { color: "#a07840", fontSize: 13, marginTop: 4 },
+  elo:  { color: "#a07840", fontSize: 13, marginTop: 4 },
+  divider: { borderColor: "#4a2800", margin: "28px auto", width: "60%" },
+  playSection: { marginTop: 8 },
+  sectionLabel: { color: "#a07840", fontSize: 13, marginBottom: 10 },
+  playRow: { display: "flex", gap: 10, justifyContent: "center", alignItems: "center", flexWrap: "wrap" },
+  select: {
+    background: "#3a1a00", color: "#e8b86d", border: "1px solid #6b3a10",
+    borderRadius: 6, padding: "8px 12px", fontSize: 13, cursor: "pointer",
+  },
+  input: {
+    background: "#3a1a00", color: "#e8b86d", border: "1px solid #6b3a10",
+    borderRadius: 6, padding: "8px 12px", fontSize: 13, width: 130, textTransform: "uppercase",
+    outline: "none",
+  },
+  error: { color: "#c0392b", fontSize: 12, marginTop: 6 },
 };
 
 export default function Home() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading, logout, authFetch } = useAuth();
+  const navigate = useNavigate();
+
+  const [matchLength, setMatchLength] = useState(5);
+  const [creating, setCreating]       = useState(false);
+  const [roomCode, setRoomCode]       = useState("");
+  const [joinError, setJoinError]     = useState(null);
+  const [joining, setJoining]         = useState(false);
+
+  async function handleCreate() {
+    setCreating(true);
+    try {
+      const res = await authFetch("/api/games", {
+        method: "POST",
+        body: JSON.stringify({ matchLength }),
+      });
+      const data = await res.json();
+      if (res.ok) navigate(`/game/${data.roomId}`);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleJoin() {
+    const code = roomCode.trim().toUpperCase();
+    if (!/^[A-Z0-9]{8}$/.test(code)) {
+      setJoinError("Room codes are 8 characters (A–Z, 0–9)");
+      return;
+    }
+    setJoinError(null);
+    setJoining(true);
+    try {
+      const res = await authFetch(`/api/games/${code}`);
+      if (res.ok) {
+        navigate(`/game/${code}`);
+      } else {
+        const body = await res.json().catch(() => ({}));
+        setJoinError(body.error ?? "Room not found");
+      }
+    } finally {
+      setJoining(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -57,9 +114,52 @@ export default function Home() {
               <p style={S.name}>{user.display_name}</p>
               <p style={S.elo}>ELO {user.elo} · {user.wins}W {user.losses}L</p>
             </div>
+
             <div style={S.row}>
-              <Link to="/profile" style={S.btnPrimary}>Profile</Link>
+              <Link to="/profile" style={S.btnSecondary}>Profile</Link>
               <button style={S.btnSecondary} onClick={logout}>Sign out</button>
+            </div>
+
+            <hr style={S.divider} />
+
+            {/* ── Play ── */}
+            <div style={S.playSection}>
+              <p style={S.sectionLabel}>Create a game</p>
+              <div style={S.playRow}>
+                <select
+                  value={matchLength}
+                  onChange={e => setMatchLength(Number(e.target.value))}
+                  style={S.select}
+                  aria-label="Match length"
+                >
+                  <option value={1}>1 game</option>
+                  <option value={3}>Best of 3</option>
+                  <option value={5}>Best of 5</option>
+                  <option value={7}>Best of 7</option>
+                </select>
+                <button onClick={handleCreate} disabled={creating} style={S.btnPrimary}>
+                  {creating ? "Creating…" : "Create Game"}
+                </button>
+              </div>
+
+              <p style={{ ...S.sectionLabel, marginTop: 20 }}>Join with code</p>
+              <div style={S.playRow}>
+                <input
+                  style={S.input}
+                  placeholder="ROOM CODE"
+                  maxLength={8}
+                  value={roomCode}
+                  onChange={e => {
+                    setJoinError(null);
+                    setRoomCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""));
+                  }}
+                  onKeyDown={e => e.key === "Enter" && handleJoin()}
+                />
+                <button onClick={handleJoin} disabled={joining} style={S.btnPrimary}>
+                  {joining ? "Joining…" : "Join"}
+                </button>
+              </div>
+              {joinError && <p style={S.error}>{joinError}</p>}
             </div>
           </>
         ) : (

@@ -39,6 +39,19 @@ router.get("/leaderboard", async (_req, res) => {
   return res.json(rows);
 });
 
+// ── GET /api/users/search?q=name — find users by display name ────────────────
+router.get("/search", requireAuth, async (req, res) => {
+  const q = (req.query.q ?? "").trim();
+  if (q.length < 2) return res.status(400).json({ error: "Query must be at least 2 characters" });
+  const { rows } = await query(
+    `SELECT id, display_name, avatar_url FROM users
+     WHERE display_name ILIKE $1 AND id != $2
+     ORDER BY display_name LIMIT 10`,
+    [`%${q}%`, req.userId]
+  );
+  return res.json(rows);
+});
+
 router.get("/:id", async (req, res) => {
   const { rows } = await query(
     `SELECT display_name, avatar_url, elo, wins, losses FROM users WHERE id = $1`,
