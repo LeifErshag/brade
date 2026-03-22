@@ -10,7 +10,7 @@ import { connectPostgres } from "./db/postgres.js";
 import authRoutes from "./routes/auth.js";
 import gameRoutes from "./routes/games.js";
 import userRoutes from "./routes/users.js";
-import { rateLimitApi } from "./middleware/rateLimit.js";
+import { rateLimitApi } from "./middleware/ratelimit.js";
 
 const app = express();
 const httpServer = createServer(app);

@@ -6,7 +6,7 @@ import {
   isRefreshTokenValid, verifyRefreshToken,
   setRefreshCookie, clearRefreshCookie,
 } from "../auth/tokens.js";
-import { rateLimitAuth } from "../middleware/rateLimit.js";
+import { rateLimitAuth } from "../middleware/ratelimit.js";
 
 const router = Router();
 const CLIENT = process.env.CLIENT_ORIGIN;

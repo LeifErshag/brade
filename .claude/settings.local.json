@@ -10,7 +10,13 @@
       "Bash(powershell.exe -NonInteractive -File /tmp/fix_encoding.ps1)",
       "Bash(/tmp/verify.ps1:*)",
       "Bash(powershell.exe -NonInteractive -File /tmp/verify.ps1)",
-      "Bash(powershell.exe -NonInteractive -Command \"& { $ErrorActionPreference=''Stop''; try { $null = [System.Management.Automation.Language.Parser]::ParseFile\\(''C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\setup-project.ps1'', [ref]$null, [ref]$null\\); Write-Output ''Parse: OK'' } catch { Write-Output \"\"Error: $_\"\" } }\")"
+      "Bash(powershell.exe -NonInteractive -Command \"& { $ErrorActionPreference=''Stop''; try { $null = [System.Management.Automation.Language.Parser]::ParseFile\\(''C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\setup-project.ps1'', [ref]$null, [ref]$null\\); Write-Output ''Parse: OK'' } catch { Write-Output \"\"Error: $_\"\" } }\")",
+      "mcp__render__get_selected_workspace",
+      "mcp__render__list_deploys",
+      "mcp__render__list_logs",
+      "Bash(python3 -c \":*)",
+      "Bash(node -e \":*)",
+      "Bash(powershell.exe -Command \":*)"
     ]
   }
 }
