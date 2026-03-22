@@ -16,7 +16,8 @@
       "mcp__render__list_logs",
       "Bash(python3 -c \":*)",
       "Bash(node -e \":*)",
-      "Bash(powershell.exe -Command \":*)"
+      "Bash(powershell.exe -Command \":*)",
+      "Bash(npm install:*)"
     ]
   }
 }

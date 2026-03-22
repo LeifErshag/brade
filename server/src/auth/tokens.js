@@ -40,10 +40,12 @@ export async function isRefreshTokenValid(userId, token) {
 
 // Set refresh token as httpOnly cookie — never accessible to JS
 export function setRefreshCookie(res, token) {
+  // Client (brade.ershag.se) and server (*.onrender.com) are cross-site, so
+  // SameSite=none is required.  Secure=true is enforced in production.
   res.cookie("refresh_token", token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days ms
     path: "/auth/refresh",            // only sent to refresh endpoint
   });

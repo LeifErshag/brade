@@ -3,6 +3,7 @@ import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import cookieParser from "cookie-parser";
+import session from "express-session";
 import { createServer } from "http";
 import { initWebSocketServer } from "./ws/server.js";
 import { connectRedis } from "./db/redis.js";
@@ -15,8 +16,21 @@ import { rateLimitApi } from "./middleware/ratelimit.js";
 const app = express();
 const httpServer = createServer(app);
 
+// Render.com (and most PaaS) sit behind a proxy — trust it so that
+// express-rate-limit sees the real client IP and cookies get Secure flag right.
+app.set("trust proxy", 1);
+
 // ── Security middleware ───────────────────────────────────────────────────────
 app.use(helmet());
+// passport-oauth2 needs a session to store & verify the OAuth state parameter
+// (CSRF protection).  We only use it for the brief OAuth redirect/callback flow;
+// persistent auth is handled by JWT + httpOnly refresh-token cookie.
+app.use(session({
+  secret: process.env.COOKIE_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: { secure: process.env.NODE_ENV === "production", sameSite: "lax", maxAge: 5 * 60 * 1000 },
+}));
 app.use(cors({
   origin: process.env.CLIENT_ORIGIN,
   credentials: true,               // allow httpOnly cookies cross-origin
