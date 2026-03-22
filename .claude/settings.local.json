@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell.exe -File:*)",
+      "Bash(/tmp/check_bytes.ps1:*)",
+      "Read(//mnt/c/Users/Leif/**)",
+      "Bash(/tmp/test_extract.ps1:*)",
+      "Bash(powershell.exe -NonInteractive -File /tmp/test_extract.ps1)",
+      "Bash(/tmp/fix_encoding.ps1:*)",
+      "Bash(powershell.exe -NonInteractive -File /tmp/fix_encoding.ps1)",
+      "Bash(/tmp/verify.ps1:*)",
+      "Bash(powershell.exe -NonInteractive -File /tmp/verify.ps1)",
+      "Bash(powershell.exe -NonInteractive -Command \"& { $ErrorActionPreference=''Stop''; try { $null = [System.Management.Automation.Language.Parser]::ParseFile\\(''C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\setup-project.ps1'', [ref]$null, [ref]$null\\); Write-Output ''Parse: OK'' } catch { Write-Output \"\"Error: $_\"\" } }\")"
+    ]
+  }
+}
