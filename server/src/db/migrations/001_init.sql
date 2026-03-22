@@ -1,4 +1,4 @@
-﻿CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE IF NOT EXISTS users (
   id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   oauth_provider VARCHAR(20) NOT NULL,
   oauth_id       VARCHAR(255) NOT NULL,

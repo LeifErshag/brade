@@ -35,7 +35,8 @@ async function runMigrations() {
     );
     if (rows.length) continue; // already applied
 
-    const sql = await fs.readFile(path.join(MIGRATIONS_DIR, filename), "utf8");
+    const raw = await fs.readFile(path.join(MIGRATIONS_DIR, filename), "utf8");
+    const sql = raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw; // strip BOM if present
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
