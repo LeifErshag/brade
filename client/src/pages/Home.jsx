@@ -1,6 +1,8 @@
 import { Link } from "react-router-dom";
 import { useAuth } from "../AuthContext.jsx";
 
+const API = import.meta.env.VITE_API_URL ?? "";
+
 const S = {
   page: {
     background: "#2a1400", minHeight: "100vh", display: "flex",
@@ -62,8 +64,8 @@ export default function Home() {
           </>
         ) : (
           <div style={S.row}>
-            <a href="/auth/google" style={S.btnPrimary}>Sign in with Google</a>
-            <a href="/auth/github" style={S.btnSecondary}>Sign in with GitHub</a>
+            <a href={`${API}/auth/google`} style={S.btnPrimary}>Sign in with Google</a>
+            <a href={`${API}/auth/github`} style={S.btnSecondary}>Sign in with GitHub</a>
           </div>
         )}
       </div>
