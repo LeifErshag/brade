@@ -64,10 +64,8 @@ test("getLegalMoves from starting position with die [1]", () => {
   const gs = initGame();
   gs.dice = [1];
   const moves = getLegalMoves(gs, "white");
-  // White at index 23, die=1 → to index 22
+  // White at index 23, die=1 → to index 22 (empty, so closing restriction doesn't apply)
   expect(moves).toContainEqual({ from: 23, to: 22, die: 1 });
-  // Index 22 is in [13..22] for black's closing zone, but white landing there is fine
-  // (it's not white's closing zone which is [1..10])
 });
 
 test("getLegalMoves bar has priority", () => {
@@ -79,27 +77,88 @@ test("getLegalMoves bar has priority", () => {
   expect(moves.every(m => m.from === "bar")).toBe(true);
 });
 
-test("getLegalMoves white cannot close (make 2+) at indices 1-10", () => {
+// White closing restriction: forbidden zone is indices 13-22 (pts 14-23, own Q1+Q2 except head/huk)
+test("getLegalMoves white cannot close at indices 13-22 (own Q1+Q2)", () => {
   const gs = initGame();
   gs.board[23] = 13;
-  gs.board[5]  = 1;  // 1 white checker already at index 5
+  gs.board[14] = 1;  // 1 white at index 14 (pt 15, in forbidden zone)
+  gs.board[15] = 1;  // 1 white at index 15 — will try to move to 14
   gs.dice = [1];
-  // Moving from index 5 with die=1 → to index 4 (fine, index 4 is in [1..10] but index 4 has 0 white)
-  // Moving from index 6 with die=1 → to index 5, but index 5 already has 1 white → would make 2 → BLOCKED
-  gs.board[6] = 1;
+  // White at idx 15, die=1 → idx 14; idx 14 already has 1 white → closing in forbidden zone → BLOCKED
   const moves = getLegalMoves(gs, "white");
-  expect(moves.find(m => m.from === 6 && m.to === 5)).toBeUndefined();
+  expect(moves.find(m => m.from === 15 && m.to === 14)).toBeUndefined();
 });
 
-test("getLegalMoves black cannot close at indices 13-22", () => {
+test("getLegalMoves white CAN close in own home (indices 0-12)", () => {
+  const gs = initGame();
+  gs.board[23] = 13;
+  gs.board[5]  = 1;  // 1 white at index 5 (pt 6, own Q4 — allowed to close)
+  gs.board[6]  = 1;  // white at idx 6, will try to move to 5
+  gs.dice = [1];
+  const moves = getLegalMoves(gs, "white");
+  expect(moves.find(m => m.from === 6 && m.to === 5)).toBeDefined();
+});
+
+// Black closing restriction: forbidden zone is indices 1-10 (pts 2-11, own Q1+Q2 except head/huk)
+test("getLegalMoves black cannot close at indices 1-10 (own Q1+Q2)", () => {
   const gs = initGame();
   gs.board[0]  = -13;
-  gs.board[15] = -1;  // 1 black checker at index 15
-  gs.board[14] = -1;  // black at 14
+  gs.board[9]  = -1;  // 1 black at index 9 (pt 10, in forbidden zone)
+  gs.board[8]  = -1;  // black at idx 8, will move to 9
   gs.dice = [1];
-  // Moving from index 14 with die=1 → to index 15, already has 1 black → would be 2 → BLOCKED
+  // Black at idx 8, die=1 → idx 9; idx 9 already has 1 black → closing in forbidden zone → BLOCKED
   const moves = getLegalMoves(gs, "black");
-  expect(moves.find(m => m.from === 14 && m.to === 15)).toBeUndefined();
+  expect(moves.find(m => m.from === 8 && m.to === 9)).toBeUndefined();
+});
+
+test("getLegalMoves black CAN close in own home (indices 12-23)", () => {
+  const gs = initGame();
+  gs.board[0]  = -13;
+  gs.board[18] = -1;  // 1 black at index 18 (pt 19, own Q4 — allowed to close)
+  gs.board[17] = -1;  // black at idx 17, will try to move to 18
+  gs.dice = [1];
+  const moves = getLegalMoves(gs, "black");
+  expect(moves.find(m => m.from === 17 && m.to === 18)).toBeDefined();
+});
+
+test("getLegalMoves white can close HUK (idx 12 = pt 13) and HEAD (idx 23 = pt 24)", () => {
+  const gs = initGame();
+  gs.board[23] = 13;
+  gs.board[12] = 1;  // 1 white at huk (idx 12, pt 13)
+  gs.board[13] = 1;  // white at idx 13, will move to 12
+  gs.dice = [1];
+  const moves = getLegalMoves(gs, "white");
+  // HUK (idx 12) is NOT in forbidden range [13..22] → allowed
+  expect(moves.find(m => m.from === 13 && m.to === 12)).toBeDefined();
+});
+
+// Bar re-entry: cannot enter at own head if occupied
+test("getLegalMoves bar: cannot re-enter at white head (idx 23) when own checker there", () => {
+  const gs = initGame();
+  gs.board[23] = 14;  // 14 white at head
+  gs.bar.white = 1;
+  gs.dice = [1];  // die=1 → would enter at idx 23 (head)
+  const moves = getLegalMoves(gs, "white");
+  expect(moves.find(m => m.from === "bar" && m.to === 23)).toBeUndefined();
+});
+
+test("getLegalMoves bar: can re-enter at white head (idx 23) when it is empty", () => {
+  const gs = initGame();
+  gs.board[23] = 0;   // head is empty
+  gs.board[22] = 14;
+  gs.bar.white = 1;
+  gs.dice = [1];  // die=1 → enters at idx 23 (empty head → ok)
+  const moves = getLegalMoves(gs, "white");
+  expect(moves.find(m => m.from === "bar" && m.to === 23)).toBeDefined();
+});
+
+test("getLegalMoves bar: cannot re-enter at black head (idx 0) when own checker there", () => {
+  const gs = initGame();
+  gs.board[0]  = -14;  // 14 black at head
+  gs.bar.black = 1;
+  gs.dice = [1];  // die=1 → would enter at idx 0 (head)
+  const moves = getLegalMoves(gs, "black");
+  expect(moves.find(m => m.from === "bar" && m.to === 0)).toBeUndefined();
 });
 
 test("getLegalMoves bear-off exact", () => {

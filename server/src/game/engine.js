@@ -11,9 +11,14 @@
 //   white: indices 0-5   (points 1-6)
 //   black: indices 18-23 (points 19-24)
 //
-// Closing restriction (cannot make a "made point" = 2+ own checkers):
-//   white: forbidden at indices 1-10
-//   black: forbidden at indices 13-22
+// Closing restriction (cannot make a closed point = 2+ own checkers):
+//   Forbidden zone is your own Q1+Q2 (starting territory), EXCEPT head and huk:
+//   white: forbidden at indices 13-22  (pts 14-23; head=idx23/pt24 and huk=idx12/pt13 are allowed)
+//   black: forbidden at indices 1-10   (pts 2-11;  head=idx0/pt1   and huk=idx11/pt12 are allowed)
+//
+// Bar re-entry additional restriction:
+//   Cannot re-enter at own head point if any own checker is already there
+//   (white head = idx 23, black head = idx 0)
 
 export function initGame() {
   const board = new Array(24).fill(0);
@@ -53,11 +58,11 @@ export function canBearOff(gs, color) {
 function canLand(gs, color, idx) {
   const at = gs.board[idx];
   if (color === "white") {
-    if (at <= -2) return false;                  // opponent owns it
-    if (idx >= 1 && idx <= 10 && at === 1) return false; // closing restriction
+    if (at <= -2) return false;                    // 2+ black checkers — blocked
+    if (idx >= 13 && idx <= 22 && at === 1) return false; // closing restriction: cannot make a point in pts 14-23
   } else {
-    if (at >= 2) return false;                   // opponent owns it
-    if (idx >= 13 && idx <= 22 && at === -1) return false; // closing restriction
+    if (at >= 2) return false;                     // 2+ white checkers — blocked
+    if (idx >= 1 && idx <= 10 && at === -1) return false; // closing restriction: cannot make a point in pts 2-11
   }
   return true;
 }
@@ -88,8 +93,14 @@ export function getLegalMoves(gs, color) {
 
   // If on bar, must re-enter first
   if (gs.bar[color] > 0) {
+    const headIdx = color === "white" ? 23 : 0;
     for (const die of uniqueDice(gs.dice)) {
       const idx = color === "white" ? (24 - die) : (die - 1);
+      // Cannot re-enter at own head point if any own checker is there
+      if (idx === headIdx) {
+        const ownAtHead = color === "white" ? gs.board[headIdx] : -gs.board[headIdx];
+        if (ownAtHead > 0) continue;
+      }
       if (canLand(gs, color, idx)) push({ from: "bar", to: idx, die });
     }
     return moves;
