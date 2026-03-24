@@ -13,7 +13,7 @@ const S = {
   },
   card: {
     background: "#3a1a00", borderRadius: 12, padding: "28px 32px",
-    maxWidth: 640, width: "100%", boxSizing: "border-box",
+    maxWidth: 860, width: "100%", boxSizing: "border-box",
   },
   header:   { display: "flex", alignItems: "center", gap: 12, marginBottom: 24, flexWrap: "wrap" },
   back:     { color: "#a07840", textDecoration: "none", fontSize: 13 },
