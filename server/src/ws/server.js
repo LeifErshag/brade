@@ -1,6 +1,6 @@
 import { WebSocketServer } from "ws";
 import { verifyAccessToken } from "../auth/tokens.js";
-import { handleMessage } from "./handlers.js";
+import { handleMessage, scheduleDisconnectForfeit, cancelDisconnectForfeit } from "./handlers.js";
 import { getRedis, keys, TTL } from "../db/redis.js";
 import { query } from "../db/postgres.js";
 
@@ -50,6 +50,13 @@ export function initWebSocketServer(httpServer) {
       await redis.set(keys.room(roomId), JSON.stringify(room), "EX", TTL.room);
     }
 
+    // Cancel any pending disconnect forfeit for this player
+    const reconnectColor = room.players.white === userId ? "white"
+                         : room.players.black === userId ? "black" : null;
+    if (reconnectColor && room.status === "playing") {
+      cancelDisconnectForfeit(roomId, reconnectColor);
+    }
+
     // Add to rooms and userConnections before broadcasting so count is accurate
     if (!rooms.has(roomId)) rooms.set(roomId, new Set());
     const client = { ws, userId };
@@ -67,7 +74,7 @@ export function initWebSocketServer(httpServer) {
       await handleMessage({ msg, userId, roomId, ws });
     });
 
-    ws.on("close", () => {
+    ws.on("close", async () => {
       rooms.get(roomId)?.delete(client);
       if (rooms.get(roomId)?.size === 0) rooms.delete(roomId);
 
@@ -75,6 +82,17 @@ export function initWebSocketServer(httpServer) {
       if (userConnections.get(userId)?.size === 0) userConnections.delete(userId);
 
       broadcastToRoom(roomId, { type: "PLAYER_DISCONNECTED", userId });
+
+      // Schedule forfeit if a player disconnects mid-game
+      const freshRaw = await getRedis().get(keys.room(roomId)).catch(() => null);
+      if (freshRaw) {
+        const freshRoom = JSON.parse(freshRaw);
+        if (freshRoom.status === "playing") {
+          const dc = freshRoom.players.white === userId ? "white"
+                   : freshRoom.players.black === userId ? "black" : null;
+          if (dc) scheduleDisconnectForfeit(roomId, dc, userId);
+        }
+      }
     });
 
     ws.on("error", (err) => console.error(`WS error [${roomId}]:`, err.message));

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useAuth } from "../AuthContext.jsx";
 import { useSocket } from "../hooks/useSocket.js";
+import Board from "../components/Board.jsx";
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const S = {
@@ -12,7 +13,7 @@ const S = {
   },
   card: {
     background: "#3a1a00", borderRadius: 12, padding: "28px 32px",
-    maxWidth: 600, width: "100%", boxSizing: "border-box",
+    maxWidth: 640, width: "100%", boxSizing: "border-box",
   },
   header:   { display: "flex", alignItems: "center", gap: 12, marginBottom: 24, flexWrap: "wrap" },
   back:     { color: "#a07840", textDecoration: "none", fontSize: 13 },
@@ -40,10 +41,6 @@ const S = {
   notReadyBadge: { display: "inline-block", marginTop: 6, padding: "2px 8px", borderRadius: 10, background: "#4a2800", color: "#a07840", fontSize: 11 },
 
   spectators: { color: "#6b3a10", fontSize: 12, textAlign: "center", marginBottom: 12 },
-  statusBanner: {
-    background: "#1a3a1a", color: "#7ddb7d", borderRadius: 6,
-    padding: "10px 14px", fontSize: 13, marginBottom: 16, textAlign: "center",
-  },
 
   actions:        { display: "flex", gap: 10, justifyContent: "center", marginBottom: 20, flexWrap: "wrap" },
   btnReady:       { background: "#1a5c1a", color: "#7ddb7d", border: "none", borderRadius: 8, padding: "10px 24px", fontSize: 14, cursor: "pointer" },
@@ -63,6 +60,10 @@ const S = {
   resultName:    { flex: 1, color: "#e8b86d", fontSize: 13 },
   btnInvite:     { background: "#6b3a10", color: "#e8b86d", border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 12, cursor: "pointer" },
   btnInvited:    { background: "#1a5c1a", color: "#7ddb7d", border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 12, cursor: "default" },
+
+  matchResult: { textAlign: "center", padding: "24px 0" },
+  resultTitle: { color: "#e8b86d", fontSize: 24, marginBottom: 8 },
+  resultScore: { color: "#a07840", fontSize: 16, marginBottom: 20 },
 
   muted:    { color: "#6b3a10", textAlign: "center" },
   errorMsg: { color: "#c0392b", textAlign: "center" },
@@ -86,9 +87,6 @@ export default function Game() {
       case "ROOM_STATE":
         setRoom(msg.room);
         setSpectatorCount(msg.spectatorCount ?? 0);
-        break;
-      case "GAME_STARTED":
-        setRoom(prev => prev ? { ...prev, status: "playing" } : prev);
         break;
     }
   }, []);
@@ -134,7 +132,13 @@ export default function Game() {
     handleCopyInvite();
   }
 
-  // ── Render ───────────────────────────────────────────────────────────────────
+  // ── Game actions ──────────────────────────────────────────────────────────
+  function handleRoll()   { send({ type: "ROLL" }); }
+  function handlePass()   { send({ type: "PASS" }); }
+  function handleResign() { send({ type: "RESIGN" }); }
+  function handleMove(from, to, die) { send({ type: "MOVE", from, to, die }); }
+
+  // ── Render ───────────────────────────────────────────────────────────────
 
   if (loading) return <FullPage><p style={S.muted}>…</p></FullPage>;
 
@@ -170,6 +174,25 @@ export default function Game() {
 
         {!room ? (
           <p style={S.muted}>Connecting…</p>
+        ) : room.status === "finished" ? (
+          <MatchResult room={room} myColor={myColor} />
+        ) : room.status === "playing" && room.gameState ? (
+          <>
+            {spectatorCount > 0 && (
+              <p style={S.spectators}>{spectatorCount} spectator{spectatorCount !== 1 ? "s" : ""} watching</p>
+            )}
+            <Board
+              gameState={room.gameState}
+              score={room.score}
+              matchLength={room.matchLength}
+              myColor={myColor}
+              playerInfo={room.playerInfo}
+              onRoll={handleRoll}
+              onMove={handleMove}
+              onPass={handlePass}
+              onResign={handleResign}
+            />
+          </>
         ) : (
           <>
             {/* Players */}
@@ -193,10 +216,6 @@ export default function Game() {
               <p style={S.spectators}>
                 {spectatorCount} spectator{spectatorCount !== 1 ? "s" : ""} watching
               </p>
-            )}
-
-            {room.status === "playing" && (
-              <div style={S.statusBanner}>Game in progress — board coming in Phase 10</div>
             )}
 
             {/* Actions — players only, lobby only */}
@@ -265,6 +284,8 @@ export default function Game() {
   );
 }
 
+// ── Sub-components ────────────────────────────────────────────────────────────
+
 function FullPage({ children }) {
   return (
     <div style={{ background: "#2a1400", minHeight: "100vh", display: "flex",
@@ -293,6 +314,30 @@ function PlayerCard({ label, info, ready, isYou }) {
       ) : (
         <div style={S.waiting}>Waiting for opponent…</div>
       )}
+    </div>
+  );
+}
+
+function MatchResult({ room, myColor }) {
+  const r = room.matchResult;
+  if (!r) return null;
+  const iWon = r.winner === myColor;
+  const winnerName = room.playerInfo?.[r.winner]?.display_name ?? r.winner;
+  return (
+    <div style={S.matchResult}>
+      <div style={{ ...S.resultTitle, color: iWon ? "#7ddb7d" : "#c0392b" }}>
+        {iWon ? "You won the match!" : `${winnerName} wins the match`}
+      </div>
+      <div style={S.resultScore}>
+        {room.playerInfo?.white?.display_name} {r.score.white} – {r.score.black} {room.playerInfo?.black?.display_name}
+      </div>
+      {r.whiteEloAfter && (
+        <div style={{ color: "#6b3a10", fontSize: 12, marginBottom: 20 }}>
+          ELO: {room.playerInfo?.white?.display_name} → {r.whiteEloAfter} &nbsp;|&nbsp;
+          {room.playerInfo?.black?.display_name} → {r.blackEloAfter}
+        </div>
+      )}
+      <Link to="/" style={{ color: "#a07840", fontSize: 14 }}>← Back to Home</Link>
     </div>
   );
 }

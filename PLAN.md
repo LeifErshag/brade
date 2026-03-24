@@ -311,8 +311,8 @@ All UI text, labels, win type names, and rules reference available in both Swedi
 | Phase 6 — UX Polish & Game Modes | ✅ Done | Move log, rules reference, undo, match length, random opponent |
 | Phase 7 — Infrastructure & CI/CD | ✅ Done | |
 | Phase 8 — OAuth Auth | ✅ Done | |
-| Phase 9 — Game Rooms & Invitations | ⏳ Pending | |
-| Phase 10 — WebSocket Game Server | ⏳ Pending | |
+| Phase 9 — Game Rooms & Invitations | ✅ Done | |
+| Phase 10 — WebSocket Game Server | ✅ Done | |
 | Phase 11 — Match History & ELO | ⏳ Pending | |
 | Phase 12 — Matchmaking | ⏳ Pending | |
 | Phase 13 — Tournaments | ⏳ Pending | |

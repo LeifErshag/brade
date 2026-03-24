@@ -1,19 +1,39 @@
 import { getRedis, keys, TTL } from "../db/redis.js";
+import { query } from "../db/postgres.js";
 import { send, broadcastToRoom, broadcastState, sendToUser } from "./server.js";
+import { initGame, rollDice, getLegalMoves, applyMove, checkWin } from "../game/engine.js";
+import { computeElo } from "../game/elo.js";
 
-// Message types accepted from clients:
-//   PLAYER_READY  — toggle ready state for calling player
-//   START_GAME    — host starts game when both players are ready
-//   INVITE_PLAYER — { targetUserId } send invite notification to a user
-//   ROLL          — (Phase 10) server rolls dice
-//   MOVE          — (Phase 10) { from, to, die }
-//   PASS          — (Phase 10) player passes turn
-//   RESIGN        — (Phase 10) player forfeits
+// ── Disconnect forfeit timers ─────────────────────────────────────────────────
+const forfeitTimers = new Map(); // key: `${roomId}:${color}`
 
+export function scheduleDisconnectForfeit(roomId, color, userId) {
+  const key = `${roomId}:${color}`;
+  clearTimeout(forfeitTimers.get(key));
+  const timer = setTimeout(async () => {
+    forfeitTimers.delete(key);
+    const redis  = getRedis();
+    const raw    = await redis.get(keys.room(roomId));
+    if (!raw) return;
+    const room = JSON.parse(raw);
+    if (room.status !== "playing") return;
+    // Force a resign for the disconnected player
+    await handleMessage({ msg: { type: "RESIGN", forfeit: true }, userId, roomId, ws: null });
+  }, 60_000);
+  forfeitTimers.set(key, timer);
+}
+
+export function cancelDisconnectForfeit(roomId, color) {
+  const key = `${roomId}:${color}`;
+  clearTimeout(forfeitTimers.get(key));
+  forfeitTimers.delete(key);
+}
+
+// ── Main message handler ──────────────────────────────────────────────────────
 export async function handleMessage({ msg, userId, roomId, ws }) {
   const redis   = getRedis();
   const rawRoom = await redis.get(keys.room(roomId));
-  if (!rawRoom) { send(ws, { type: "ERROR", message: "Room not found" }); return; }
+  if (!rawRoom) { ws && send(ws, { type: "ERROR", message: "Room not found" }); return; }
 
   const room  = JSON.parse(rawRoom);
   const color = room.players.white === userId ? "white"
@@ -22,8 +42,10 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
 
   switch (msg.type) {
 
+    // ── Lobby ──────────────────────────────────────────────────────────────
+
     case "PLAYER_READY": {
-      if (!color) { send(ws, { type: "ERROR", message: "Not a player" }); break; }
+      if (!color) { ws && send(ws, { type: "ERROR", message: "Not a player" }); break; }
       room.ready[color] = !room.ready[color];
       await saveRoom(redis, roomId, room);
       broadcastState(roomId, room);
@@ -32,16 +54,45 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
 
     case "START_GAME": {
       if (room.createdBy !== userId) {
-        send(ws, { type: "ERROR", message: "Only the host can start" }); break;
+        ws && send(ws, { type: "ERROR", message: "Only the host can start" }); break;
       }
       if (!room.players.black) {
-        send(ws, { type: "ERROR", message: "Waiting for opponent" }); break;
+        ws && send(ws, { type: "ERROR", message: "Waiting for opponent" }); break;
       }
       if (!room.ready.white || !room.ready.black) {
-        send(ws, { type: "ERROR", message: "Both players must be ready" }); break;
+        ws && send(ws, { type: "ERROR", message: "Both players must be ready" }); break;
       }
-      room.status = "playing";
-      // Full game state initialisation goes in Phase 10
+
+      // Fetch ELOs for both players
+      const { rows: players } = await query(
+        `SELECT id, elo FROM users WHERE id = ANY($1::uuid[])`,
+        [[room.players.white, room.players.black]]
+      );
+      const eloMap = Object.fromEntries(players.map(p => [p.id, p.elo]));
+      const wElo   = eloMap[room.players.white] ?? 1200;
+      const bElo   = eloMap[room.players.black] ?? 1200;
+
+      // Persist black player + starting ELOs into the games record
+      await query(
+        `UPDATE games
+            SET black_id = $2, white_elo_before = $3, black_elo_before = $4
+          WHERE room_id = $1`,
+        [roomId, room.players.black, wElo, bElo]
+      );
+      const { rows: [gameRow] } = await query(
+        `SELECT id FROM games WHERE room_id = $1`, [roomId]
+      );
+
+      const gs       = initGame();
+      gs.legalMoves  = []; // will be populated after first ROLL
+
+      room.status    = "playing";
+      room.score     = { white: 0, black: 0 };
+      room.gameNum   = 1;
+      room.gameDbId  = gameRow.id;
+      room.gameState = gs;
+      room.ready     = { white: false, black: false };
+
       await saveRoom(redis, roomId, room);
       broadcastState(roomId, room);
       break;
@@ -50,62 +101,214 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
     case "INVITE_PLAYER": {
       const targetId = msg.targetUserId;
       if (!targetId || typeof targetId !== "string") {
-        send(ws, { type: "ERROR", message: "Invalid targetUserId" }); break;
+        ws && send(ws, { type: "ERROR", message: "Invalid targetUserId" }); break;
       }
-      const fromName = color ? room.playerInfo?.[color]?.display_name : null;
+      const fromName  = color ? room.playerInfo?.[color]?.display_name : null;
       const inviteUrl = `${process.env.CLIENT_ORIGIN}/game/${roomId}`;
-      // Best-effort: silently dropped if target is not currently connected
       sendToUser(targetId, {
-        type:     "INVITE_RECEIVED",
-        fromName: fromName ?? "Someone",
-        roomId,
-        inviteUrl,
+        type: "INVITE_RECEIVED", fromName: fromName ?? "Someone", roomId, inviteUrl,
       });
       break;
     }
 
-    // ── Phase 10 stubs ────────────────────────────────────────────────────────
+    // ── In-game ────────────────────────────────────────────────────────────
 
     case "ROLL": {
       if (room.status !== "playing") break;
-      if (!color) { send(ws, { type: "ERROR", message: "Not a player" }); break; }
-      if (room.gameState?.turn !== color) { send(ws, { type: "ERROR", message: "Not your turn" }); break; }
-      const dice = rollDice();
-      broadcastToRoom(roomId, { type: "ROLLED", color, dice });
+      if (!color) { ws && send(ws, { type: "ERROR", message: "Not a player" }); break; }
+      const gs = room.gameState;
+      if (gs.phase !== "rolling") { ws && send(ws, { type: "ERROR", message: "Not rolling phase" }); break; }
+      if (gs.turn !== color)      { ws && send(ws, { type: "ERROR", message: "Not your turn" }); break; }
+
+      const dice       = rollDice();
+      gs.dice          = dice.slice();
+      gs.rolledDice    = dice.slice();
+      gs.phase         = "moving";
+      gs.legalMoves    = getLegalMoves(gs, color);
+
+      if (gs.legalMoves.length === 0) {
+        // No moves — auto pass
+        gs.phase      = "rolling";
+        gs.turn       = opp(color);
+        gs.dice       = [];
+        gs.legalMoves = [];
+        broadcastToRoom(roomId, { type: "NO_MOVES", color, dice });
+      }
+
+      room.gameState = gs;
+      await saveRoom(redis, roomId, room);
+      broadcastState(roomId, room);
       break;
     }
 
     case "MOVE": {
-      if (!color) { send(ws, { type: "ERROR", message: "Not a player" }); break; }
-      // Full validation goes in Phase 10
-      broadcastToRoom(roomId, { type: "MOVE_APPLIED", move: msg });
+      if (room.status !== "playing") break;
+      if (!color) { ws && send(ws, { type: "ERROR", message: "Not a player" }); break; }
+      const gs = room.gameState;
+      if (gs.phase !== "moving") { ws && send(ws, { type: "ERROR", message: "Not moving phase" }); break; }
+      if (gs.turn  !== color)    { ws && send(ws, { type: "ERROR", message: "Not your turn" }); break; }
+
+      const { from, to, die } = msg;
+      const legal = gs.legalMoves.find(m => m.from === from && m.to === to && m.die === die);
+      if (!legal) { ws && send(ws, { type: "ERROR", message: "Illegal move" }); break; }
+
+      const { gs: newGs } = applyMove(gs, color, from, to, die);
+
+      // Log move to DB (best-effort, don't block on failure)
+      const fromPt = from === "bar" ? "bar" : String(from + 1);
+      const toPt   = to   === "off" ? "off" : String(to + 1);
+      query(
+        `INSERT INTO moves (game_id, seq, color, from_pt, to_pt, die)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [room.gameDbId, newGs.moveSeq, color, fromPt, toPt, die]
+      ).catch(err => console.error("Move log error:", err.message));
+
+      // Check win
+      const result = checkWin(newGs);
+      if (result) {
+        room.gameState = newGs;
+        await handleGameOver(redis, roomId, room, result);
+        return;
+      }
+
+      // Determine if turn should switch
+      if (newGs.dice.length === 0) {
+        newGs.phase      = "rolling";
+        newGs.turn       = opp(color);
+        newGs.legalMoves = [];
+      } else {
+        newGs.legalMoves = getLegalMoves(newGs, color);
+        if (newGs.legalMoves.length === 0) {
+          newGs.phase      = "rolling";
+          newGs.turn       = opp(color);
+          newGs.dice       = [];
+          newGs.legalMoves = [];
+        }
+      }
+
+      room.gameState = newGs;
+      await saveRoom(redis, roomId, room);
+      broadcastState(roomId, room);
       break;
     }
 
     case "PASS": {
+      if (room.status !== "playing") break;
       if (!color) break;
-      broadcastToRoom(roomId, { type: "TURN_PASSED", userId });
+      const gs = room.gameState;
+      if (gs.turn !== color) { ws && send(ws, { type: "ERROR", message: "Not your turn" }); break; }
+      if (gs.legalMoves.length > 0) { ws && send(ws, { type: "ERROR", message: "You have legal moves" }); break; }
+
+      gs.phase      = "rolling";
+      gs.turn       = opp(color);
+      gs.dice       = [];
+      gs.legalMoves = [];
+      room.gameState = gs;
+      await saveRoom(redis, roomId, room);
+      broadcastState(roomId, room);
       break;
     }
 
     case "RESIGN": {
+      if (room.status !== "playing") break;
       if (!color) break;
-      const winner = color === "white" ? "black" : "white";
-      broadcastToRoom(roomId, { type: "GAME_OVER", reason: "resign", winner });
+      const winner = opp(color);
+      const result = { winner, winType: "resign", points: 1, monk: false };
+      await handleGameOver(redis, roomId, room, result);
       break;
     }
 
     default:
-      send(ws, { type: "ERROR", message: "Unknown message type" });
+      ws && send(ws, { type: "ERROR", message: "Unknown message type" });
   }
 }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function opp(color) { return color === "white" ? "black" : "white"; }
 
 async function saveRoom(redis, roomId, room) {
   await redis.set(keys.room(roomId), JSON.stringify(room), "EX", TTL.room);
 }
 
-function rollDice() {
-  const d1 = Math.ceil(Math.random() * 6);
-  const d2 = Math.ceil(Math.random() * 6);
-  return d1 === d2 ? [d1, d1, d1, d1] : [d1, d2];
+async function handleGameOver(redis, roomId, room, result) {
+  const { winner, winType, points, monk } = result;
+  room.score[winner] += points ?? 1;
+
+  const needed = Math.ceil(room.matchLength / 2);
+  const matchOver = room.score[winner] >= needed;
+
+  if (matchOver) {
+    // Compute ELO
+    const { rows: players } = await query(
+      `SELECT id, elo FROM users WHERE id = ANY($1::uuid[])`,
+      [[room.players.white, room.players.black]]
+    );
+    const eloMap = Object.fromEntries(players.map(p => [p.id, p.elo]));
+    const wElo   = eloMap[room.players.white] ?? 1200;
+    const bElo   = eloMap[room.players.black] ?? 1200;
+
+    const eloResult = computeElo(wElo, bElo, winner === "white" ? 1 : 0);
+
+    // Persist game result
+    await query(
+      `UPDATE games
+          SET winner_id       = $2,
+              win_type        = $3,
+              monk            = $4,
+              white_score     = $5,
+              black_score     = $6,
+              white_elo_after = $7,
+              black_elo_after = $8,
+              ended_at        = now()
+        WHERE room_id = $1`,
+      [roomId, room.players[winner], winType, monk ?? false,
+       room.score.white, room.score.black,
+       eloResult.whiteAfter, eloResult.blackAfter]
+    );
+
+    // Update user stats
+    await query(
+      `UPDATE users SET elo = $2, wins = wins + 1 WHERE id = $1`,
+      [room.players[winner], eloResult[winner === "white" ? "whiteAfter" : "blackAfter"]]
+    );
+    const loser = opp(winner);
+    await query(
+      `UPDATE users SET elo = $2, losses = losses + 1 WHERE id = $1`,
+      [room.players[loser], eloResult[loser === "white" ? "whiteAfter" : "blackAfter"]]
+    );
+
+    room.status    = "finished";
+    room.gameState = null;
+    room.matchResult = {
+      winner,
+      score:        room.score,
+      whiteEloAfter: eloResult.whiteAfter,
+      blackEloAfter: eloResult.blackAfter,
+    };
+
+    await saveRoom(redis, roomId, room);
+    broadcastState(roomId, room);
+    broadcastToRoom(roomId, {
+      type:    "MATCH_OVER",
+      winner,
+      score:   room.score,
+      winType,
+    });
+  } else {
+    // Start next game in match
+    room.gameNum++;
+    const gs      = initGame();
+    gs.legalMoves = [];
+    room.gameState = gs;
+
+    await saveRoom(redis, roomId, room);
+    broadcastState(roomId, room);
+    broadcastToRoom(roomId, {
+      type:   "GAME_OVER",
+      winner,
+      winType,
+      score:  room.score,
+    });
+  }
 }
