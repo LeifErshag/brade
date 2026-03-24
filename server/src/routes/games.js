@@ -5,6 +5,8 @@ import { requireAuth } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { getRedis, keys, TTL } from "../db/redis.js";
 import { query } from "../db/postgres.js";
+import { initGame } from "../game/engine.js";
+import { AI_USER_ID, AI_DISPLAY } from "../game/ai.js";
 
 const router = Router();
 
@@ -12,11 +14,14 @@ const CreateGameSchema = z.object({
   matchLength: z.union([
     z.literal(1), z.literal(3), z.literal(5), z.literal(7),
   ]).default(5),
+  opponent:     z.enum(["human", "ai"]).default("human"),
+  aiDifficulty: z.enum(["beginner", "journeyman", "master"]).default("journeyman"),
 });
 
 // ── POST /api/games — create a new game room ──────────────────────────────────
 router.post("/", requireAuth, validate(CreateGameSchema), async (req, res) => {
-  const { matchLength } = req.body;
+  const { matchLength, opponent, aiDifficulty } = req.body;
+  const isAi  = opponent === "ai";
   const roomId = uuid().slice(0, 8).toUpperCase();
 
   const { rows: [creator] } = await query(
@@ -24,6 +29,57 @@ router.post("/", requireAuth, validate(CreateGameSchema), async (req, res) => {
     [req.userId]
   );
 
+  const redis = getRedis();
+
+  if (isAi) {
+    // Ensure the AI system user exists in the DB (idempotent)
+    await query(
+      `INSERT INTO users (id, oauth_provider, oauth_id, display_name)
+       VALUES ($1, 'system', 'computer', 'Computer')
+       ON CONFLICT DO NOTHING`,
+      [AI_USER_ID]
+    );
+
+    const gs = initGame();
+    gs.legalMoves = [];
+
+    const roomState = {
+      roomId,
+      matchLength,
+      createdBy:   req.userId,
+      isAi:        true,
+      aiDifficulty,
+      players:     { white: req.userId, black: AI_USER_ID },
+      playerInfo:  {
+        white: { display_name: creator?.display_name ?? "Player", avatar_url: creator?.avatar_url ?? null },
+        black: AI_DISPLAY,
+      },
+      ready:     { white: true, black: true },
+      status:    "playing",
+      score:     { white: 0, black: 0 },
+      gameNum:   1,
+      gameState: gs,
+      createdAt: Date.now(),
+    };
+
+    // Persist game record with both players and starting ELOs
+    await query(
+      `INSERT INTO games (room_id, white_id, black_id, match_length, white_elo_before, black_elo_before)
+       VALUES ($1, $2, $3, $4,
+         (SELECT elo FROM users WHERE id = $2),
+         1200)`,
+      [roomId, req.userId, AI_USER_ID, matchLength]
+    );
+    const { rows: [gameRow] } = await query(
+      `SELECT id FROM games WHERE room_id = $1`, [roomId]
+    );
+    roomState.gameDbId = gameRow.id;
+
+    await redis.set(keys.room(roomId), JSON.stringify(roomState), "EX", TTL.room);
+    return res.status(201).json({ roomId, inviteUrl: null, isAi: true });
+  }
+
+  // ── Human vs human ────────────────────────────────────────────────────────
   const roomState = {
     roomId,
     matchLength,
@@ -39,7 +95,6 @@ router.post("/", requireAuth, validate(CreateGameSchema), async (req, res) => {
     createdAt: Date.now(),
   };
 
-  const redis = getRedis();
   await redis.set(keys.room(roomId), JSON.stringify(roomState), "EX", TTL.room);
 
   await query(
@@ -71,6 +126,7 @@ router.get("/:roomId", requireAuth, async (req, res) => {
     matchLength: room.matchLength,
     players:     room.players,
     playerInfo:  room.playerInfo,
+    isAi:        room.isAi ?? false,
   });
 });
 

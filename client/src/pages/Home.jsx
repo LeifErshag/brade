@@ -49,11 +49,27 @@ export default function Home() {
   const { user, loading, logout, authFetch } = useAuth();
   const navigate = useNavigate();
 
-  const [matchLength, setMatchLength] = useState(5);
-  const [creating, setCreating]       = useState(false);
-  const [roomCode, setRoomCode]       = useState("");
-  const [joinError, setJoinError]     = useState(null);
-  const [joining, setJoining]         = useState(false);
+  const [matchLength, setMatchLength]   = useState(5);
+  const [creating, setCreating]         = useState(false);
+  const [aiDifficulty, setAiDifficulty] = useState("journeyman");
+  const [creatingAi, setCreatingAi]     = useState(false);
+  const [roomCode, setRoomCode]         = useState("");
+  const [joinError, setJoinError]       = useState(null);
+  const [joining, setJoining]           = useState(false);
+
+  async function handleCreateAi() {
+    setCreatingAi(true);
+    try {
+      const res = await authFetch("/api/games", {
+        method: "POST",
+        body: JSON.stringify({ matchLength, opponent: "ai", aiDifficulty }),
+      });
+      const data = await res.json();
+      if (res.ok) navigate(`/game/${data.roomId}`);
+    } finally {
+      setCreatingAi(false);
+    }
+  }
 
   async function handleCreate() {
     setCreating(true);
@@ -139,6 +155,23 @@ export default function Home() {
                 </select>
                 <button onClick={handleCreate} disabled={creating} style={S.btnPrimary}>
                   {creating ? "Creating…" : "Create Game"}
+                </button>
+              </div>
+
+              <p style={{ ...S.sectionLabel, marginTop: 20 }}>Play vs AI</p>
+              <div style={S.playRow}>
+                <select
+                  value={aiDifficulty}
+                  onChange={e => setAiDifficulty(e.target.value)}
+                  style={S.select}
+                  aria-label="AI difficulty"
+                >
+                  <option value="beginner">Beginner</option>
+                  <option value="journeyman">Journeyman</option>
+                  <option value="master">Master</option>
+                </select>
+                <button onClick={handleCreateAi} disabled={creatingAi} style={S.btnPrimary}>
+                  {creatingAi ? "Starting…" : "Play vs AI"}
                 </button>
               </div>
 

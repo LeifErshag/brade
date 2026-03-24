@@ -3,6 +3,7 @@ import { query } from "../db/postgres.js";
 import { send, broadcastToRoom, broadcastState, sendToUser } from "./server.js";
 import { initGame, rollDice, getLegalMoves, applyMove, checkWin } from "../game/engine.js";
 import { computeElo } from "../game/elo.js";
+import { pickMove } from "../game/ai.js";
 
 // ── Disconnect forfeit timers ─────────────────────────────────────────────────
 const forfeitTimers = new Map(); // key: `${roomId}:${color}`
@@ -138,6 +139,11 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
       room.gameState = gs;
       await saveRoom(redis, roomId, room);
       broadcastState(roomId, room);
+
+      // Trigger AI if turn switched to it
+      if (room.isAi && gs.turn === "black" && gs.phase === "rolling") {
+        triggerAiTurn(roomId, room.aiDifficulty).catch(e => console.error("AI turn error:", e));
+      }
       break;
     }
 
@@ -189,6 +195,11 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
       room.gameState = newGs;
       await saveRoom(redis, roomId, room);
       broadcastState(roomId, room);
+
+      // Trigger AI if turn switched to it
+      if (room.isAi && newGs.turn === "black" && newGs.phase === "rolling") {
+        triggerAiTurn(roomId, room.aiDifficulty).catch(e => console.error("AI turn error:", e));
+      }
       break;
     }
 
@@ -223,6 +234,95 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
   }
 }
 
+// ── AI turn automation ────────────────────────────────────────────────────────
+
+async function triggerAiTurn(roomId, aiDifficulty) {
+  // Brief "thinking" delay
+  await sleep(700 + Math.random() * 800);
+
+  const redis = getRedis();
+  const raw   = await redis.get(keys.room(roomId));
+  if (!raw) return;
+  let room = JSON.parse(raw);
+  if (room.status !== "playing") return;
+
+  let gs = room.gameState;
+  if (gs.turn !== "black" || gs.phase !== "rolling") return; // sanity check
+
+  // Roll dice
+  const dice    = rollDice();
+  gs.dice       = dice.slice();
+  gs.rolledDice = dice.slice();
+  gs.phase      = "moving";
+  gs.legalMoves = getLegalMoves(gs, "black");
+
+  if (gs.legalMoves.length === 0) {
+    // No moves — pass
+    gs.phase      = "rolling";
+    gs.turn       = "white";
+    gs.dice       = [];
+    gs.legalMoves = [];
+    room.gameState = gs;
+    await saveRoom(redis, roomId, room);
+    broadcastState(roomId, room);
+    return;
+  }
+
+  room.gameState = gs;
+  await saveRoom(redis, roomId, room);
+  broadcastState(roomId, room);
+
+  // Play moves one at a time with a small visual delay between each
+  while (gs.legalMoves.length > 0 && gs.dice.length > 0) {
+    await sleep(500);
+
+    const move = await pickMove(gs, "black", gs.legalMoves, aiDifficulty, roomId);
+    if (!move) break;
+
+    const { gs: newGs } = applyMove(gs, "black", move.from, move.to, move.die);
+
+    // Log to DB (best-effort)
+    const fromPt = move.from === "bar" ? "bar" : String(move.from + 1);
+    const toPt   = move.to   === "off" ? "off" : String(move.to   + 1);
+    query(
+      `INSERT INTO moves (game_id, seq, color, from_pt, to_pt, die)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [room.gameDbId, newGs.moveSeq, "black", fromPt, toPt, move.die]
+    ).catch(err => console.error("AI move log error:", err.message));
+
+    // Check win
+    const result = checkWin(newGs);
+    if (result) {
+      room.gameState = newGs;
+      await handleGameOver(redis, roomId, room, result);
+      return;
+    }
+
+    if (newGs.dice.length === 0) {
+      newGs.phase      = "rolling";
+      newGs.turn       = "white";
+      newGs.legalMoves = [];
+    } else {
+      newGs.legalMoves = getLegalMoves(newGs, "black");
+      if (newGs.legalMoves.length === 0) {
+        newGs.phase      = "rolling";
+        newGs.turn       = "white";
+        newGs.dice       = [];
+        newGs.legalMoves = [];
+      }
+    }
+
+    gs = newGs;
+    room.gameState = gs;
+    await saveRoom(redis, roomId, room);
+    broadcastState(roomId, room);
+  }
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function opp(color) { return color === "white" ? "black" : "white"; }
@@ -239,14 +339,24 @@ async function handleGameOver(redis, roomId, room, result) {
   const matchOver = room.score[winner] >= needed;
 
   if (matchOver) {
-    // Compute ELO
-    const { rows: players } = await query(
-      `SELECT id, elo FROM users WHERE id = ANY($1::uuid[])`,
-      [[room.players.white, room.players.black]]
-    );
-    const eloMap = Object.fromEntries(players.map(p => [p.id, p.elo]));
-    const wElo   = eloMap[room.players.white] ?? 1200;
-    const bElo   = eloMap[room.players.black] ?? 1200;
+    // Compute ELO (use fixed 1200 for the AI opponent)
+    let wElo, bElo;
+
+    if (room.isAi) {
+      const { rows: [humanRow] } = await query(
+        `SELECT elo FROM users WHERE id = $1`, [room.players.white]
+      );
+      wElo = humanRow?.elo ?? 1200;
+      bElo = 1200; // fixed AI ELO
+    } else {
+      const { rows: players } = await query(
+        `SELECT id, elo FROM users WHERE id = ANY($1::uuid[])`,
+        [[room.players.white, room.players.black]]
+      );
+      const eloMap = Object.fromEntries(players.map(p => [p.id, p.elo]));
+      wElo = eloMap[room.players.white] ?? 1200;
+      bElo = eloMap[room.players.black] ?? 1200;
+    }
 
     const eloResult = computeElo(wElo, bElo, winner === "white" ? 1 : 0);
 
@@ -267,16 +377,20 @@ async function handleGameOver(redis, roomId, room, result) {
        eloResult.whiteAfter, eloResult.blackAfter]
     );
 
-    // Update user stats
-    await query(
-      `UPDATE users SET elo = $2, wins = wins + 1 WHERE id = $1`,
-      [room.players[winner], eloResult[winner === "white" ? "whiteAfter" : "blackAfter"]]
-    );
+    // Update player stats — skip the AI user
     const loser = opp(winner);
-    await query(
-      `UPDATE users SET elo = $2, losses = losses + 1 WHERE id = $1`,
-      [room.players[loser], eloResult[loser === "white" ? "whiteAfter" : "blackAfter"]]
-    );
+    if (!room.isAi || winner === "white") {
+      await query(
+        `UPDATE users SET elo = $2, wins = wins + 1 WHERE id = $1`,
+        [room.players[winner], eloResult[winner === "white" ? "whiteAfter" : "blackAfter"]]
+      );
+    }
+    if (!room.isAi || loser === "white") {
+      await query(
+        `UPDATE users SET elo = $2, losses = losses + 1 WHERE id = $1`,
+        [room.players[loser], eloResult[loser === "white" ? "whiteAfter" : "blackAfter"]]
+      );
+    }
 
     room.status    = "finished";
     room.gameState = null;
