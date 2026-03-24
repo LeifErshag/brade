@@ -239,7 +239,26 @@ All UI text, labels, win type names, and rules reference available in both Swedi
 
 ---
 
-### Phase 11 — Match History & ELO
+### Phase 11 — Server-Side AI Opponents
+**Goal:** Let authenticated users play against a bot directly from the lobby, no second player required.
+
+- [ ] `POST /api/games` accepts `opponent: "ai"` + `aiDifficulty: "beginner" | "journeyman" | "master"`
+- [ ] Server creates the room and immediately occupies the black seat with a virtual AI user (stored as a `system` user in the DB)
+- [ ] AI move loop runs server-side inside the WebSocket handler — no client connection needed for the AI:
+  - **Beginner**: picks a random legal move with a short random delay (0.5–1.5 s)
+  - **Journeyman**: heuristic evaluation — prefers hitting blots, building closed points, advancing the back checker; avoids leaving blots; uses the higher die when forced to discard
+  - **Master**: calls the Claude API (`claude-haiku-4-5`) with a compact board representation + legal moves; Claude returns the chosen move; falls back to Journeyman on API error
+- [ ] AI rolls dice server-side immediately after the human's turn ends (no ROLL message needed)
+- [ ] `GET /api/games/:roomId` returns `isAi: true` so the client can hide the invite / ready flow and go straight to the board
+- [ ] Home page shows "Play vs AI" button with difficulty selector alongside "Create Game"
+- [ ] AI games count toward ELO and match history (separate ELO column `elo_vs_ai` optional future)
+- [ ] Rate-limit Master AI calls: max 1 concurrent Claude request per user
+
+**Deliverable:** Single-player mode — click "Play vs AI", choose difficulty, game starts immediately.
+
+---
+
+### Phase 12 — Match History & ELO
 **Goal:** Persistent stats, rating system, player profiles.
 
 - [ ] PostgreSQL schema:
@@ -257,7 +276,7 @@ All UI text, labels, win type names, and rules reference available in both Swedi
 
 ---
 
-### Phase 12 — Matchmaking
+### Phase 13 — Matchmaking
 **Goal:** Find a random opponent automatically.
 
 - [ ] Matchmaking queue in Redis: players join queue with ELO range preference
@@ -269,7 +288,7 @@ All UI text, labels, win type names, and rules reference available in both Swedi
 
 ---
 
-### Phase 13 — Tournaments (future)
+### Phase 14 — Tournaments (future)
 **Goal:** Organised tournament play — natural fit for Medeltidsdagar and online championships.
 
 - [ ] Tournament types: single elimination, round robin, Swiss system
@@ -313,6 +332,7 @@ All UI text, labels, win type names, and rules reference available in both Swedi
 | Phase 8 — OAuth Auth | ✅ Done | |
 | Phase 9 — Game Rooms & Invitations | ✅ Done | |
 | Phase 10 — WebSocket Game Server | ✅ Done | |
-| Phase 11 — Match History & ELO | ⏳ Pending | |
-| Phase 12 — Matchmaking | ⏳ Pending | |
-| Phase 13 — Tournaments | ⏳ Pending | |
+| Phase 11 — Server-Side AI Opponents | ⏳ Pending | |
+| Phase 12 — Match History & ELO | ⏳ Pending | |
+| Phase 13 — Matchmaking | ⏳ Pending | |
+| Phase 14 — Tournaments | ⏳ Pending | |

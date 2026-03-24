@@ -6,7 +6,7 @@
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "lint": "eslint src/",
-    "test": "node --experimental-vm-modules node_modules/.bin/jest"
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
   },
   "dependencies": {
     "cookie-parser": "^1.4.6",

@@ -1,0 +1,218 @@
+import { initGame, rollDice, canBearOff, getLegalMoves, applyMove, checkWin } from "./engine.js";
+
+// ── initGame ──────────────────────────────────────────────────────────────────
+
+test("initGame sets up correct starting position", () => {
+  const gs = initGame();
+  expect(gs.board[23]).toBe(15);   // white: all on point 24
+  expect(gs.board[0]).toBe(-15);   // black: all on point 1
+  expect(gs.bar).toEqual({ white: 0, black: 0 });
+  expect(gs.off).toEqual({ white: 0, black: 0 });
+  expect(gs.turn).toBe("white");
+  expect(gs.phase).toBe("rolling");
+  expect(gs.board.reduce((a, b) => a + Math.abs(b), 0)).toBe(30);
+});
+
+// ── rollDice ──────────────────────────────────────────────────────────────────
+
+test("rollDice returns 2 dice normally", () => {
+  // Run many times to confirm non-doubles gives 2
+  let saw2 = false;
+  for (let i = 0; i < 200; i++) {
+    const d = rollDice();
+    expect(d.length === 2 || d.length === 4).toBe(true);
+    if (d.length === 2) { saw2 = true; expect(d[0]).not.toBe(d[1]); }
+    if (d.length === 4) { expect(new Set(d).size).toBe(1); }
+    d.forEach(v => { expect(v).toBeGreaterThanOrEqual(1); expect(v).toBeLessThanOrEqual(6); });
+  }
+  expect(saw2).toBe(true);
+});
+
+// ── canBearOff ────────────────────────────────────────────────────────────────
+
+test("canBearOff false when checkers outside home", () => {
+  const gs = initGame();
+  expect(canBearOff(gs, "white")).toBe(false);
+  expect(canBearOff(gs, "black")).toBe(false);
+});
+
+test("canBearOff true when all white checkers in indices 0-5", () => {
+  const gs = initGame();
+  gs.board[23] = 0;
+  gs.board[0]  = 0;
+  gs.board[0]  = 3; gs.board[1] = 4; gs.board[2] = 4; gs.board[3] = 4;
+  expect(canBearOff(gs, "white")).toBe(true);
+});
+
+test("canBearOff false when checker is on bar", () => {
+  const gs = initGame();
+  gs.board[23] = 0;
+  gs.board[0]  = 15;
+  gs.bar.white = 1;
+  expect(canBearOff(gs, "white")).toBe(false);
+});
+
+// ── getLegalMoves ─────────────────────────────────────────────────────────────
+
+test("getLegalMoves returns empty when dice is empty", () => {
+  const gs = initGame();
+  gs.dice = [];
+  expect(getLegalMoves(gs, "white")).toEqual([]);
+});
+
+test("getLegalMoves from starting position with die [1]", () => {
+  const gs = initGame();
+  gs.dice = [1];
+  const moves = getLegalMoves(gs, "white");
+  // White at index 23, die=1 → to index 22
+  expect(moves).toContainEqual({ from: 23, to: 22, die: 1 });
+  // Index 22 is in [13..22] for black's closing zone, but white landing there is fine
+  // (it's not white's closing zone which is [1..10])
+});
+
+test("getLegalMoves bar has priority", () => {
+  const gs = initGame();
+  gs.board[23] = 14;
+  gs.bar.white = 1;
+  gs.dice = [1]; // white re-enters at 24-1 = index 23
+  const moves = getLegalMoves(gs, "white");
+  expect(moves.every(m => m.from === "bar")).toBe(true);
+});
+
+test("getLegalMoves white cannot close (make 2+) at indices 1-10", () => {
+  const gs = initGame();
+  gs.board[23] = 13;
+  gs.board[5]  = 1;  // 1 white checker already at index 5
+  gs.dice = [1];
+  // Moving from index 5 with die=1 → to index 4 (fine, index 4 is in [1..10] but index 4 has 0 white)
+  // Moving from index 6 with die=1 → to index 5, but index 5 already has 1 white → would make 2 → BLOCKED
+  gs.board[6] = 1;
+  const moves = getLegalMoves(gs, "white");
+  expect(moves.find(m => m.from === 6 && m.to === 5)).toBeUndefined();
+});
+
+test("getLegalMoves black cannot close at indices 13-22", () => {
+  const gs = initGame();
+  gs.board[0]  = -13;
+  gs.board[15] = -1;  // 1 black checker at index 15
+  gs.board[14] = -1;  // black at 14
+  gs.dice = [1];
+  // Moving from index 14 with die=1 → to index 15, already has 1 black → would be 2 → BLOCKED
+  const moves = getLegalMoves(gs, "black");
+  expect(moves.find(m => m.from === 14 && m.to === 15)).toBeUndefined();
+});
+
+test("getLegalMoves bear-off exact", () => {
+  const gs = initGame();
+  gs.board[23] = 0; gs.board[0] = 0;
+  gs.board[5]  = 15;  // all white in home (exact die for idx 5 = 6)
+  gs.dice = [6];
+  const moves = getLegalMoves(gs, "white");
+  expect(moves).toContainEqual({ from: 5, to: "off", die: 6 });
+});
+
+test("getLegalMoves bear-off overshoot allowed when no checker further back", () => {
+  const gs = initGame();
+  gs.board[23] = 0; gs.board[0] = 0;
+  gs.board[3]  = 15;  // all white at idx 3, exact die = 4
+  gs.dice = [6];
+  const moves = getLegalMoves(gs, "white");
+  // die=6 > exact=4, no checker at higher index → overshoot ok
+  expect(moves).toContainEqual({ from: 3, to: "off", die: 6 });
+});
+
+test("getLegalMoves bear-off overshoot blocked when checker further back", () => {
+  const gs = initGame();
+  gs.board[23] = 0; gs.board[0] = 0;
+  gs.board[3]  = 14;
+  gs.board[4]  = 1;   // checker at idx 4 (further from edge for white)
+  gs.dice = [6];
+  const moves = getLegalMoves(gs, "white");
+  // Cannot overshoot from idx 3 because idx 4 has a checker
+  expect(moves.find(m => m.from === 3 && m.to === "off")).toBeUndefined();
+  // Can bear off from idx 4 exactly (exact for idx4 = 5, die=6 > 5, overshoot, no checker at idx 5) → wait idx4 exact = 5
+  // die=6 > 5, and no checker at idx 5 → allowed
+  expect(moves).toContainEqual({ from: 4, to: "off", die: 6 });
+});
+
+// ── applyMove ─────────────────────────────────────────────────────────────────
+
+test("applyMove moves checker on board", () => {
+  const gs = initGame();
+  gs.dice = [1];
+  const { gs: newGs } = applyMove(gs, "white", 23, 22, 1);
+  expect(newGs.board[23]).toBe(14);
+  expect(newGs.board[22]).toBe(1);
+  expect(newGs.dice).toEqual([]);
+});
+
+test("applyMove hits a blot", () => {
+  const gs = initGame();
+  gs.board[23] = 1;
+  gs.board[22] = -1;  // black blot at 22
+  gs.dice = [1];
+  const { gs: newGs, hit } = applyMove(gs, "white", 23, 22, 1);
+  expect(hit).toBe(true);
+  expect(newGs.board[22]).toBe(1);    // white now there
+  expect(newGs.bar.black).toBe(1);    // black hit to bar
+});
+
+test("applyMove bar re-entry", () => {
+  const gs = initGame();
+  gs.board[23] = 14;
+  gs.bar.white = 1;
+  gs.dice = [1]; // white enters at 24-1 = index 23
+  const { gs: newGs } = applyMove(gs, "white", "bar", 23, 1);
+  expect(newGs.bar.white).toBe(0);
+  expect(newGs.board[23]).toBe(15);
+});
+
+test("applyMove bear-off", () => {
+  const gs = initGame();
+  gs.board[23] = 0; gs.board[0] = 0;
+  gs.board[0]  = 15;
+  gs.dice = [1];
+  const { gs: newGs } = applyMove(gs, "white", 0, "off", 1);
+  expect(newGs.off.white).toBe(1);
+  expect(newGs.board[0]).toBe(14);
+});
+
+// ── checkWin ──────────────────────────────────────────────────────────────────
+
+test("checkWin returns null mid-game", () => {
+  expect(checkWin(initGame())).toBeNull();
+});
+
+test("checkWin detects normal white win", () => {
+  const gs = initGame();
+  gs.off.white = 15;
+  gs.off.black = 5; // black has borne off some
+  const result = checkWin(gs);
+  expect(result?.winner).toBe("white");
+  expect(result?.winType).toBe("normal");
+  expect(result?.points).toBe(1);
+});
+
+test("checkWin detects gammon (opponent borne off 0)", () => {
+  const gs = initGame();
+  gs.board[23] = 0; gs.board[0] = 0;
+  gs.off.white = 15;
+  gs.off.black = 0;
+  gs.board[5] = -15; // black not at start
+  const result = checkWin(gs);
+  expect(result?.winner).toBe("white");
+  expect(result?.winType).toBe("gammon");
+  expect(result?.points).toBe(2);
+});
+
+test("checkWin detects monk (all black still at start)", () => {
+  const gs = initGame();
+  gs.board[23] = 0;
+  gs.off.white = 15;
+  gs.off.black = 0;
+  gs.board[0] = -15; // all black still at their start
+  const result = checkWin(gs);
+  expect(result?.winner).toBe("white");
+  expect(result?.winType).toBe("monk");
+  expect(result?.points).toBe(3);
+});

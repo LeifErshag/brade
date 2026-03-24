@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 // Validate request body against a Zod schema
 // Returns 400 with validation errors if invalid — never passes bad data downstream
 export function validate(schema) {
