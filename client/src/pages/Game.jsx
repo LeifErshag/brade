@@ -107,7 +107,7 @@ export default function Game() {
       if (res.ok) setSearchResults(await res.json());
     }, 300);
     return () => clearTimeout(t);
-  }, [searchQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [searchQuery]);
 
   // Derived state
   const myColor   = !room ? null

@@ -198,8 +198,6 @@ export default function Board({
   const barWhite = gs.bar.white;
   const barBlack = gs.bar.black;
   const barSel   = selected === "bar";
-  const barDest  = legalDests.has("bar");
-
   const barStyle = {
     ...C.barCell,
     ...(barSel ? { background: "#5a6a00", outline: "2px solid #c8e020" } : {}),

@@ -22,7 +22,7 @@ export function useSocket({ roomId, token, onMessage, onOpen, onClose }) {
     ws.current.onclose = () => onClose?.();
     ws.current.onerror = (e) => console.error("WS error", e);
     return () => ws.current?.close();
-  }, [roomId, token]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [roomId, token]);
 
   return { send };
 }
