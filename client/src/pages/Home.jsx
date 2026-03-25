@@ -190,8 +190,9 @@ export default function Home() {
             </div>
 
             <div style={S.row}>
-              <Link to="/profile"     style={S.btnSecondary}>Profile</Link>
-              <Link to="/leaderboard" style={S.btnSecondary}>Leaderboard</Link>
+              <Link to="/profile"      style={S.btnSecondary}>Profile</Link>
+              <Link to="/leaderboard"  style={S.btnSecondary}>Leaderboard</Link>
+              <Link to="/tournaments"  style={S.btnSecondary}>Tournaments</Link>
               <button style={S.btnSecondary} onClick={logout}>Sign out</button>
             </div>
 

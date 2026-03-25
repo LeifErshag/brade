@@ -22,7 +22,8 @@
       "Bash(npm run:*)",
       "Bash(npm test:*)",
       "Bash(\"/c/Program Files/nodejs/node.exe\" node_modules/eslint/bin/eslint.js src/)",
-      "Bash(\"/c/Program Files/nodejs/node.exe\" -e \"const p=require\\(''./package.json''\\); console.log\\(JSON.stringify\\(p.eslintConfig||p[''eslint'']||''none''\\)\\); console.log\\(JSON.stringify\\(Object.keys\\(p\\)\\)\\)\")"
+      "Bash(\"/c/Program Files/nodejs/node.exe\" -e \"const p=require\\(''./package.json''\\); console.log\\(JSON.stringify\\(p.eslintConfig||p[''eslint'']||''none''\\)\\); console.log\\(JSON.stringify\\(Object.keys\\(p\\)\\)\\)\")",
+      "Bash(where node:*)"
     ]
   }
 }

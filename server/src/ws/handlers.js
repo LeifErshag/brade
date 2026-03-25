@@ -4,6 +4,7 @@ import { send, broadcastToRoom, broadcastState, sendToUser } from "./server.js";
 import { initGame, rollDice, getLegalMoves, applyMove, checkWin } from "../game/engine.js";
 import { computeElo } from "../game/elo.js";
 import { pickMove } from "../game/ai.js";
+import { advanceTournament } from "../game/tournament.js";
 
 // ── Disconnect forfeit timers ─────────────────────────────────────────────────
 const forfeitTimers = new Map(); // key: `${roomId}:${color}`
@@ -445,6 +446,14 @@ async function handleGameOver(redis, roomId, room, result) {
       score:   room.score,
       winType,
     });
+
+    // Advance tournament bracket if this was a tournament match
+    if (room.tournamentId && room.tournamentMatchId) {
+      const winnerId = room.players[winner];
+      const loserId  = room.players[opp(winner)];
+      advanceTournament(room.tournamentId, room.tournamentMatchId, winnerId, loserId)
+        .catch(err => console.error("Tournament advance error:", err.message));
+    }
   } else {
     // Start next game in match
     room.gameNum++;

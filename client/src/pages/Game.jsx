@@ -225,7 +225,10 @@ export default function Game() {
 
         {/* Header */}
         <div style={S.header}>
-          <Link to="/" style={S.back}>← Home</Link>
+          {room?.tournamentId
+            ? <Link to={`/tournaments/${room.tournamentId}`} style={S.back}>← Tournament</Link>
+            : <Link to="/" style={S.back}>← Home</Link>
+          }
           <h2 style={S.title}>Room {roomId}</h2>
           {room && <span style={S.matchLen}>Best of {room.matchLength}</span>}
           {wsStatus === "disconnected" && <span style={S.disconnected}>Disconnected</span>}
