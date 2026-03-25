@@ -333,6 +333,6 @@ All UI text, labels, win type names, and rules reference available in both Swedi
 | Phase 9 — Game Rooms & Invitations | ✅ Done | |
 | Phase 10 — WebSocket Game Server | ✅ Done | |
 | Phase 11 — Server-Side AI Opponents | ✅ Done | Beginner/Journeyman/Master (Claude Haiku), auto-play loop, ELO vs AI |
-| Phase 12 — Match History & ELO | ⏳ Pending | |
+| Phase 12 — Match History & ELO | ✅ Done | Profile page with game history, ELO deltas, leaderboard |
 | Phase 13 — Matchmaking | ⏳ Pending | |
 | Phase 14 — Tournaments | ⏳ Pending | |

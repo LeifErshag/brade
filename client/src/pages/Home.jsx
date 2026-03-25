@@ -132,7 +132,8 @@ export default function Home() {
             </div>
 
             <div style={S.row}>
-              <Link to="/profile" style={S.btnSecondary}>Profile</Link>
+              <Link to="/profile"     style={S.btnSecondary}>Profile</Link>
+              <Link to="/leaderboard" style={S.btnSecondary}>Leaderboard</Link>
               <button style={S.btnSecondary} onClick={logout}>Sign out</button>
             </div>
 
@@ -196,10 +197,15 @@ export default function Home() {
             </div>
           </>
         ) : (
-          <div style={S.row}>
-            <a href={`${API}/auth/google`} style={S.btnPrimary}>Sign in with Google</a>
-            <a href={`${API}/auth/github`} style={S.btnSecondary}>Sign in with GitHub</a>
-          </div>
+          <>
+            <div style={S.row}>
+              <a href={`${API}/auth/google`} style={S.btnPrimary}>Sign in with Google</a>
+              <a href={`${API}/auth/github`} style={S.btnSecondary}>Sign in with GitHub</a>
+            </div>
+            <div style={{ marginTop: 16 }}>
+              <Link to="/leaderboard" style={{ ...S.btnSecondary, fontSize: 12 }}>Leaderboard</Link>
+            </div>
+          </>
         )}
       </div>
     </div>

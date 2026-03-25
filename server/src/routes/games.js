@@ -134,14 +134,16 @@ router.get("/:roomId", requireAuth, async (req, res) => {
 router.get("/", requireAuth, async (req, res) => {
   const { rows } = await query(
     `SELECT g.id, g.room_id, g.win_type, g.monk,
-            g.white_score, g.black_score, g.ended_at,
-            g.white_elo_after, g.black_elo_after,
+            g.white_score, g.black_score, g.ended_at, g.match_length,
+            g.white_id, g.black_id, g.winner_id,
+            g.white_elo_before, g.white_elo_after,
+            g.black_elo_before, g.black_elo_after,
             w.display_name AS white_name, b.display_name AS black_name
      FROM games g
      LEFT JOIN users w ON w.id = g.white_id
      LEFT JOIN users b ON b.id = g.black_id
-     WHERE g.white_id = $1 OR g.black_id = $1
-     ORDER BY g.started_at DESC
+     WHERE (g.white_id = $1 OR g.black_id = $1) AND g.ended_at IS NOT NULL
+     ORDER BY g.ended_at DESC
      LIMIT 20`,
     [req.userId]
   );
