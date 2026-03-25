@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../AuthContext.jsx";
 
@@ -122,12 +122,33 @@ export default function TournamentDetail() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Poll while active so standings update as matches complete
+  // Poll while not finished so the non-creator sees the tournament start
+  // and both players see when subsequent rounds open.
+  const statusRef = useRef(null);
   useEffect(() => {
-    if (!data || data.status !== "active") return;
-    const interval = setInterval(load, 5000);
+    const status = data?.status;
+    if (!status || status === "finished" || status === "cancelled") return;
+    const interval = setInterval(load, 3000);
     return () => clearInterval(interval);
-  }, [data, load]);
+  }, [data?.status, load]);
+
+  // Auto-navigate to game room when a match becomes available for this user
+  useEffect(() => {
+    if (!data || !user) return;
+    const { matches: mx = [], ...t } = data;
+    const myMatch = mx.find(m =>
+      m.round === t.current_round &&
+      m.status === "playing" &&
+      m.room_id &&
+      (m.white_id === user.id || m.black_id === user.id)
+    );
+    // Only redirect when we were just waiting (registration or between rounds)
+    const prevStatus = statusRef.current;
+    statusRef.current = t.status;
+    if (myMatch && prevStatus === "registration") {
+      navigate(`/game/${myMatch.room_id}`);
+    }
+  }, [data, user, navigate]);
 
   async function handleJoin() {
     const res = await authFetch(`/api/tournaments/${id}/join`, { method: "POST" });

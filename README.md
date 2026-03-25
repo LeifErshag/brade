@@ -45,17 +45,12 @@ cp .env.example server/.env
 # Fill in your OAuth credentials and secrets
 ```
 
-### 4. Run database migrations
-```bash
-psql postgresql://postgres:dev@localhost:5432/brade -f server/src/db/migrations/001_init.sql
-```
-
-### 5. Start backend
+### 4. Start backend
 ```bash
 cd server && npm install && npm run dev
 ```
 
-### 6. Start frontend
+### 5. Start frontend
 ```bash
 cd client && npm install && npm run dev
 ```
