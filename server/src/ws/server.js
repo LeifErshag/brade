@@ -38,9 +38,12 @@ export function initWebSocketServer(httpServer) {
     if (!rawRoom) { ws.close(4003, "Room not found"); return; }
 
     let room = JSON.parse(rawRoom);
+    // Reset TTL on every connect so active rooms never expire mid-session
+    await redis.expire(keys.room(roomId), TTL.room);
 
-    // Auto-assign black seat if empty and this is not the white player
-    if (!room.players.black && room.players.white !== userId) {
+    // Auto-assign black seat if empty and this is not the white player.
+    // Tournament rooms always have both seats pre-assigned — skip for them.
+    if (!room.tournamentId && !room.players.black && room.players.white !== userId) {
       let blackInfo;
       if (isGuest) {
         blackInfo = { display_name: guestDisplayName, avatar_url: null };

@@ -124,7 +124,6 @@ export default function TournamentDetail() {
 
   // Poll while not finished so the non-creator sees the tournament start
   // and both players see when subsequent rounds open.
-  const statusRef = useRef(null);
   useEffect(() => {
     const status = data?.status;
     if (!status || status === "finished" || status === "cancelled") return;
@@ -132,20 +131,22 @@ export default function TournamentDetail() {
     return () => clearInterval(interval);
   }, [data?.status, load]);
 
-  // Auto-navigate to game room when a match becomes available for this user
+  // Auto-navigate to game room whenever there is an active match for this user.
+  // redirectedRef tracks the last room_id we sent the user to so we don't
+  // redirect in a loop if they intentionally navigate back to the standings.
+  const redirectedRef = useRef(null);
   useEffect(() => {
     if (!data || !user) return;
     const { matches: mx = [], ...t } = data;
+    if (t.status !== "active") return;
     const myMatch = mx.find(m =>
       m.round === t.current_round &&
       m.status === "playing" &&
       m.room_id &&
       (m.white_id === user.id || m.black_id === user.id)
     );
-    // Only redirect when we were just waiting (registration or between rounds)
-    const prevStatus = statusRef.current;
-    statusRef.current = t.status;
-    if (myMatch && prevStatus === "registration") {
+    if (myMatch && redirectedRef.current !== myMatch.room_id) {
+      redirectedRef.current = myMatch.room_id;
       navigate(`/game/${myMatch.room_id}`);
     }
   }, [data, user, navigate]);

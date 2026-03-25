@@ -252,18 +252,19 @@ export async function advanceTournament(tournamentId, matchId, winnerId, loserId
       await finalizeTournament(t, active[0]?.player_id ?? winnerId);
       return;
     }
-    // Pair survivors (seeded order: best vs 2nd, etc.)
-    const playerIds = active.map(p => p.player_id);
-    const pairs     = generateSingleEliminationRound1(playerIds); // reuse seeding logic
-    await createMatchRound(tournamentId, nextRound, t.match_length, pairs);
-    await query(
-      `UPDATE tournaments SET current_round = $2 WHERE id = $1`,
-      [tournamentId, nextRound]
+    // Claim the round advance atomically — bail if another call got here first
+    const { rowCount: claimed } = await query(
+      `UPDATE tournaments SET current_round = $2
+       WHERE  id = $1 AND current_round = $3`,
+      [tournamentId, nextRound, t.current_round]
     );
+    if (claimed === 0) return;
+    const playerIds = active.map(p => p.player_id);
+    const pairs     = generateSingleEliminationRound1(playerIds);
+    await createMatchRound(tournamentId, nextRound, t.match_length, pairs);
 
   } else if (t.tournament_type === "round_robin") {
     if (nextRound > t.total_rounds) {
-      // Find winner by standings
       const { rows: [top] } = await query(
         `SELECT player_id FROM tournament_players
          WHERE  tournament_id = $1
@@ -274,7 +275,12 @@ export async function advanceTournament(tournamentId, matchId, winnerId, loserId
       await finalizeTournament(t, top?.player_id ?? null);
       return;
     }
-    // Re-generate the schedule and pick the next round's pairs
+    const { rowCount: claimed } = await query(
+      `UPDATE tournaments SET current_round = $2
+       WHERE  id = $1 AND current_round = $3`,
+      [tournamentId, nextRound, t.current_round]
+    );
+    if (claimed === 0) return;
     const { rows: players } = await query(
       `SELECT player_id FROM tournament_players
        WHERE  tournament_id = $1
@@ -284,10 +290,6 @@ export async function advanceTournament(tournamentId, matchId, winnerId, loserId
     const allRounds = generateRoundRobin(players.map(p => p.player_id));
     const pairs     = allRounds[nextRound - 1];
     await createMatchRound(tournamentId, nextRound, t.match_length, pairs);
-    await query(
-      `UPDATE tournaments SET current_round = $2 WHERE id = $1`,
-      [tournamentId, nextRound]
-    );
 
   } else {
     // Swiss
@@ -302,6 +304,12 @@ export async function advanceTournament(tournamentId, matchId, winnerId, loserId
       await finalizeTournament(t, top?.player_id ?? null);
       return;
     }
+    const { rowCount: claimed } = await query(
+      `UPDATE tournaments SET current_round = $2
+       WHERE  id = $1 AND current_round = $3`,
+      [tournamentId, nextRound, t.current_round]
+    );
+    if (claimed === 0) return;
     const { rows: players } = await query(
       `SELECT player_id, wins, losses FROM tournament_players
        WHERE  tournament_id = $1
@@ -316,14 +324,19 @@ export async function advanceTournament(tournamentId, matchId, winnerId, loserId
     const standings   = players.map(p => ({ playerId: p.player_id, wins: p.wins, losses: p.losses }));
     const pairs       = generateSwissPairings(standings, previousSet);
     await createMatchRound(tournamentId, nextRound, t.match_length, pairs);
-    await query(
-      `UPDATE tournaments SET current_round = $2 WHERE id = $1`,
-      [tournamentId, nextRound]
-    );
   }
 }
 
 async function finalizeTournament(t, winnerId) {
+  // Claim finalization atomically — bail if another call already finished it
+  const { rowCount } = await query(
+    `UPDATE tournaments
+        SET status = 'finished', winner_id = $2, ended_at = now()
+      WHERE id = $1 AND status = 'active'`,
+    [t.id, winnerId]
+  );
+  if (rowCount === 0) return;
+
   // Assign final ranks based on standings
   const { rows: players } = await query(
     `SELECT player_id FROM tournament_players
@@ -338,10 +351,4 @@ async function finalizeTournament(t, winnerId) {
       [t.id, players[i].player_id, i + 1]
     );
   }
-  await query(
-    `UPDATE tournaments
-        SET status = 'finished', winner_id = $2, ended_at = now()
-      WHERE id = $1`,
-    [t.id, winnerId]
-  );
 }
