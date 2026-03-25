@@ -111,14 +111,14 @@ export default function TournamentDetail() {
   const [actionErr, setActionErr] = useState(null);
 
   const load = useCallback(async () => {
-    const res = await fetch(`/api/tournaments/${id}`);
+    const res = await authFetch(`/api/tournaments/${id}`);
     if (res.ok) {
       setData(await res.json());
     } else {
       setError("Tournament not found");
     }
     setLoading(false);
-  }, [id]);
+  }, [id, authFetch]);
 
   useEffect(() => { load(); }, [load]);
 

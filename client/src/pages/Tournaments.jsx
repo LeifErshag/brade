@@ -88,7 +88,7 @@ export default function Tournaments() {
   async function loadTournaments() {
     setLoadingList(true);
     try {
-      const res = await fetch("/api/tournaments");
+      const res = await authFetch("/api/tournaments");
       if (res.ok) setTournaments(await res.json());
     } finally {
       setLoadingList(false);
