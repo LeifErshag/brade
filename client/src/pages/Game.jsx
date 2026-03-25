@@ -4,6 +4,8 @@ import { useAuth } from "../AuthContext.jsx";
 import { useSocket } from "../hooks/useSocket.js";
 import Board from "../components/Board.jsx";
 
+const API = import.meta.env.VITE_API_URL ?? "";
+
 // ── Styles ────────────────────────────────────────────────────────────────────
 const S = {
   page: {
@@ -67,12 +69,30 @@ const S = {
 
   muted:    { color: "#6b3a10", textAlign: "center" },
   errorMsg: { color: "#c0392b", textAlign: "center" },
+
+  // Guest join page
+  guestBox:    { textAlign: "center", maxWidth: 340, margin: "0 auto" },
+  guestTitle:  { color: "#e8b86d", fontSize: 20, marginBottom: 8 },
+  guestSub:    { color: "#a07840", fontSize: 13, marginBottom: 24 },
+  btnGuest:    { background: "#6b3a10", color: "#e8b86d", border: "none", borderRadius: 8, padding: "11px 28px", fontSize: 15, cursor: "pointer", width: "100%", marginBottom: 16 },
+  orDivider:   { color: "#4a2800", fontSize: 12, margin: "0 0 16px" },
+  loginRow:    { display: "flex", gap: 10, justifyContent: "center" },
+  btnLogin:    { background: "#3a1a00", color: "#a07840", border: "1px solid #6b3a10", borderRadius: 8, padding: "8px 18px", fontSize: 13, cursor: "pointer", textDecoration: "none" },
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function Game() {
   const { roomId } = useParams();
   const { user, loading, token, authFetch } = useAuth();
+
+  // Guest session — persisted in sessionStorage so refresh doesn't kick them out
+  const [guestToken, setGuestToken] = useState(
+    () => sessionStorage.getItem(`guest_token_${roomId}`) ?? null
+  );
+  const [guestId, setGuestId] = useState(
+    () => sessionStorage.getItem(`guest_id_${roomId}`) ?? null
+  );
+  const [guestJoining, setGuestJoining] = useState(false);
 
   const [room, setRoom]                     = useState(null);
   const [spectatorCount, setSpectatorCount] = useState(0);
@@ -81,6 +101,10 @@ export default function Game() {
   const [searchResults, setSearchResults]   = useState([]);
   const [copyFeedback, setCopyFeedback]     = useState(false);
   const [invitedIds, setInvitedIds]         = useState(new Set());
+
+  // Use whichever token is available (real auth takes precedence over guest)
+  const wsToken = token || guestToken;
+  const myId    = user?.id || guestId;
 
   const handleMessage = useCallback((msg) => {
     switch (msg.type) {
@@ -92,8 +116,8 @@ export default function Game() {
   }, []);
 
   const { send } = useSocket({
-    roomId: (!loading && user && token) ? roomId : null,
-    token,
+    roomId: (wsToken && !loading) ? roomId : null,
+    token:  wsToken,
     onMessage: handleMessage,
     onOpen:  () => setWsStatus("connected"),
     onClose: () => setWsStatus("disconnected"),
@@ -109,13 +133,29 @@ export default function Game() {
     return () => clearTimeout(t);
   }, [searchQuery]);
 
+  async function handleJoinAsGuest() {
+    setGuestJoining(true);
+    try {
+      const res = await fetch(`${API}/api/guest`, { method: "POST" });
+      if (res.ok) {
+        const { token: gt, guestId: gid } = await res.json();
+        sessionStorage.setItem(`guest_token_${roomId}`, gt);
+        sessionStorage.setItem(`guest_id_${roomId}`,    gid);
+        setGuestToken(gt);
+        setGuestId(gid);
+      }
+    } finally {
+      setGuestJoining(false);
+    }
+  }
+
   // Derived state
   const myColor   = !room ? null
-    : room.players.white === user?.id ? "white"
-    : room.players.black === user?.id ? "black"
+    : room.players.white === myId ? "white"
+    : room.players.black === myId ? "black"
     : null;
   const isPlayer  = myColor !== null;
-  const isHost    = room?.createdBy === user?.id;
+  const isHost    = room?.createdBy === myId;
   const bothIn    = !!(room?.players.white && room?.players.black);
   const bothReady = !!(room?.ready?.white && room?.ready?.black);
   const inviteUrl = `${window.location.origin}/game/${roomId}`;
@@ -140,13 +180,27 @@ export default function Game() {
 
   // ── Render ───────────────────────────────────────────────────────────────
 
-  if (loading) return <FullPage><p style={S.muted}>…</p></FullPage>;
+  if (loading && !guestToken) return <FullPage><p style={S.muted}>…</p></FullPage>;
 
-  if (!user) return (
+  // Not authenticated and no guest token yet — offer choices
+  if (!wsToken) return (
     <FullPage>
-      <div style={{ textAlign: "center" }}>
-        <p style={{ color: "#a07840", marginBottom: 16 }}>Log in to join this game.</p>
-        <Link to="/" style={{ color: "#e8b86d" }}>← Home</Link>
+      <div style={S.guestBox}>
+        <h2 style={S.guestTitle}>You&rsquo;re invited!</h2>
+        <p style={S.guestSub}>Join this game as a guest, or log in to keep your stats.</p>
+        <button
+          style={S.btnGuest}
+          onClick={handleJoinAsGuest}
+          disabled={guestJoining}
+        >
+          {guestJoining ? "Joining…" : "Play as Guest"}
+        </button>
+        <p style={S.orDivider}>— or sign in —</p>
+        <div style={S.loginRow}>
+          <a href={`${API}/auth/google`} style={S.btnLogin}>Google</a>
+          <a href={`${API}/auth/github`} style={S.btnLogin}>GitHub</a>
+        </div>
+        <Link to="/" style={{ display: "block", marginTop: 20, color: "#6b3a10", fontSize: 12 }}>← Back to Home</Link>
       </div>
     </FullPage>
   );
@@ -239,44 +293,46 @@ export default function Game() {
               </div>
             )}
 
-            {/* Invite */}
-            <div style={S.inviteSection}>
-              <h3 style={S.sectionTitle}>Invite a player</h3>
-              <div style={S.inviteRow}>
-                <input value={inviteUrl} readOnly style={S.inviteInput} />
-                <button onClick={handleCopyInvite} style={S.btnCopy}>
-                  {copyFeedback ? "Copied!" : "Copy link"}
-                </button>
+            {/* Invite — only show to the host, and only if no guest has joined yet */}
+            {isHost && !room.hasGuest && (
+              <div style={S.inviteSection}>
+                <h3 style={S.sectionTitle}>Invite a player</h3>
+                <div style={S.inviteRow}>
+                  <input value={inviteUrl} readOnly style={S.inviteInput} />
+                  <button onClick={handleCopyInvite} style={S.btnCopy}>
+                    {copyFeedback ? "Copied!" : "Copy link"}
+                  </button>
+                </div>
+                <input
+                  style={S.searchInput}
+                  placeholder="Search player by name…"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                />
+                {searchResults.length > 0 && (
+                  <ul style={S.searchResults}>
+                    {searchResults.map(u => (
+                      <li key={u.id} style={S.searchResult}>
+                        {u.avatar_url
+                          ? <img src={u.avatar_url} alt="" style={S.miniAvatar} />
+                          : <div style={{ ...S.miniAvatar, background: "#6b3a10", display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#e8b86d", fontSize: 13, flexShrink: 0 }}>
+                              {u.display_name?.[0]?.toUpperCase()}
+                            </div>
+                        }
+                        <span style={S.resultName}>{u.display_name}</span>
+                        <button
+                          onClick={() => handleInvite(u)}
+                          disabled={invitedIds.has(u.id)}
+                          style={invitedIds.has(u.id) ? S.btnInvited : S.btnInvite}
+                        >
+                          {invitedIds.has(u.id) ? "Invited ✓" : "Invite"}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
-              <input
-                style={S.searchInput}
-                placeholder="Search player by name…"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-              />
-              {searchResults.length > 0 && (
-                <ul style={S.searchResults}>
-                  {searchResults.map(u => (
-                    <li key={u.id} style={S.searchResult}>
-                      {u.avatar_url
-                        ? <img src={u.avatar_url} alt="" style={S.miniAvatar} />
-                        : <div style={{ ...S.miniAvatar, background: "#6b3a10", display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#e8b86d", fontSize: 13, flexShrink: 0 }}>
-                            {u.display_name?.[0]?.toUpperCase()}
-                          </div>
-                      }
-                      <span style={S.resultName}>{u.display_name}</span>
-                      <button
-                        onClick={() => handleInvite(u)}
-                        disabled={invitedIds.has(u.id)}
-                        style={invitedIds.has(u.id) ? S.btnInvited : S.btnInvite}
-                      >
-                        {invitedIds.has(u.id) ? "Invited ✓" : "Invite"}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+            )}
           </>
         )}
       </div>

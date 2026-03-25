@@ -64,22 +64,34 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
         ws && send(ws, { type: "ERROR", message: "Both players must be ready" }); break;
       }
 
-      // Fetch ELOs for both players
-      const { rows: players } = await query(
-        `SELECT id, elo FROM users WHERE id = ANY($1::uuid[])`,
-        [[room.players.white, room.players.black]]
-      );
-      const eloMap = Object.fromEntries(players.map(p => [p.id, p.elo]));
-      const wElo   = eloMap[room.players.white] ?? 1200;
-      const bElo   = eloMap[room.players.black] ?? 1200;
+      let wElo, bElo;
+      if (room.hasGuest) {
+        // Guest game: only look up the host's ELO; guest has no DB record
+        const { rows: [whiteRow] } = await query(
+          `SELECT elo FROM users WHERE id = $1`, [room.players.white]
+        );
+        wElo = whiteRow?.elo ?? 1200;
+        bElo = 1200;
+        // Don't update games table with black_id — guest has no DB user row
+      } else {
+        // Fetch ELOs for both players
+        const { rows: players } = await query(
+          `SELECT id, elo FROM users WHERE id = ANY($1::uuid[])`,
+          [[room.players.white, room.players.black]]
+        );
+        const eloMap = Object.fromEntries(players.map(p => [p.id, p.elo]));
+        wElo = eloMap[room.players.white] ?? 1200;
+        bElo = eloMap[room.players.black] ?? 1200;
 
-      // Persist black player + starting ELOs into the games record
-      await query(
-        `UPDATE games
-            SET black_id = $2, white_elo_before = $3, black_elo_before = $4
-          WHERE room_id = $1`,
-        [roomId, room.players.black, wElo, bElo]
-      );
+        // Persist black player + starting ELOs into the games record
+        await query(
+          `UPDATE games
+              SET black_id = $2, white_elo_before = $3, black_elo_before = $4
+            WHERE room_id = $1`,
+          [roomId, room.players.black, wElo, bElo]
+        );
+      }
+
       const { rows: [gameRow] } = await query(
         `SELECT id FROM games WHERE room_id = $1`, [roomId]
       );
@@ -339,7 +351,32 @@ async function handleGameOver(redis, roomId, room, result) {
   const matchOver = room.score[winner] >= needed;
 
   if (matchOver) {
-    // Compute ELO (use fixed 1200 for the AI opponent)
+    // ── Guest game: skip ELO, record result without black_id ─────────────
+    if (room.hasGuest) {
+      // winner_id must reference an existing user — null if guest won
+      const winnerIsGuest = winner === "black";
+      await query(
+        `UPDATE games
+            SET winner_id   = $2,
+                win_type    = $3,
+                monk        = $4,
+                white_score = $5,
+                black_score = $6,
+                ended_at    = now()
+          WHERE room_id = $1`,
+        [roomId, winnerIsGuest ? null : room.players.white, winType, monk ?? false,
+         room.score.white, room.score.black]
+      );
+      room.status      = "finished";
+      room.gameState   = null;
+      room.matchResult = { winner, score: room.score };
+      await saveRoom(redis, roomId, room);
+      broadcastState(roomId, room);
+      broadcastToRoom(roomId, { type: "MATCH_OVER", winner, score: room.score, winType });
+      return;
+    }
+
+    // ── Regular / AI game: compute ELO ───────────────────────────────────
     let wElo, bElo;
 
     if (room.isAi) {

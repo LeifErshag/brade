@@ -19,10 +19,14 @@ export function initWebSocketServer(httpServer) {
 
     if (!token || !roomId) { ws.close(4001, "Missing token or room"); return; }
 
-    let userId;
+    let userId, isGuest = false, guestDisplayName = "Guest";
     try {
       const payload = verifyAccessToken(token);
       userId = payload.sub;
+      if (payload.isGuest === true) {
+        isGuest = true;
+        guestDisplayName = payload.display_name ?? "Guest";
+      }
     } catch {
       ws.close(4001, "Invalid token"); return;
     }
@@ -37,16 +41,23 @@ export function initWebSocketServer(httpServer) {
 
     // Auto-assign black seat if empty and this is not the white player
     if (!room.players.black && room.players.white !== userId) {
-      const { rows: [player] } = await query(
-        `SELECT display_name, avatar_url FROM users WHERE id = $1`,
-        [userId]
-      );
-      room.players.black = userId;
-      room.playerInfo    = room.playerInfo ?? { white: null, black: null };
-      room.playerInfo.black = {
-        display_name: player?.display_name ?? "Player",
-        avatar_url:   player?.avatar_url   ?? null,
-      };
+      let blackInfo;
+      if (isGuest) {
+        blackInfo = { display_name: guestDisplayName, avatar_url: null };
+      } else {
+        const { rows: [player] } = await query(
+          `SELECT display_name, avatar_url FROM users WHERE id = $1`,
+          [userId]
+        );
+        blackInfo = {
+          display_name: player?.display_name ?? "Player",
+          avatar_url:   player?.avatar_url   ?? null,
+        };
+      }
+      room.players.black    = userId;
+      room.playerInfo       = room.playerInfo ?? { white: null, black: null };
+      room.playerInfo.black = blackInfo;
+      if (isGuest) room.hasGuest = true;
       await redis.set(keys.room(roomId), JSON.stringify(room), "EX", TTL.room);
     }
 

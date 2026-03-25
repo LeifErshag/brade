@@ -7,6 +7,16 @@ export function signAccessToken(userId) {
   });
 }
 
+// Guest tokens carry identity in the payload — no DB record needed.
+// They are valid for 4 hours (enough for any game session).
+export function signGuestToken(guestId, displayName) {
+  return jwt.sign(
+    { sub: guestId, isGuest: true, display_name: displayName },
+    process.env.JWT_ACCESS_SECRET,
+    { expiresIn: "4h" }
+  );
+}
+
 export function signRefreshToken(userId) {
   return jwt.sign({ sub: userId }, process.env.JWT_REFRESH_SECRET, {
     expiresIn: process.env.JWT_REFRESH_EXPIRY || "7d",
