@@ -8,10 +8,11 @@ import { createServer } from "http";
 import { initWebSocketServer } from "./ws/server.js";
 import { connectRedis } from "./db/redis.js";
 import { connectPostgres } from "./db/postgres.js";
-import authRoutes  from "./routes/auth.js";
-import gameRoutes  from "./routes/games.js";
-import userRoutes  from "./routes/users.js";
-import guestRoutes from "./routes/guest.js";
+import authRoutes        from "./routes/auth.js";
+import gameRoutes        from "./routes/games.js";
+import userRoutes        from "./routes/users.js";
+import guestRoutes       from "./routes/guest.js";
+import matchmakingRoutes from "./routes/matchmaking.js";
 import { rateLimitApi } from "./middleware/ratelimit.js";
 
 const app = express();
@@ -47,6 +48,7 @@ app.use("/auth", authRoutes);
 app.use("/api/games", gameRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/guest", guestRoutes);
+app.use("/api/matchmaking", matchmakingRoutes);
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ status: "ok" }));

@@ -16,11 +16,13 @@ export function getRedis() { return client; }
 // ── Key namespace helpers ─────────────────────────────────────────────────────
 // Keeps all keys organised and prevents collisions
 export const keys = {
-  room:         (id) => `room:${id}`,           // game room state (JSON)
-  roomPlayers:  (id) => `room:${id}:players`,   // set of player user IDs
-  refreshToken: (userId) => `refresh:${userId}`, // refresh token → userId
-  matchQueue:   ()  => "queue:match",            // sorted set for matchmaking
-  invite:       (id) => `invite:${id}`,          // invite link metadata
+  room:         (id)     => `room:${id}`,              // game room state (JSON)
+  roomPlayers:  (id)     => `room:${id}:players`,      // set of player user IDs
+  refreshToken: (userId) => `refresh:${userId}`,       // refresh token → userId
+  matchQueue:   ()       => "queue:match",              // sorted set: userId → ELO
+  matchInfo:    (userId) => `queue:match:info:${userId}`, // JSON: elo, joinedAt, matchLength, display_name, avatar_url
+  matchResult:  (userId) => `queue:match:result:${userId}`, // roomId when matched
+  invite:       (id)     => `invite:${id}`,            // invite link metadata
 };
 
 // TTLs (seconds)

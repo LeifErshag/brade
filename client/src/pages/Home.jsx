@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../AuthContext.jsx";
 
@@ -56,6 +56,64 @@ export default function Home() {
   const [roomCode, setRoomCode]         = useState("");
   const [joinError, setJoinError]       = useState(null);
   const [joining, setJoining]           = useState(false);
+
+  // Matchmaking
+  const [mmStatus, setMmStatus]       = useState("idle"); // "idle" | "waiting"
+  const [mmQueueSize, setMmQueueSize] = useState(0);
+  const [mmWaitSecs, setMmWaitSecs]   = useState(0);
+  const pollRef = useRef(null);
+
+  // Clean up polling on unmount
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+
+  function startPolling() {
+    if (pollRef.current) return;
+    pollRef.current = setInterval(async () => {
+      setMmWaitSecs(s => s + 1);
+      const res = await authFetch("/api/matchmaking/status");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.status === "matched") {
+        stopPolling();
+        setMmStatus("idle");
+        navigate(`/game/${data.roomId}`);
+      } else if (data.status === "waiting") {
+        setMmQueueSize(data.queueSize ?? 0);
+      } else {
+        stopPolling();
+        setMmStatus("idle");
+      }
+    }, 2500);
+  }
+
+  function stopPolling() {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }
+
+  async function handleFindMatch() {
+    setMmStatus("waiting");
+    setMmWaitSecs(0);
+    const res = await authFetch("/api/matchmaking/join", {
+      method: "POST",
+      body: JSON.stringify({ matchLength }),
+    });
+    if (!res.ok) { setMmStatus("idle"); return; }
+    const data = await res.json();
+    if (data.status === "matched") {
+      setMmStatus("idle");
+      navigate(`/game/${data.roomId}`);
+    } else {
+      setMmQueueSize(data.queueSize ?? 0);
+      startPolling();
+    }
+  }
+
+  async function handleCancelMatch() {
+    stopPolling();
+    setMmStatus("idle");
+    setMmWaitSecs(0);
+    await authFetch("/api/matchmaking/leave", { method: "POST" });
+  }
 
   async function handleCreateAi() {
     setCreatingAi(true);
@@ -175,6 +233,21 @@ export default function Home() {
                   {creatingAi ? "Starting…" : "Play vs AI"}
                 </button>
               </div>
+
+              <p style={{ ...S.sectionLabel, marginTop: 20 }}>Find a match</p>
+              {mmStatus === "waiting" ? (
+                <div style={S.playRow}>
+                  <span style={{ color: "#a07840", fontSize: 13 }}>
+                    Searching… {mmQueueSize > 1 ? `(${mmQueueSize} in queue)` : ""}
+                    {mmWaitSecs > 0 && ` · ${mmWaitSecs}s`}
+                  </span>
+                  <button onClick={handleCancelMatch} style={S.btnSecondary}>Cancel</button>
+                </div>
+              ) : (
+                <div style={S.playRow}>
+                  <button onClick={handleFindMatch} style={S.btnPrimary}>Find Match</button>
+                </div>
+              )}
 
               <p style={{ ...S.sectionLabel, marginTop: 20 }}>Join with code</p>
               <div style={S.playRow}>
