@@ -275,3 +275,86 @@ test("checkWin detects monk (all black still at start)", () => {
   expect(result?.winType).toBe("monk");
   expect(result?.points).toBe(3);
 });
+
+// ── checkWin — Jan ────────────────────────────────────────────────────────────
+// Black's entry zone (Q1) = indices 0-5. White's entry zone = indices 18-23.
+
+test("checkWin detects Jan: white just moved, black has more bar than accessible Q1 pts", () => {
+  const gs = initGame();
+  gs.board[23] = 0;
+  gs.board[0]  = 0;
+  // White closed 4 of black's 6 entry points (indices 0-3)
+  gs.board[0]  = 2;
+  gs.board[1]  = 2;
+  gs.board[2]  = 2;
+  gs.board[3]  = 2;
+  // Indices 4 and 5 empty → 2 accessible
+  gs.bar.black = 3;   // 3 > 2 → Jan
+  gs.turn      = "white";
+  const result = checkWin(gs);
+  expect(result?.winner).toBe("white");
+  expect(result?.winType).toBe("jan");
+  expect(result?.points).toBe(4);
+  expect(result?.monk).toBe(false);
+});
+
+test("checkWin no Jan when bar <= accessible", () => {
+  const gs = initGame();
+  gs.board[23] = 0;
+  gs.board[0]  = 0;
+  // White closed only 2 of black's entry points
+  gs.board[0]  = 2;
+  gs.board[1]  = 2;
+  // Indices 2-5 accessible → 4 accessible
+  gs.bar.black = 3;   // 3 <= 4 → no jan
+  gs.turn      = "white";
+  expect(checkWin(gs)).toBeNull();
+});
+
+test("checkWin: loser's own checker in Q1 counts as inaccessible (closing restriction)", () => {
+  const gs = initGame();
+  gs.board[23] = 0;
+  gs.board[0]  = 0;
+  // White closed 4 entry points
+  gs.board[0]  = 2;
+  gs.board[1]  = 2;
+  gs.board[2]  = 2;
+  gs.board[3]  = 2;
+  gs.board[4]  = -1;  // black's own checker at idx 4 → cannot re-enter (closing restriction)
+  // idx 5 empty → only 1 accessible
+  gs.bar.black = 2;   // 2 > 1 → Jan
+  gs.turn      = "white";
+  const result = checkWin(gs);
+  expect(result?.winner).toBe("white");
+  expect(result?.winType).toBe("jan");
+});
+
+test("checkWin detects Jan: black just moved, white has more bar than accessible Q1 pts", () => {
+  const gs = initGame();
+  gs.board[23] = 0;
+  gs.board[0]  = 0;
+  // Black closed 5 of white's 6 entry points (indices 18-22)
+  gs.board[18] = -2;
+  gs.board[19] = -2;
+  gs.board[20] = -2;
+  gs.board[21] = -2;
+  gs.board[22] = -2;
+  // idx 23 empty → 1 accessible
+  gs.bar.white = 2;   // 2 > 1 → Jan
+  gs.turn      = "black";
+  const result = checkWin(gs);
+  expect(result?.winner).toBe("black");
+  expect(result?.winType).toBe("jan");
+  expect(result?.points).toBe(4);
+});
+
+test("checkWin no Jan when bar is empty", () => {
+  const gs = initGame();
+  gs.board[23] = 0;
+  gs.board[0]  = 0;
+  gs.board[0] = 2; gs.board[1] = 2; gs.board[2] = 2;
+  gs.board[3] = 2; gs.board[4] = 2; gs.board[5] = 2;
+  gs.bar.black = 0;   // bar empty → no Jan possible
+  gs.turn      = "white";
+  expect(checkWin(gs)).toBeNull();
+});

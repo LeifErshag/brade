@@ -174,8 +174,44 @@ export function applyMove(gs, color, from, to, die) {
   return { gs: s, hit };
 }
 
+// Checks whether the player who just moved (gs.turn, before the turn flip) has
+// achieved Jan: the opponent has more checkers on the bar than accessible entry
+// points in their own Q1.
+//
+// Accessible = not blocked by opponent's closed point (≥2) AND no own checker
+// (closing restriction prevents re-entry onto own occupied Q1 point; head
+// restriction prevents re-entry onto own head point).
+//
+// white Q1 (entry zone): indices 18-23  (die 1→idx 23 … die 6→idx 18)
+// black Q1 (entry zone): indices  0-5   (die 1→idx 0  … die 6→idx 5)
+function checkJan(gs) {
+  const winner = gs.turn;
+  const loser  = winner === "white" ? "black" : "white";
+  if (gs.bar[loser] === 0) return null;
+
+  const q1 = loser === "white" ? [18, 19, 20, 21, 22, 23] : [0, 1, 2, 3, 4, 5];
+
+  let accessible = 0;
+  for (const idx of q1) {
+    const at = gs.board[idx];
+    const loserHere    = loser  === "white" ? at > 0  : at < 0;   // loser has ≥1 checker
+    const winnerClosed = winner === "white" ? at >= 2 : at <= -2;  // winner has closed point
+    if (!loserHere && !winnerClosed) accessible++;
+  }
+
+  if (gs.bar[loser] > accessible) {
+    return { winner, winType: "jan", points: 4, monk: false };
+  }
+  return null;
+}
+
 // Returns { winner, winType, points, monk } or null
 export function checkWin(gs) {
+  // Jan: more bar checkers than accessible Q1 entry points
+  const jan = checkJan(gs);
+  if (jan) return jan;
+
+  // Bear-off / gammon / monk
   function test(winner, loser) {
     if (gs.off[winner] !== 15) return null;
     const monk = gs.off[loser] === 0 && (

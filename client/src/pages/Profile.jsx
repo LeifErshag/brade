@@ -3,10 +3,12 @@ import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../AuthContext.jsx";
 
 const WIN_LABELS = {
-  normal: "Bearing off",
-  gammon: "Gammon",
-  monk:   "Monk",
-  resign: "Resign",
+  normal:      "Bearing off",
+  gammon:      "Gammon",
+  monk:        "Monk",
+  jan:         "Jan",
+  forced_jan:  "Forced Jan",
+  resign:      "Resign",
 };
 
 function fmtDate(iso) {
