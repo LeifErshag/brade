@@ -154,6 +154,7 @@ export default function Board({
   onMove,
   onPass,
   onResign,
+  readOnly = false,
 }) {
   const [selected, setSelected] = useState(null);
 
@@ -400,21 +401,23 @@ export default function Board({
       {diceAll && <div style={S.diceRow}>{diceAll}</div>}
 
       {/* Actions */}
-      <div style={S.actions}>
-        {canRoll && (
-          <button style={S.btnRoll} onClick={onRoll}>Roll</button>
-        )}
-        {noMoves && (
-          <button style={S.btnPass} onClick={onPass}>Pass (no moves)</button>
-        )}
-        <button style={S.btnResign}
-          onClick={() => { if (window.confirm("Resign this game?")) onResign(); }}>
-          Resign
-        </button>
-      </div>
+      {!readOnly && (
+        <div style={S.actions}>
+          {canRoll && (
+            <button style={S.btnRoll} onClick={onRoll}>Roll</button>
+          )}
+          {noMoves && (
+            <button style={S.btnPass} onClick={onPass}>Pass (no moves)</button>
+          )}
+          <button style={S.btnResign}
+            onClick={() => { if (window.confirm("Resign this game?")) onResign(); }}>
+            Resign
+          </button>
+        </div>
+      )}
 
-      {!isMyTurn && (
-        <div style={S.waiting}>Waiting for opponent\u2026</div>
+      {!readOnly && !isMyTurn && (
+        <div style={S.waiting}>Waiting for opponent…</div>
       )}
     </div>
   );

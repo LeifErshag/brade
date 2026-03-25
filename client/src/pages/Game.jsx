@@ -63,9 +63,14 @@ const S = {
   btnInvite:     { background: "#6b3a10", color: "#e8b86d", border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 12, cursor: "pointer" },
   btnInvited:    { background: "#1a5c1a", color: "#7ddb7d", border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 12, cursor: "default" },
 
-  matchResult: { textAlign: "center", padding: "24px 0" },
-  resultTitle: { color: "#e8b86d", fontSize: 24, marginBottom: 8 },
-  resultScore: { color: "#a07840", fontSize: 16, marginBottom: 20 },
+  resultBanner: {
+    background: "#2a1400", borderRadius: 10, padding: "20px 24px",
+    marginBottom: 24, textAlign: "center", border: "1px solid #4a2800",
+  },
+  resultTitle: { color: "#e8b86d", fontSize: 24, margin: "0 0 6px" },
+  resultWinType: { color: "#a07840", fontSize: 14, marginBottom: 10 },
+  resultScore: { color: "#a07840", fontSize: 15, marginBottom: 8 },
+  resultElo:   { color: "#6b3a10", fontSize: 12, marginBottom: 16 },
 
   muted:    { color: "#6b3a10", textAlign: "center" },
   errorMsg: { color: "#c0392b", textAlign: "center" },
@@ -229,7 +234,19 @@ export default function Game() {
         {!room ? (
           <p style={S.muted}>Connecting…</p>
         ) : room.status === "finished" ? (
-          <MatchResult room={room} myColor={myColor} />
+          <>
+            <MatchResult room={room} myColor={myColor} />
+            {room.gameState && (
+              <Board
+                gameState={room.gameState}
+                score={room.score}
+                matchLength={room.matchLength}
+                myColor={myColor}
+                playerInfo={room.playerInfo}
+                readOnly
+              />
+            )}
+          </>
         ) : room.status === "playing" && room.gameState ? (
           <>
             {spectatorCount > 0 && (
@@ -374,24 +391,35 @@ function PlayerCard({ label, info, ready, isYou }) {
   );
 }
 
+const WIN_LABELS = {
+  normal:     "Bearing off",
+  gammon:     "Gammon",
+  monk:       "Monk",
+  jan:        "Jan",
+  forced_jan: "Forced Jan",
+  resign:     "Resign",
+};
+
 function MatchResult({ room, myColor }) {
   const r = room.matchResult;
   if (!r) return null;
-  const iWon = r.winner === myColor;
+  const iWon       = r.winner === myColor;
   const winnerName = room.playerInfo?.[r.winner]?.display_name ?? r.winner;
+  const winLabel   = WIN_LABELS[r.winType] ?? r.winType ?? "";
+
+  const myEloAfter = myColor === "white" ? r.whiteEloAfter : r.blackEloAfter;
+
   return (
-    <div style={S.matchResult}>
+    <div style={S.resultBanner}>
       <div style={{ ...S.resultTitle, color: iWon ? "#7ddb7d" : "#c0392b" }}>
-        {iWon ? "You won the match!" : `${winnerName} wins the match`}
+        {iWon ? "You won!" : `${winnerName} wins`}
       </div>
+      {winLabel && <div style={S.resultWinType}>{winLabel}</div>}
       <div style={S.resultScore}>
         {room.playerInfo?.white?.display_name} {r.score.white} – {r.score.black} {room.playerInfo?.black?.display_name}
       </div>
-      {r.whiteEloAfter && (
-        <div style={{ color: "#6b3a10", fontSize: 12, marginBottom: 20 }}>
-          ELO: {room.playerInfo?.white?.display_name} → {r.whiteEloAfter} &nbsp;|&nbsp;
-          {room.playerInfo?.black?.display_name} → {r.blackEloAfter}
-        </div>
+      {myEloAfter && (
+        <div style={S.resultElo}>Your ELO: {myEloAfter}</div>
       )}
       <Link to="/" style={{ color: "#a07840", fontSize: 14 }}>← Back to Home</Link>
     </div>

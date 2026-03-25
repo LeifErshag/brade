@@ -368,8 +368,7 @@ async function handleGameOver(redis, roomId, room, result) {
          room.score.white, room.score.black]
       );
       room.status      = "finished";
-      room.gameState   = null;
-      room.matchResult = { winner, score: room.score };
+      room.matchResult = { winner, winType, score: room.score };
       await saveRoom(redis, roomId, room);
       broadcastState(roomId, room);
       broadcastToRoom(roomId, { type: "MATCH_OVER", winner, score: room.score, winType });
@@ -429,11 +428,11 @@ async function handleGameOver(redis, roomId, room, result) {
       );
     }
 
-    room.status    = "finished";
-    room.gameState = null;
+    room.status      = "finished";
     room.matchResult = {
       winner,
-      score:        room.score,
+      winType,
+      score:         room.score,
       whiteEloAfter: eloResult.whiteAfter,
       blackEloAfter: eloResult.blackAfter,
     };
