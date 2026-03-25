@@ -133,10 +133,15 @@ export default function Tournaments() {
     const res = await authFetch(`/api/tournaments/${id}/join`, { method: "POST" });
     if (res.ok) {
       navigate(`/tournaments/${id}`);
-    } else {
-      const data = await res.json().catch(() => ({}));
-      window.alert(data.error ?? "Could not join");
+      return;
     }
+    const body = await res.json().catch(() => ({}));
+    // Already a member, or tournament went active since page loaded — just go there
+    if (body.error === "Already registered" || body.error === "Registration is closed") {
+      navigate(`/tournaments/${id}`);
+      return;
+    }
+    window.alert(body.error ?? "Could not join");
   }
 
   return (
