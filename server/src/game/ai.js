@@ -28,6 +28,8 @@ function pickMoveRandom(legalMoves) {
 }
 
 // ── Journeyman: heuristic scoring ────────────────────────────────────────────
+// Strategy: build stacks/points aggressively, keep own home board (first
+// quarter, indices 0-5 for white / 18-23 for black) free of lone blots.
 
 function scoreMove(gs, color, move) {
   let score = 0;
@@ -35,34 +37,45 @@ function scoreMove(gs, color, move) {
   // Bearing off is always best
   if (move.to === "off") return 200;
 
-  // Re-entering from bar is urgent — handle first
+  // Re-entering from bar is urgent
   if (move.from === "bar") score += 100;
 
-  const atDest = move.to === "off" ? null : gs.board[move.to];
+  const dest = move.to;
+  const atDest = gs.board[dest]; // positive=white, negative=black, 0=empty
 
-  if (atDest !== null) {
-    // Hit an opponent blot
-    const oppBlot = color === "white" ? atDest === -1 : atDest === 1;
-    if (oppBlot) score += 60;
+  // Hit an opponent blot
+  const isOppBlot = color === "white" ? atDest === -1 : atDest === 1;
+  if (isOppBlot) score += 60;
 
-    // Build a point (place 2nd checker)
-    const alreadyOwn = color === "white" ? atDest >= 1 : atDest <= -1;
-    if (alreadyOwn) score += 25;
+  // Stack-building: strongly reward landing on own checkers
+  const ownCountAtDest = color === "white" ? atDest : -atDest;
+  if (ownCountAtDest === 1) score += 50;  // completing a point (2nd checker)
+  if (ownCountAtDest >= 2) score += 20;   // extending a stack (3rd+)
+
+  // Reward advancement toward home
+  if (move.from !== "bar") {
+    const pips = color === "white" ? (move.from - dest) : (dest - move.from);
+    score += pips * 2;
   }
 
-  // Reward advancement (pips moved toward home)
-  if (move.from !== "bar" && move.to !== "off") {
-    const pips = color === "white" ? (move.from - move.to) : (move.to - move.from);
-    score += pips * 3;
+  // Penalise landing as a blot (lone checker) anywhere
+  if (atDest === 0) {
+    const inOwnHome  = color === "white" ? dest <= 5  : dest >= 18;
+    const inOppHome  = color === "white" ? dest >= 18 : dest <= 5;
+
+    if (inOwnHome)  score -= 50;  // heavy: blot inside own home board
+    else if (inOppHome) score -= 25;  // moderate: blot deep in enemy home
+    else             score -= 10;  // small general blot penalty
   }
 
-  // Penalise leaving a blot in the opponent's home zone
-  if (move.from !== "bar" && move.to !== "off" && atDest !== null) {
-    const ownAtDest = color === "white" ? atDest : -atDest;
-    if (ownAtDest === 0) {
-      // We're placing a lone checker — exposed
-      if (color === "white" && move.to > 12) score -= 20;
-      if (color === "black" && move.to < 11) score -= 20;
+  // Penalise stripping a point to a blot at the source
+  if (move.from !== "bar") {
+    const atSrc = gs.board[move.from];
+    const ownCountAtSrc = color === "white" ? atSrc : -atSrc;
+    if (ownCountAtSrc === 2) {
+      // Moving one checker leaves a lone blot behind
+      const srcInOwnHome = color === "white" ? move.from <= 5 : move.from >= 18;
+      score -= srcInOwnHome ? 35 : 8;
     }
   }
 
@@ -106,12 +119,20 @@ async function pickMoveMaster(gs, color, legalMoves, roomId) {
       .join("\n");
 
     const prompt =
-      `You are playing Bräde (Swedish Backgammon) as ${color}.\n` +
-      `Board indices 0-23 (positive=White, negative=Black): [${boardStr}]\n` +
+      `You are Master Jan, an expert Bräde (Swedish Backgammon) player, playing as ${color}.\n` +
+      `Board indices 0-23 (positive=White checkers, negative=Black checkers): [${boardStr}]\n` +
       `${color} bar=${gs.bar[color]} off=${gs.off[color]}  ` +
       `dice remaining=[${gs.dice.join(",")}]\n\n` +
+      `Your strategic priorities (in order):\n` +
+      `1. Bear off checkers when possible.\n` +
+      `2. Re-enter from the bar immediately.\n` +
+      `3. Hit opponent blots to send them to the bar.\n` +
+      `4. Build and extend STACKS (points with 2+ own checkers) — never leave lone blots if avoidable.\n` +
+      `5. Keep your HOME BOARD (indices 0-5 for White, 18-23 for Black) free of lone blots — a blot there is a serious liability.\n` +
+      `6. Make a closed board (6 consecutive owned points) if the opportunity arises.\n` +
+      `7. Advance checkers toward home, but never at the cost of leaving dangerous blots.\n\n` +
       `Legal moves:\n${movesStr}\n\n` +
-      `Reply with just the move number (e.g. 0). Choose the strongest positional move.`;
+      `Reply with ONLY the move number (e.g. 0). No explanation.`;
 
     const response = await client.messages.create({
       model:      "claude-haiku-4-5-20251001",

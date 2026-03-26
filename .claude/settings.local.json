@@ -24,7 +24,12 @@
       "Bash(\"/c/Program Files/nodejs/node.exe\" node_modules/eslint/bin/eslint.js src/)",
       "Bash(\"/c/Program Files/nodejs/node.exe\" -e \"const p=require\\(''./package.json''\\); console.log\\(JSON.stringify\\(p.eslintConfig||p[''eslint'']||''none''\\)\\); console.log\\(JSON.stringify\\(Object.keys\\(p\\)\\)\\)\")",
       "Bash(where node:*)",
-      "Bash(npm audit:*)"
+      "Bash(npm audit:*)",
+      "Bash(cmd.exe /c \"cd C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\server && npm run lint -- src/game/ai.js\")",
+      "Bash(cmd.exe /c \"cd C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\server && npm run lint 2>&1\")",
+      "Bash(cmd.exe /c \"cd C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\server && npm run lint\")",
+      "Bash(cmd.exe /c \"cd C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\server && npm run lint > C:\\\\Users\\\\Leif\\\\lint_output.txt 2>&1 && echo EXIT_CODE:%ERRORLEVEL%\")",
+      "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\server && npm run lint 1>C:\\\\Users\\\\Leif\\\\lint_out.txt 2>&1\")"
     ]
   }
 }
