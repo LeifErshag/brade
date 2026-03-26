@@ -4,6 +4,7 @@ import { send, broadcastToRoom, broadcastState, sendToUser } from "./server.js";
 import { initGame, rollDice, getLegalMoves, applyMove, checkWin } from "../game/engine.js";
 import { computeElo } from "../game/elo.js";
 import { pickMove } from "../game/ai.js";
+import { clearExpectimaxCache } from "../game/expectimax.js";
 import { advanceTournament } from "../game/tournament.js";
 
 // ── Disconnect forfeit timers ─────────────────────────────────────────────────
@@ -345,6 +346,7 @@ async function saveRoom(redis, roomId, room) {
 }
 
 async function handleGameOver(redis, roomId, room, result) {
+  clearExpectimaxCache(roomId);
   const { winner, winType, points, monk } = result;
   room.score[winner] += points ?? 1;
 

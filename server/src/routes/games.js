@@ -15,7 +15,7 @@ const CreateGameSchema = z.object({
     z.literal(1), z.literal(3), z.literal(5), z.literal(7),
   ]).default(5),
   opponent:     z.enum(["human", "ai"]).default("human"),
-  aiDifficulty: z.enum(["beginner", "journeyman", "master"]).default("journeyman"),
+  aiDifficulty: z.enum(["beginner", "journeyman", "master", "grandmaster"]).default("journeyman"),
 });
 
 // ── POST /api/games — create a new game room ──────────────────────────────────

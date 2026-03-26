@@ -3,6 +3,7 @@
 // White moves DECREASING (index 23 → 0), Black moves INCREASING (0 → 23)
 
 import Anthropic from "@anthropic-ai/sdk";
+import { getNextExpectimaxMove } from "./expectimax.js";
 
 export const AI_USER_ID = "00000000-0000-0000-0000-000000000001";
 export const AI_DISPLAY  = { display_name: "Computer", avatar_url: null };
@@ -15,9 +16,10 @@ const masterInProgress = new Set();
 export async function pickMove(gs, color, legalMoves, difficulty, roomId) {
   if (legalMoves.length === 0) return null;
   switch (difficulty) {
-    case "master":     return pickMoveMaster(gs, color, legalMoves, roomId);
-    case "journeyman": return pickMoveHeuristic(gs, color, legalMoves);
-    default:           return pickMoveRandom(legalMoves);
+    case "grandmaster": return getNextExpectimaxMove(gs, color, legalMoves, roomId);
+    case "master":      return pickMoveMaster(gs, color, legalMoves, roomId);
+    case "journeyman":  return pickMoveHeuristic(gs, color, legalMoves);
+    default:            return pickMoveRandom(legalMoves);
   }
 }
 

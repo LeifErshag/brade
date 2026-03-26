@@ -229,6 +229,7 @@ export default function Home() {
                   <option value="beginner">Beginner</option>
                   <option value="journeyman">Journeyman</option>
                   <option value="master">Master</option>
+                  <option value="grandmaster">Grandmaster</option>
                 </select>
                 <button onClick={handleCreateAi} disabled={creatingAi} style={S.btnPrimary}>
                   {creatingAi ? "Starting…" : "Play vs AI"}

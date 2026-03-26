@@ -29,7 +29,13 @@
       "Bash(cmd.exe /c \"cd C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\server && npm run lint 2>&1\")",
       "Bash(cmd.exe /c \"cd C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\server && npm run lint\")",
       "Bash(cmd.exe /c \"cd C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\server && npm run lint > C:\\\\Users\\\\Leif\\\\lint_output.txt 2>&1 && echo EXIT_CODE:%ERRORLEVEL%\")",
-      "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\server && npm run lint 1>C:\\\\Users\\\\Leif\\\\lint_out.txt 2>&1\")"
+      "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\server && npm run lint 1>C:\\\\Users\\\\Leif\\\\lint_out.txt 2>&1\")",
+      "Bash(find /c/Users/Leif/Repos/brade -name *.env* -o -name config* -o -name constants*)",
+      "Bash(find /c/Users/Leif/Repos/brade -name README* -o -name DESIGN*)",
+      "Bash(cmd.exe /c \"node --version\")",
+      "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\server && npx eslint src/game/expectimax.js src/game/ai.js src/routes/games.js src/ws/handlers.js 2>&1\")",
+      "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\server && npx eslint src\\\\game\\\\expectimax.js src\\\\game\\\\ai.js src\\\\routes\\\\games.js src\\\\ws\\\\handlers.js 2>&1\")",
+      "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\client && npx eslint src\\\\pages\\\\Home.jsx 2>&1\")"
     ]
   }
 }
