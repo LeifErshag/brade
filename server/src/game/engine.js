@@ -28,7 +28,7 @@ export function initGame() {
     board,
     bar:       { white: 0, black: 0 },
     off:       { white: 0, black: 0 },
-    turn:      "white",
+    turn:      Math.random() < 0.5 ? "white" : "black",
     phase:     "rolling",   // "rolling" | "moving"
     dice:      [],          // remaining dice for this turn
     rolledDice: [],         // original roll (for display)

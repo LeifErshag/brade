@@ -141,6 +141,10 @@ const S = {
     borderRadius: 8, padding: "9px 14px", fontSize: 13, cursor: "pointer", fontFamily: "Georgia, serif",
   },
   waiting: { color: "#6b3a10", fontSize: 13, textAlign: "center", marginTop: 8 },
+  junker: {
+    color: "#e8b86d", fontSize: 14, fontWeight: "bold", textAlign: "center",
+    marginTop: 8, letterSpacing: 1,
+  },
 };
 
 // ── Main Board Component ─────────────────────────────────────────────────────
@@ -155,6 +159,7 @@ export default function Board({
   onPass,
   onResign,
   readOnly = false,
+  junkerNotice = null,
 }) {
   const [selected, setSelected] = useState(null);
 
@@ -399,6 +404,13 @@ export default function Board({
 
       {/* Dice */}
       {diceAll && <div style={S.diceRow}>{diceAll}</div>}
+
+      {/* Junker notice */}
+      {junkerNotice && (
+        <div style={S.junker}>
+          {playerInfo?.[junkerNotice]?.display_name ?? junkerNotice} is Junker!
+        </div>
+      )}
 
       {/* Actions */}
       {!readOnly && (

@@ -100,6 +100,7 @@ export default function Game() {
   const [guestJoining, setGuestJoining] = useState(false);
 
   const [room, setRoom]                     = useState(null);
+  const [junkerNotice, setJunkerNotice]     = useState(null);
   const [spectatorCount, setSpectatorCount] = useState(0);
   const [wsStatus, setWsStatus]             = useState("connecting");
   const [searchQuery, setSearchQuery]       = useState("");
@@ -116,6 +117,10 @@ export default function Game() {
       case "ROOM_STATE":
         setRoom(msg.room);
         setSpectatorCount(msg.spectatorCount ?? 0);
+        break;
+      case "NO_MOVES":
+        setJunkerNotice(msg.color);
+        setTimeout(() => setJunkerNotice(null), 2500);
         break;
     }
   }, []);
@@ -265,6 +270,7 @@ export default function Game() {
               onMove={handleMove}
               onPass={handlePass}
               onResign={handleResign}
+              junkerNotice={junkerNotice}
             />
           </>
         ) : (

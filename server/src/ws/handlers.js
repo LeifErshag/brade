@@ -457,9 +457,10 @@ async function handleGameOver(redis, roomId, room, result) {
         .catch(err => console.error("Tournament advance error:", err.message));
     }
   } else {
-    // Start next game in match
+    // Start next game in match — loser goes first
     room.gameNum++;
     const gs      = initGame();
+    gs.turn       = opp(winner);
     gs.legalMoves = [];
     room.gameState = gs;
 
