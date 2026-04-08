@@ -56,6 +56,7 @@ export default function Home() {
   const [roomCode, setRoomCode]         = useState("");
   const [joinError, setJoinError]       = useState(null);
   const [joining, setJoining]           = useState(false);
+  const [createError, setCreateError]   = useState(null);
 
   // Matchmaking
   const [mmStatus, setMmStatus]       = useState("idle"); // "idle" | "waiting"
@@ -117,13 +118,22 @@ export default function Home() {
 
   async function handleCreateAi() {
     setCreatingAi(true);
+    setCreateError(null);
     try {
       const res = await authFetch("/api/games", {
         method: "POST",
         body: JSON.stringify({ matchLength, opponent: "ai", aiDifficulty }),
       });
-      const data = await res.json();
-      if (res.ok) navigate(`/game/${data.roomId}`);
+      if (res.ok) {
+        const data = await res.json();
+        navigate(`/game/${data.roomId}`);
+      } else if (res.status === 401) {
+        setCreateError("Session expired — please sign in again.");
+      } else {
+        setCreateError("Could not start game. Please try again.");
+      }
+    } catch {
+      setCreateError("Network error. Please try again.");
     } finally {
       setCreatingAi(false);
     }
@@ -131,13 +141,22 @@ export default function Home() {
 
   async function handleCreate() {
     setCreating(true);
+    setCreateError(null);
     try {
       const res = await authFetch("/api/games", {
         method: "POST",
         body: JSON.stringify({ matchLength }),
       });
-      const data = await res.json();
-      if (res.ok) navigate(`/game/${data.roomId}`);
+      if (res.ok) {
+        const data = await res.json();
+        navigate(`/game/${data.roomId}`);
+      } else if (res.status === 401) {
+        setCreateError("Session expired — please sign in again.");
+      } else {
+        setCreateError("Could not start game. Please try again.");
+      }
+    } catch {
+      setCreateError("Network error. Please try again.");
     } finally {
       setCreating(false);
     }
@@ -235,6 +254,7 @@ export default function Home() {
                   {creatingAi ? "Starting…" : "Play vs AI"}
                 </button>
               </div>
+              {createError && <p style={S.error}>{createError}</p>}
 
               <p style={{ ...S.sectionLabel, marginTop: 20 }}>Find a match</p>
               {mmStatus === "waiting" ? (

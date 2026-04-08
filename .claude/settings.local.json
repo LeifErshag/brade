@@ -35,7 +35,9 @@
       "Bash(cmd.exe /c \"node --version\")",
       "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\server && npx eslint src/game/expectimax.js src/game/ai.js src/routes/games.js src/ws/handlers.js 2>&1\")",
       "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\server && npx eslint src\\\\game\\\\expectimax.js src\\\\game\\\\ai.js src\\\\routes\\\\games.js src\\\\ws\\\\handlers.js 2>&1\")",
-      "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\client && npx eslint src\\\\pages\\\\Home.jsx 2>&1\")"
+      "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\Leif\\\\Repos\\\\brade\\\\client && npx eslint src\\\\pages\\\\Home.jsx 2>&1\")",
+      "Bash(npm ls:*)",
+      "Bash(npm info:*)"
     ]
   }
 }

@@ -250,7 +250,20 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
 
 // ── AI turn automation ────────────────────────────────────────────────────────
 
-async function triggerAiTurn(roomId, aiDifficulty) {
+// Guard: prevents duplicate concurrent triggers for the same room
+const aiTurnPending = new Set();
+
+export async function triggerAiTurn(roomId, aiDifficulty) {
+  if (aiTurnPending.has(roomId)) return;
+  aiTurnPending.add(roomId);
+  try {
+    return await _triggerAiTurn(roomId, aiDifficulty);
+  } finally {
+    aiTurnPending.delete(roomId);
+  }
+}
+
+async function _triggerAiTurn(roomId, aiDifficulty) {
   // Brief "thinking" delay
   await sleep(700 + Math.random() * 800);
 

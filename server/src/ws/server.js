@@ -1,6 +1,6 @@
 import { WebSocketServer } from "ws";
 import { verifyAccessToken } from "../auth/tokens.js";
-import { handleMessage, scheduleDisconnectForfeit, cancelDisconnectForfeit } from "./handlers.js";
+import { handleMessage, scheduleDisconnectForfeit, cancelDisconnectForfeit, triggerAiTurn } from "./handlers.js";
 import { getRedis, keys, TTL } from "../db/redis.js";
 import { query } from "../db/postgres.js";
 
@@ -81,6 +81,14 @@ export function initWebSocketServer(httpServer) {
 
     // Send full room state to every client in the room (including new arrival)
     broadcastState(roomId, room);
+
+    // If this is an AI game and it's the AI's turn to roll first, kick it off.
+    // This covers the case where the game was created with AI going first before
+    // any WebSocket connection existed to trigger the normal ROLL/MOVE flow.
+    const gs = room.gameState;
+    if (room.isAi && room.status === "playing" && gs?.turn === "black" && gs?.phase === "rolling") {
+      triggerAiTurn(roomId, room.aiDifficulty).catch(e => console.error("AI first-turn error:", e));
+    }
 
     ws.on("message", async (data) => {
       let msg;
