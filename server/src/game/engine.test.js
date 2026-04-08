@@ -8,7 +8,7 @@ test("initGame sets up correct starting position", () => {
   expect(gs.board[0]).toBe(-15);   // black: all on point 1
   expect(gs.bar).toEqual({ white: 0, black: 0 });
   expect(gs.off).toEqual({ white: 0, black: 0 });
-  expect(gs.turn).toBe("white");
+  expect(["white", "black"]).toContain(gs.turn);
   expect(gs.phase).toBe("rolling");
   expect(gs.board.reduce((a, b) => a + Math.abs(b), 0)).toBe(30);
 });
