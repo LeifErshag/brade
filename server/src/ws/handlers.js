@@ -485,5 +485,9 @@ async function handleGameOver(redis, roomId, room, result) {
       winType,
       score:  room.score,
     });
+
+    if (room.isAi && gs.turn === "black" && gs.phase === "rolling") {
+      triggerAiTurn(roomId, room.aiDifficulty).catch(e => console.error("AI turn error:", e));
+    }
   }
 }
