@@ -48,6 +48,7 @@ const S = {
 export default function Home() {
   const { user, loading, logout, authFetch } = useAuth();
   const navigate = useNavigate();
+  const isGuest = !loading && !user;
 
   const [matchLength, setMatchLength]   = useState(5);
   const [creating, setCreating]         = useState(false);
@@ -120,17 +121,33 @@ export default function Home() {
     setCreatingAi(true);
     setCreateError(null);
     try {
-      const res = await authFetch("/api/games", {
-        method: "POST",
-        body: JSON.stringify({ matchLength, opponent: "ai", aiDifficulty }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        navigate(`/game/${data.roomId}`);
-      } else if (res.status === 401) {
-        setCreateError("Session expired — please sign in again.");
+      if (isGuest) {
+        const res = await fetch(`${API}/api/games/ai-guest`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ matchLength, aiDifficulty }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          sessionStorage.setItem(`guest_token_${data.roomId}`, data.token);
+          sessionStorage.setItem(`guest_id_${data.roomId}`,    data.guestId);
+          navigate(`/game/${data.roomId}`);
+        } else {
+          setCreateError("Could not start game. Please try again.");
+        }
       } else {
-        setCreateError("Could not start game. Please try again.");
+        const res = await authFetch("/api/games", {
+          method: "POST",
+          body: JSON.stringify({ matchLength, opponent: "ai", aiDifficulty }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          navigate(`/game/${data.roomId}`);
+        } else if (res.status === 401) {
+          setCreateError("Session expired — please sign in again.");
+        } else {
+          setCreateError("Could not start game. Please try again.");
+        }
       }
     } catch {
       setCreateError("Network error. Please try again.");
@@ -299,6 +316,43 @@ export default function Home() {
             </div>
             <div style={{ marginTop: 16 }}>
               <Link to="/leaderboard" style={{ ...S.btnSecondary, fontSize: 12 }}>Leaderboard</Link>
+            </div>
+
+            <hr style={S.divider} />
+
+            <div style={S.playSection}>
+              <p style={S.sectionLabel}>Play vs AI as Guest</p>
+              <div style={S.playRow}>
+                <select
+                  value={matchLength}
+                  onChange={e => setMatchLength(Number(e.target.value))}
+                  style={S.select}
+                  aria-label="Match length"
+                >
+                  <option value={1}>1 game</option>
+                  <option value={3}>Best of 3</option>
+                  <option value={5}>Best of 5</option>
+                  <option value={7}>Best of 7</option>
+                </select>
+                <select
+                  value={aiDifficulty}
+                  onChange={e => setAiDifficulty(e.target.value)}
+                  style={S.select}
+                  aria-label="AI difficulty"
+                >
+                  <option value="beginner">Beginner</option>
+                  <option value="journeyman">Journeyman</option>
+                  <option value="master">Master</option>
+                  <option value="grandmaster">Grandmaster</option>
+                </select>
+                <button onClick={handleCreateAi} disabled={creatingAi} style={S.btnPrimary}>
+                  {creatingAi ? "Starting…" : "Play vs AI"}
+                </button>
+              </div>
+              <p style={{ ...S.subtitle, fontSize: 12, marginTop: 12 }}>
+                Sign in to track your stats and play against other humans.
+              </p>
+              {createError && <p style={S.error}>{createError}</p>}
             </div>
           </>
         )}

@@ -367,10 +367,13 @@ async function handleGameOver(redis, roomId, room, result) {
   const matchOver = room.score[winner] >= needed;
 
   if (matchOver) {
-    // ── Guest game: skip ELO, record result without black_id ─────────────
+    // ── Guest game: skip ELO, record result without guest's user row ─────
     if (room.hasGuest) {
+      // Default guestColor = "black" preserves earlier host-vs-guest behaviour
+      const guestColor    = room.guestColor ?? "black";
+      const nonGuestColor = guestColor === "white" ? "black" : "white";
+      const winnerIsGuest = winner === guestColor;
       // winner_id must reference an existing user — null if guest won
-      const winnerIsGuest = winner === "black";
       await query(
         `UPDATE games
             SET winner_id   = $2,
@@ -380,7 +383,7 @@ async function handleGameOver(redis, roomId, room, result) {
                 black_score = $6,
                 ended_at    = now()
           WHERE room_id = $1`,
-        [roomId, winnerIsGuest ? null : room.players.white, winType, monk ?? false,
+        [roomId, winnerIsGuest ? null : room.players[nonGuestColor], winType, monk ?? false,
          room.score.white, room.score.black]
       );
       room.status      = "finished";
