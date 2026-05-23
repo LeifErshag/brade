@@ -7,6 +7,7 @@ import { getRedis, keys, TTL } from "../db/redis.js";
 import { query } from "../db/postgres.js";
 import { initGame } from "../game/engine.js";
 import { AI_USER_ID, AI_DISPLAY } from "../game/ai.js";
+import { signGuestToken } from "../auth/tokens.js";
 
 const router = Router();
 
@@ -15,6 +16,13 @@ const CreateGameSchema = z.object({
     z.literal(1), z.literal(3), z.literal(5), z.literal(7),
   ]).default(5),
   opponent:     z.enum(["human", "ai"]).default("human"),
+  aiDifficulty: z.enum(["beginner", "journeyman", "master", "grandmaster"]).default("journeyman"),
+});
+
+const CreateAiGuestGameSchema = z.object({
+  matchLength: z.union([
+    z.literal(1), z.literal(3), z.literal(5), z.literal(7),
+  ]).default(5),
   aiDifficulty: z.enum(["beginner", "journeyman", "master", "grandmaster"]).default("journeyman"),
 });
 
@@ -104,6 +112,64 @@ router.post("/", requireAuth, validate(CreateGameSchema), async (req, res) => {
 
   const inviteUrl = `${process.env.CLIENT_ORIGIN}/game/${roomId}`;
   return res.status(201).json({ roomId, inviteUrl });
+});
+
+// ── POST /api/games/ai-guest — create an AI game without logging in ──────────
+// Issues a guest token in the same response. White = guest, Black = AI.
+router.post("/ai-guest", validate(CreateAiGuestGameSchema), async (req, res) => {
+  const { matchLength, aiDifficulty } = req.body;
+  const roomId  = uuid().slice(0, 8).toUpperCase();
+  const guestId = uuid();
+  const guestDisplayName = "Guest";
+  const token   = signGuestToken(guestId, guestDisplayName);
+
+  // Ensure the AI system user exists in the DB (idempotent)
+  await query(
+    `INSERT INTO users (id, oauth_provider, oauth_id, display_name)
+     VALUES ($1, 'system', 'computer', 'Computer')
+     ON CONFLICT DO NOTHING`,
+    [AI_USER_ID]
+  );
+
+  const gs = initGame();
+  gs.legalMoves = [];
+
+  const roomState = {
+    roomId,
+    matchLength,
+    createdBy:    guestId,
+    isAi:         true,
+    aiDifficulty,
+    hasGuest:     true,
+    guestColor:   "white",
+    players:      { white: guestId, black: AI_USER_ID },
+    playerInfo:   {
+      white: { display_name: guestDisplayName, avatar_url: null },
+      black: AI_DISPLAY,
+    },
+    ready:     { white: true, black: true },
+    status:    "playing",
+    score:     { white: 0, black: 0 },
+    gameNum:   1,
+    gameState: gs,
+    createdAt: Date.now(),
+  };
+
+  // Persist game record — white_id NULL because guest has no DB user row
+  await query(
+    `INSERT INTO games (room_id, white_id, black_id, match_length, white_elo_before, black_elo_before)
+     VALUES ($1, NULL, $2, $3, NULL, 1200)`,
+    [roomId, AI_USER_ID, matchLength]
+  );
+  const { rows: [gameRow] } = await query(
+    `SELECT id FROM games WHERE room_id = $1`, [roomId]
+  );
+  roomState.gameDbId = gameRow.id;
+
+  const redis = getRedis();
+  await redis.set(keys.room(roomId), JSON.stringify(roomState), "EX", TTL.room);
+
+  return res.status(201).json({ roomId, token, guestId, isAi: true });
 });
 
 // ── GET /api/games/:roomId — get room info ────────────────────────────────────

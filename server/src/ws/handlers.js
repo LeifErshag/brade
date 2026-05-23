@@ -425,10 +425,13 @@ async function handleGameOver(redis, roomId, room, result, forceMatchOver = fals
       : resolveMatchWinner(room.score, room.gameResults, winner);
     const matchLoser  = opp(matchWinner);
 
-    // ── Guest game: skip ELO, record result without black_id ─────────────
+    // ── Guest game: skip ELO, record result without guest's user row ─────
     if (room.hasGuest) {
+      // Default guestColor = "black" preserves earlier host-vs-guest behaviour
+      const guestColor    = room.guestColor ?? "black";
+      const nonGuestColor = guestColor === "white" ? "black" : "white";
+      const winnerIsGuest = matchWinner === guestColor;
       // winner_id must reference an existing user — null if guest won
-      const winnerIsGuest = matchWinner === "black";
       await query(
         `UPDATE games
             SET winner_id   = $2,
@@ -438,7 +441,7 @@ async function handleGameOver(redis, roomId, room, result, forceMatchOver = fals
                 black_score = $6,
                 ended_at    = now()
           WHERE room_id = $1`,
-        [roomId, winnerIsGuest ? null : room.players.white, winType, monk ?? false,
+        [roomId, winnerIsGuest ? null : room.players[nonGuestColor], winType, monk ?? false,
          room.score.white, room.score.black]
       );
       room.status      = "finished";
@@ -543,5 +546,9 @@ async function handleGameOver(redis, roomId, room, result, forceMatchOver = fals
       winType,
       score:  room.score,
     });
+
+    if (room.isAi && gs.turn === "black" && gs.phase === "rolling") {
+      triggerAiTurn(roomId, room.aiDifficulty).catch(e => console.error("AI turn error:", e));
+    }
   }
 }
