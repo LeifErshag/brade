@@ -22,6 +22,7 @@ const S = {
   title:    { color: "#e8b86d", fontSize: 22, margin: 0, flex: 1 },
   matchLen: { color: "#a07840", fontSize: 13 },
   disconnected: { color: "#c0392b", fontSize: 11 },
+  reconnecting: { color: "#d68910", fontSize: 11 },
 
   players: { display: "flex", gap: 16, alignItems: "stretch", marginBottom: 16 },
   vsLabel: { color: "#6b3a10", fontSize: 20, display: "flex", alignItems: "center", flexShrink: 0 },
@@ -131,6 +132,7 @@ export default function Game() {
     onMessage: handleMessage,
     onOpen:  () => setWsStatus("connected"),
     onClose: () => setWsStatus("disconnected"),
+    onReconnecting: () => setWsStatus("reconnecting"),
   });
 
   // Debounced user search
@@ -237,6 +239,7 @@ export default function Game() {
           <h2 style={S.title}>Room {roomId}</h2>
           {room && <span style={S.matchLen}>Best of {room.matchLength}</span>}
           {wsStatus === "disconnected" && <span style={S.disconnected}>Disconnected</span>}
+          {wsStatus === "reconnecting" && <span style={S.reconnecting}>Reconnecting…</span>}
         </div>
 
         {!room ? (
