@@ -152,6 +152,7 @@ export default function Board({
   gameState: gs,
   score,
   matchLength,
+  gameNum,
   myColor,
   playerInfo,
   onRoll,
@@ -333,7 +334,6 @@ export default function Board({
     })
     : null;
 
-  const neededToWin = Math.ceil(matchLength / 2);
   const turnLabel = isMyTurn
     ? (canRoll ? "Your turn \u2014 roll the dice" : "Your turn \u2014 move a checker")
     : `${playerInfo?.[gs.turn]?.display_name ?? gs.turn}'s turn`;
@@ -346,7 +346,12 @@ export default function Board({
           <div style={S.scoreName}>{playerInfo?.white?.display_name ?? "White"}</div>
           <div style={S.scoreVal}>{score.white}</div>
         </div>
-        <div style={{ color: "#4a2800", fontSize: 13 }}>of {neededToWin} needed</div>
+        <div style={{ textAlign: "center", color: "#4a2800", fontSize: 12, lineHeight: 1.4 }}>
+          {gameNum != null && matchLength
+            ? <><span style={{ fontSize: 13, color: "#7a5a30" }}>Game {gameNum} of {matchLength}</span><br /></>
+            : null}
+          <span>points</span>
+        </div>
         <div style={S.scoreItem}>
           <div style={S.scoreVal}>{score.black}</div>
           <div style={S.scoreName}>{playerInfo?.black?.display_name ?? "Black"}</div>

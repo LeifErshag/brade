@@ -235,7 +235,7 @@ export default function Game() {
             : <Link to="/" style={S.back}>← Home</Link>
           }
           <h2 style={S.title}>Room {roomId}</h2>
-          {room && <span style={S.matchLen}>Best of {room.matchLength}</span>}
+          {room && <span style={S.matchLen}>{room.matchLength}-game match</span>}
           {wsStatus === "disconnected" && <span style={S.disconnected}>Disconnected</span>}
         </div>
 
@@ -249,6 +249,7 @@ export default function Game() {
                 gameState={room.gameState}
                 score={room.score}
                 matchLength={room.matchLength}
+                gameNum={room.gameNum}
                 myColor={myColor}
                 playerInfo={room.playerInfo}
                 readOnly
@@ -264,6 +265,7 @@ export default function Game() {
               gameState={room.gameState}
               score={room.score}
               matchLength={room.matchLength}
+              gameNum={room.gameNum}
               myColor={myColor}
               playerInfo={room.playerInfo}
               onRoll={handleRoll}
@@ -401,12 +403,19 @@ function PlayerCard({ label, info, ready, isYou }) {
 }
 
 const WIN_LABELS = {
-  normal:     "Bearing off",
-  gammon:     "Gammon",
-  monk:       "Monk",
-  jan:        "Jan",
-  forced_jan: "Forced Jan",
-  resign:     "Resign",
+  hemspel:               "Hemspel",
+  hemspel_munk:          "Hemspel med munk",
+  kronspel_enkelt:       "Enkelt kronspel",
+  kronspel_enkelt_munk:  "Enkelt kronspel med munk",
+  kronspel_dubbelt:      "Dubbelt kronspel",
+  kronspel_dubbelt_munk: "Dubbelt kronspel med munk",
+  trappspel:             "Trappspel",
+  trappspel_munk:        "Trappspel med munk",
+  uppspel:               "Uppspel",
+  uppspel_munk:          "Uppspel med munk",
+  jan:                   "Jan",
+  sprangjan:             "Sprängjan",
+  resign:                "Resign",
 };
 
 function MatchResult({ room, myColor }) {

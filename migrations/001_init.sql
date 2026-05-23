@@ -17,7 +17,7 @@ CREATE TABLE games (
   white_id       UUID REFERENCES users(id),
   black_id       UUID REFERENCES users(id),
   winner_id      UUID REFERENCES users(id),
-  win_type       VARCHAR(20),                    -- 'jan','forced_jan','bear_off' etc.
+  win_type       VARCHAR(32),                    -- Bräde win types, e.g. 'jan','sprangjan','kronspel_dubbelt_munk'
   monk           BOOLEAN      NOT NULL DEFAULT false,
   white_score    INTEGER      NOT NULL DEFAULT 0,
   black_score    INTEGER      NOT NULL DEFAULT 0,
