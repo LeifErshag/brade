@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS games (
   white_id         UUID        REFERENCES users(id),
   black_id         UUID        REFERENCES users(id),
   winner_id        UUID        REFERENCES users(id),
-  win_type         VARCHAR(20),
+  win_type         VARCHAR(32),
   monk             BOOLEAN     NOT NULL DEFAULT false,
   white_score      INTEGER     NOT NULL DEFAULT 0,
   black_score      INTEGER     NOT NULL DEFAULT 0,

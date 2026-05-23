@@ -6,6 +6,7 @@ import { computeElo } from "../game/elo.js";
 import { pickMove } from "../game/ai.js";
 import { clearExpectimaxCache } from "../game/expectimax.js";
 import { advanceTournament } from "../game/tournament.js";
+import { compareMatch } from "../game/scoring.js";
 
 // ── Disconnect forfeit timers ─────────────────────────────────────────────────
 const forfeitTimers = new Map(); // key: `${roomId}:${color}`
@@ -101,12 +102,24 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
       const gs       = initGame();
       gs.legalMoves  = []; // will be populated after first ROLL
 
-      room.status    = "playing";
-      room.score     = { white: 0, black: 0 };
-      room.gameNum   = 1;
-      room.gameDbId  = gameRow.id;
-      room.gameState = gs;
-      room.ready     = { white: false, black: false };
+      // §1 Teka: roll until the two dice are distinct; lower die starts.
+      let tekaWhite, tekaBlack;
+      do {
+        [tekaWhite] = rollDice(); // rollDice may return 4 identical; we only need 1
+        tekaWhite = Math.ceil(Math.random() * 6);
+        tekaBlack = Math.ceil(Math.random() * 6);
+      } while (tekaWhite === tekaBlack);
+      const tekaStarter = tekaWhite < tekaBlack ? "white" : "black";
+      gs.turn = tekaStarter;
+
+      room.status      = "playing";
+      room.score       = { white: 0, black: 0 };
+      room.gameResults = []; // per-game results for §14 tie-break
+      room.gameNum     = 1;
+      room.gameDbId    = gameRow.id;
+      room.gameState   = gs;
+      room.ready       = { white: false, black: false };
+      room.teka        = { white: tekaWhite, black: tekaBlack, starter: tekaStarter };
 
       await saveRoom(redis, roomId, room);
       broadcastState(roomId, room);
@@ -172,7 +185,8 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
       const legal = gs.legalMoves.find(m => m.from === from && m.to === to && m.die === die);
       if (!legal) { ws && send(ws, { type: "ERROR", message: "Illegal move" }); break; }
 
-      const { gs: newGs } = applyMove(gs, color, from, to, die);
+      // Change 1: capture burst from applyMove
+      const { gs: newGs, burst } = applyMove(gs, color, from, to, die);
 
       // Log move to DB (best-effort, don't block on failure)
       const fromPt = from === "bar" ? "bar" : String(from + 1);
@@ -183,8 +197,8 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
         [room.gameDbId, newGs.moveSeq, color, fromPt, toPt, die]
       ).catch(err => console.error("Move log error:", err.message));
 
-      // Check win
-      const result = checkWin(newGs);
+      // Change 1: pass burst so sprängjan can be detected
+      const result = checkWin(newGs, burst);
       if (result) {
         room.gameState = newGs;
         await handleGameOver(redis, roomId, room, result);
@@ -238,8 +252,9 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
       if (room.status !== "playing") break;
       if (!color) break;
       const winner = opp(color);
+      // Resign ends the whole match immediately.
       const result = { winner, winType: "resign", points: 1, monk: false };
-      await handleGameOver(redis, roomId, room, result);
+      await handleGameOver(redis, roomId, room, result, true /* forceMatchOver */);
       break;
     }
 
@@ -306,7 +321,8 @@ async function _triggerAiTurn(roomId, aiDifficulty) {
     const move = await pickMove(gs, "black", gs.legalMoves, aiDifficulty, roomId);
     if (!move) break;
 
-    const { gs: newGs } = applyMove(gs, "black", move.from, move.to, move.die);
+    // Change 1: capture burst from applyMove
+    const { gs: newGs, burst } = applyMove(gs, "black", move.from, move.to, move.die);
 
     // Log to DB (best-effort)
     const fromPt = move.from === "bar" ? "bar" : String(move.from + 1);
@@ -317,8 +333,8 @@ async function _triggerAiTurn(roomId, aiDifficulty) {
       [room.gameDbId, newGs.moveSeq, "black", fromPt, toPt, move.die]
     ).catch(err => console.error("AI move log error:", err.message));
 
-    // Check win
-    const result = checkWin(newGs);
+    // Change 1: pass burst so sprängjan can be detected
+    const result = checkWin(newGs, burst);
     if (result) {
       room.gameState = newGs;
       await handleGameOver(redis, roomId, room, result);
@@ -358,19 +374,61 @@ async function saveRoom(redis, roomId, room) {
   await redis.set(keys.room(roomId), JSON.stringify(room), "EX", TTL.room);
 }
 
-async function handleGameOver(redis, roomId, room, result) {
+/**
+ * Determine the match winner from cumulative scores and per-game results.
+ * Returns "white" | "black" | null (null only if truly identical, which we
+ * then fall back to the last-game winner).
+ *
+ * @param {object} score       { white: number, black: number }
+ * @param {Array}  gameResults [{ winner, winType, points }, ...]
+ * @param {string} lastWinner  winner of the most recent game (final fallback)
+ */
+function resolveMatchWinner(score, gameResults, lastWinner) {
+  // Split per-game winTypes by which player won each game.
+  const wTypes = gameResults.filter(r => r.winner === "white").map(r => r.winType);
+  const bTypes = gameResults.filter(r => r.winner === "black").map(r => r.winType);
+
+  const verdict = compareMatch(wTypes, bTypes);
+  if (verdict === "a") return "white";
+  if (verdict === "b") return "black";
+  // Truly identical — fall back to last-game winner
+  return lastWinner;
+}
+
+/**
+ * handleGameOver — called whenever a game ends (win or resign).
+ *
+ * Change 2: match ends after `room.matchLength` games (fixed count).
+ * Cumulative points decide the match winner; tie-break via §14 winRank.
+ *
+ * @param {boolean} [forceMatchOver=false]  true for RESIGN (ends match immediately)
+ */
+async function handleGameOver(redis, roomId, room, result, forceMatchOver = false) {
   clearExpectimaxCache(roomId);
   const { winner, winType, points, monk } = result;
+
   room.score[winner] += points ?? 1;
 
-  const needed = Math.ceil(room.matchLength / 2);
-  const matchOver = room.score[winner] >= needed;
+  // Accumulate per-game result for §14 tie-break
+  if (!room.gameResults) room.gameResults = [];
+  room.gameResults.push({ winner, winType, points: points ?? 1 });
+
+  // Change 2: match is over after matchLength games (or on forced resign)
+  const matchOver = forceMatchOver || (room.gameNum >= room.matchLength);
 
   if (matchOver) {
+    // Determine match winner. A forced end (RESIGN/forfeit) always goes to the
+    // non-resigner (`winner`), regardless of cumulative points; otherwise the
+    // match winner is decided by total points with the §14 tie-break.
+    const matchWinner = forceMatchOver
+      ? winner
+      : resolveMatchWinner(room.score, room.gameResults, winner);
+    const matchLoser  = opp(matchWinner);
+
     // ── Guest game: skip ELO, record result without black_id ─────────────
     if (room.hasGuest) {
       // winner_id must reference an existing user — null if guest won
-      const winnerIsGuest = winner === "black";
+      const winnerIsGuest = matchWinner === "black";
       await query(
         `UPDATE games
             SET winner_id   = $2,
@@ -384,10 +442,10 @@ async function handleGameOver(redis, roomId, room, result) {
          room.score.white, room.score.black]
       );
       room.status      = "finished";
-      room.matchResult = { winner, winType, score: room.score };
+      room.matchResult = { winner: matchWinner, winType, score: room.score };
       await saveRoom(redis, roomId, room);
       broadcastState(roomId, room);
-      broadcastToRoom(roomId, { type: "MATCH_OVER", winner, score: room.score, winType });
+      broadcastToRoom(roomId, { type: "MATCH_OVER", winner: matchWinner, score: room.score, winType });
       return;
     }
 
@@ -410,9 +468,10 @@ async function handleGameOver(redis, roomId, room, result) {
       bElo = eloMap[room.players.black] ?? 1200;
     }
 
-    const eloResult = computeElo(wElo, bElo, winner === "white" ? 1 : 0);
+    // ELO is based on match winner (not necessarily last-game winner)
+    const eloResult = computeElo(wElo, bElo, matchWinner === "white" ? 1 : 0);
 
-    // Persist game result
+    // Persist game result (last game's winType/monk are written to the games row)
     await query(
       `UPDATE games
           SET winner_id       = $2,
@@ -424,29 +483,28 @@ async function handleGameOver(redis, roomId, room, result) {
               black_elo_after = $8,
               ended_at        = now()
         WHERE room_id = $1`,
-      [roomId, room.players[winner], winType, monk ?? false,
+      [roomId, room.players[matchWinner], winType, monk ?? false,
        room.score.white, room.score.black,
        eloResult.whiteAfter, eloResult.blackAfter]
     );
 
     // Update player stats — skip the AI user
-    const loser = opp(winner);
-    if (!room.isAi || winner === "white") {
+    if (!room.isAi || matchWinner === "white") {
       await query(
         `UPDATE users SET elo = $2, wins = wins + 1 WHERE id = $1`,
-        [room.players[winner], eloResult[winner === "white" ? "whiteAfter" : "blackAfter"]]
+        [room.players[matchWinner], eloResult[matchWinner === "white" ? "whiteAfter" : "blackAfter"]]
       );
     }
-    if (!room.isAi || loser === "white") {
+    if (!room.isAi || matchLoser === "white") {
       await query(
         `UPDATE users SET elo = $2, losses = losses + 1 WHERE id = $1`,
-        [room.players[loser], eloResult[loser === "white" ? "whiteAfter" : "blackAfter"]]
+        [room.players[matchLoser], eloResult[matchLoser === "white" ? "whiteAfter" : "blackAfter"]]
       );
     }
 
     room.status      = "finished";
     room.matchResult = {
-      winner,
+      winner:        matchWinner,
       winType,
       score:         room.score,
       whiteEloAfter: eloResult.whiteAfter,
@@ -457,23 +515,23 @@ async function handleGameOver(redis, roomId, room, result) {
     broadcastState(roomId, room);
     broadcastToRoom(roomId, {
       type:    "MATCH_OVER",
-      winner,
+      winner:  matchWinner,
       score:   room.score,
       winType,
     });
 
     // Advance tournament bracket if this was a tournament match
     if (room.tournamentId && room.tournamentMatchId) {
-      const winnerId = room.players[winner];
-      const loserId  = room.players[opp(winner)];
+      const winnerId = room.players[matchWinner];
+      const loserId  = room.players[matchLoser];
       advanceTournament(room.tournamentId, room.tournamentMatchId, winnerId, loserId)
         .catch(err => console.error("Tournament advance error:", err.message));
     }
   } else {
-    // Start next game in match — loser goes first
+    // Start next game in match — loser goes first (§1)
     room.gameNum++;
     const gs      = initGame();
-    gs.turn       = opp(winner);
+    gs.turn       = opp(winner); // loser of just-finished game starts next
     gs.legalMoves = [];
     room.gameState = gs;
 
