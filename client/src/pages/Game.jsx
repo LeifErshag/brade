@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useAuth } from "../AuthContext.jsx";
 import { useSocket } from "../hooks/useSocket.js";
@@ -84,6 +84,12 @@ const S = {
   orDivider:   { color: "#4a2800", fontSize: 12, margin: "0 0 16px" },
   loginRow:    { display: "flex", gap: 10, justifyContent: "center" },
   btnLogin:    { background: "#3a1a00", color: "#a07840", border: "1px solid #6b3a10", borderRadius: 8, padding: "8px 18px", fontSize: 13, cursor: "pointer", textDecoration: "none" },
+
+  // Toasts (fixed, bottom-center)
+  toastWrap:  { position: "fixed", left: "50%", bottom: 24, transform: "translateX(-50%)", display: "flex", flexDirection: "column", gap: 8, zIndex: 1000, alignItems: "center", pointerEvents: "none" },
+  toast:      { pointerEvents: "auto", cursor: "pointer", background: "#3a1a00", color: "#e8b86d", borderRadius: 8, padding: "10px 18px", fontSize: 13, boxShadow: "0 4px 20px #00000099", maxWidth: 340, textAlign: "center" },
+  toastError: { border: "1px solid #c0392b" },
+  toastInfo:  { border: "1px solid #6b3a10" },
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -108,10 +114,21 @@ export default function Game() {
   const [searchResults, setSearchResults]   = useState([]);
   const [copyFeedback, setCopyFeedback]     = useState(false);
   const [invitedIds, setInvitedIds]         = useState(new Set());
+  const [toasts, setToasts]                 = useState([]);
 
   // Use whichever token is available (real auth takes precedence over guest)
   const wsToken = token || guestToken;
   const myId    = user?.id || guestId;
+
+  const pushToast = useCallback((message, kind = "error") => {
+    const id = Date.now() + Math.random();
+    setToasts(prev => [...prev, { id, message, kind }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4500);
+  }, []);
+
+  const dismissToast = useCallback((id) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
 
   const handleMessage = useCallback((msg) => {
     switch (msg.type) {
@@ -123,8 +140,11 @@ export default function Game() {
         setJunkerNotice(msg.color);
         setTimeout(() => setJunkerNotice(null), 2500);
         break;
+      case "ERROR":
+        pushToast(msg.message ?? "Something went wrong");
+        break;
     }
-  }, []);
+  }, [pushToast]);
 
   const { send } = useSocket({
     roomId: (wsToken && !loading) ? roomId : null,
@@ -172,6 +192,85 @@ export default function Game() {
   const bothReady = !!(room?.ready?.white && room?.ready?.black);
   const inviteUrl = `${window.location.origin}/game/${roomId}`;
 
+  // ── Debug console hooks: window.__brade ─────────────────────────────────────
+  // state()  → client's view of the current room (turn/phase/canRoll/wsStatus)
+  // server() → fetch authoritative server state for this room
+  // dump()   → both side by side, for spotting client/server divergence
+  const debugRef = useRef(null);
+  debugRef.current = { room, roomId, myId, myColor, wsToken, wsStatus, spectatorCount };
+
+  useEffect(() => {
+    const summarize = () => {
+      const d  = debugRef.current;
+      const gs = d.room?.gameState ?? null;
+      const isMyTurn = gs ? gs.turn === d.myColor : null;
+      return {
+        roomId:     d.roomId,
+        wsStatus:   d.wsStatus,
+        myId:       d.myId,
+        myColor:    d.myColor,
+        status:     d.room?.status ?? null,
+        gameNum:    d.room?.gameNum ?? null,
+        score:      d.room?.score ?? null,
+        spectators: d.spectatorCount,
+        turn:       gs?.turn ?? null,
+        phase:      gs?.phase ?? null,
+        isMyTurn,
+        canRoll:    isMyTurn === true && gs?.phase === "rolling",
+        dice:       gs?.dice ?? null,
+        rolledDice: gs?.rolledDice ?? null,
+        legalMoves: gs?.legalMoves?.length ?? null,
+      };
+    };
+    const serverUrl = () => `${API}/api/games/${debugRef.current.roomId}/debug`;
+
+    window.__brade = {
+      state() {
+        const snap = summarize();
+        console.log("[brade] client state", snap);
+        console.log("[brade] full room", debugRef.current.room);
+        return snap;
+      },
+      async server() {
+        const d   = debugRef.current;
+        const url = serverUrl();
+        if (!d.wsToken) {
+          console.warn(`[brade] no token available — open manually: ${url}`);
+          return null;
+        }
+        try {
+          const res = await fetch(url, { headers: { Authorization: `Bearer ${d.wsToken}` } });
+          if (!res.ok) {
+            console.error(`[brade] server dump failed (${res.status}). URL: ${url}`);
+            return null;
+          }
+          const data = await res.json();
+          console.log("[brade] server state", data);
+          return data;
+        } catch (err) {
+          console.error(`[brade] server dump error: ${err?.message ?? err}. URL: ${url}`);
+          return null;
+        }
+      },
+      async dump() {
+        const client = window.__brade.state();
+        const server = await window.__brade.server();
+        return { client, server };
+      },
+      help() {
+        console.log(
+          "[brade] debug helpers (current room only):\n" +
+          "  __brade.state()  → client's view (turn/phase/canRoll/wsStatus)\n" +
+          "  __brade.server() → authoritative server state\n" +
+          "  __brade.dump()   → both, for spotting divergence"
+        );
+      },
+    };
+    console.info("[brade] debug hooks ready — run __brade.help()");
+
+    return () => { delete window.__brade; };
+  }, []);
+
   async function handleCopyInvite() {
     await navigator.clipboard.writeText(inviteUrl);
     setCopyFeedback(true);
@@ -185,10 +284,15 @@ export default function Game() {
   }
 
   // ── Game actions ──────────────────────────────────────────────────────────
-  function handleRoll()   { send({ type: "ROLL" }); }
-  function handlePass()   { send({ type: "PASS" }); }
-  function handleResign() { send({ type: "RESIGN" }); }
-  function handleMove(from, to, die) { send({ type: "MOVE", from, to, die }); }
+  // send() returns false when the socket isn't open, so the action never left
+  // the browser — surface that instead of letting it silently disappear.
+  function gameSend(msg) {
+    if (!send(msg)) pushToast("Not connected — action wasn’t sent. Reconnecting…");
+  }
+  function handleRoll()   { gameSend({ type: "ROLL" }); }
+  function handlePass()   { gameSend({ type: "PASS" }); }
+  function handleResign() { gameSend({ type: "RESIGN" }); }
+  function handleMove(from, to, die) { gameSend({ type: "MOVE", from, to, die }); }
 
   // ── Render ───────────────────────────────────────────────────────────────
 
@@ -367,11 +471,31 @@ export default function Game() {
           </>
         )}
       </div>
+
+      <Toasts toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
+
+function Toasts({ toasts, onDismiss }) {
+  if (toasts.length === 0) return null;
+  return (
+    <div style={S.toastWrap}>
+      {toasts.map(t => (
+        <div
+          key={t.id}
+          style={{ ...S.toast, ...(t.kind === "error" ? S.toastError : S.toastInfo) }}
+          onClick={() => onDismiss(t.id)}
+          title="Dismiss"
+        >
+          {t.message}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function FullPage({ children }) {
   return (

@@ -8,6 +8,7 @@ import { query } from "../db/postgres.js";
 import { initGame } from "../game/engine.js";
 import { AI_USER_ID, AI_DISPLAY } from "../game/ai.js";
 import { signGuestToken } from "../auth/tokens.js";
+import { rooms } from "../ws/server.js";
 
 const router = Router();
 
@@ -193,6 +194,34 @@ router.get("/:roomId", requireAuth, async (req, res) => {
     players:     room.players,
     playerInfo:  room.playerInfo,
     isAi:        room.isAi ?? false,
+  });
+});
+
+// ── GET /api/games/:roomId/debug — dump full room state for debugging ─────────
+// Returns the authoritative Redis room JSON plus live WS connection info, scoped
+// to a single room. Gated to that room's players so game state isn't exposed to
+// arbitrary authenticated users.
+router.get("/:roomId/debug", requireAuth, async (req, res) => {
+  const { roomId } = req.params;
+  if (!/^[A-Z0-9]{8}$/.test(roomId)) {
+    return res.status(400).json({ error: "Invalid room ID" });
+  }
+  const redis = getRedis();
+  const raw = await redis.get(keys.room(roomId));
+  if (!raw) return res.status(404).json({ error: "Room not found or expired" });
+  const room = JSON.parse(raw);
+  const isParticipant = [room.players.white, room.players.black].includes(req.userId);
+  if (!isParticipant) return res.status(403).json({ error: "Forbidden" });
+
+  const ttlSeconds = await redis.ttl(keys.room(roomId));
+  const connected  = rooms.get(roomId);
+  const connections = connected ? [...connected].map(c => c.userId) : [];
+
+  return res.json({
+    serverTime: new Date().toISOString(),
+    ttlSeconds,
+    connections, // userIds with a live WebSocket to this room
+    room,        // full authoritative room state
   });
 });
 

@@ -28,9 +28,10 @@ export function useSocket({ roomId, token, onMessage, onOpen, onClose, onReconne
   const send = useCallback((msg) => {
     if (ws.current?.readyState === WebSocket.OPEN) {
       ws.current.send(JSON.stringify(msg));
-    } else {
-      console.warn(`[ws] send dropped — socket not open (readyState=${ws.current?.readyState ?? "null"}, type=${msg?.type})`);
+      return true;
     }
+    console.warn(`[ws] send dropped — socket not open (readyState=${ws.current?.readyState ?? "null"}, type=${msg?.type})`);
+    return false;
   }, []);
 
   useEffect(() => {
