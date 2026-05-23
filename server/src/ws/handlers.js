@@ -102,10 +102,9 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
       const gs       = initGame();
       gs.legalMoves  = []; // will be populated after first ROLL
 
-      // §1 Teka: roll until the two dice are distinct; lower die starts.
+      // §1 Teka: each player rolls one die; lower die starts; tie → re-roll.
       let tekaWhite, tekaBlack;
       do {
-        [tekaWhite] = rollDice(); // rollDice may return 4 identical; we only need 1
         tekaWhite = Math.ceil(Math.random() * 6);
         tekaBlack = Math.ceil(Math.random() * 6);
       } while (tekaWhite === tekaBlack);
