@@ -657,3 +657,19 @@ export function checkWin(gs, lastMoveBurst = false) {
 
   return null;
 }
+
+// ── checkJanOnPass (§10) ──────────────────────────────────────────────────────
+// checkWin runs post-move and only detects a jan against the MOVER's OPPONENT.
+// It cannot see the symmetric case: the player whose turn it is rolls (or runs
+// out of moves) while closed out on the bar — THEY are the one who is jan, but
+// it is their own turn so checkWin never fires. Call this at every no-legal-moves
+// auto-pass: if the player to move (gs.turn) is on the bar with more checkers
+// there than re-entry points, their opponent wins by jan.
+// A pass involves no move, so it is never a burst → jan, never sprängjan.
+// Returns { winner, winType, points, monk } | null.
+export function checkJanOnPass(gs) {
+  const stuck = gs.turn;
+  if (gs.bar[stuck] === 0) return null;        // not on the bar → ordinary forced pass
+  const probe = { ...gs, turn: stuck === "white" ? "black" : "white" };
+  return checkJan(probe, false);
+}

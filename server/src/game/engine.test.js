@@ -6,7 +6,7 @@
 // Path space (per color): white pos = idx; black pos = (idx-12+24)%24.
 
 import {
-  initGame, rollDice, canBearOff, getLegalMoves, applyMove, checkWin,
+  initGame, rollDice, canBearOff, getLegalMoves, applyMove, checkWin, checkJanOnPass,
   idxToPath, pathToIdx, quarterOf, pipsToBearOff, HUK_POS, WIN_POINTS, winPoints,
   legalTurnSequences,
 } from "./engine.js";
@@ -699,6 +699,44 @@ test("§10 jan edge: loser is junker → winner bands do NOT count as available"
   gs2.bar.black = 1;
   for (let p = 0; p <= 5; p++) placeIdx(gs2, "white", pathToIdx("black", p), 2);
   expect(checkWin(gs2)).toBeNull();
+});
+
+// ── §10 Jan on a forced pass (the player to move is the one closed out) ────────
+// checkWin (post-move) only ever sees a jan against the MOVER's OPPONENT. When a
+// player rolls/finishes their turn but cannot bring their bar checkers in, THEY
+// are jan — and it is their own turn, so checkWin never fires. checkJanOnPass is
+// called at every no-legal-moves auto-pass to catch that case.
+
+test("§10 jan-on-pass: the player to move is closed out on the bar → opponent wins by jan", () => {
+  // It is BLACK's turn, but black is stuck on the bar: its own home stack clogs
+  // four of its six Q1 re-entry points, leaving available 2 < bar 3.
+  const gs = emptyGs("black");
+  gs.turn = "black";
+  place(gs, "black", 0, 1);
+  place(gs, "black", 1, 1);
+  place(gs, "black", 2, 1);
+  place(gs, "black", 3, 1);   // available = pos 4,5 = 2
+  gs.bar.black = 3;           // 3 > 2 → black is jan'd
+  const r = checkJanOnPass(gs);
+  expect(r?.winner).toBe("white");
+  expect(r?.winType).toBe("jan");   // never sprängjan: no move/burst happened on a pass
+  expect(r?.points).toBe(4);
+});
+
+test("§10 jan-on-pass: no jan when the stuck player has nothing on the bar", () => {
+  // A forced pass with an empty bar is an ordinary missed turn, not a jan.
+  const gs = emptyGs("black");
+  gs.turn = "black";
+  gs.bar.black = 0;
+  expect(checkJanOnPass(gs)).toBeNull();
+});
+
+test("§10 jan-on-pass: no jan when the bar checkers still fit the open entry points", () => {
+  const gs = emptyGs("black");
+  gs.turn = "black";
+  place(gs, "black", 0, 1);   // only one entry point blocked → available 5
+  gs.bar.black = 3;           // 3 <= 5 → not jan, just a forced pass
+  expect(checkJanOnPass(gs)).toBeNull();
 });
 
 // ── §11 Sprängjan ─────────────────────────────────────────────────────────────

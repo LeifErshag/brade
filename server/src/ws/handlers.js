@@ -1,7 +1,7 @@
 import { getRedis, keys, TTL } from "../db/redis.js";
 import { query } from "../db/postgres.js";
 import { send, broadcastToRoom, broadcastState, sendToUser } from "./server.js";
-import { initGame, rollDice, getLegalMoves, applyMove, checkWin } from "../game/engine.js";
+import { initGame, rollDice, getLegalMoves, applyMove, checkWin, checkJanOnPass } from "../game/engine.js";
 import { computeElo } from "../game/elo.js";
 import { pickMove } from "../game/ai.js";
 import { clearExpectimaxCache } from "../game/expectimax.js";
@@ -154,7 +154,16 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
       gs.legalMoves    = getLegalMoves(gs, color);
 
       if (gs.legalMoves.length === 0) {
-        // No moves — auto pass
+        // No moves. If the player is closed out on the bar, that's a jan (§10) —
+        // checked here because it is the stuck player's own turn, so the post-move
+        // checkWin never sees it.
+        const janResult = checkJanOnPass(gs);   // gs.turn still === color
+        if (janResult) {
+          room.gameState = gs;
+          await handleGameOver(redis, roomId, room, janResult);
+          return;
+        }
+        // Otherwise auto pass.
         gs.phase      = "rolling";
         gs.turn       = opp(color);
         gs.dice       = [];
@@ -204,19 +213,28 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
         return;
       }
 
-      // Determine if turn should switch
+      // Determine if the mover can continue, otherwise the turn passes.
+      let passing = false;
       if (newGs.dice.length === 0) {
-        newGs.phase      = "rolling";
-        newGs.turn       = opp(color);
-        newGs.legalMoves = [];
+        passing = true;
       } else {
         newGs.legalMoves = getLegalMoves(newGs, color);
-        if (newGs.legalMoves.length === 0) {
-          newGs.phase      = "rolling";
-          newGs.turn       = opp(color);
-          newGs.dice       = [];
-          newGs.legalMoves = [];
+        if (newGs.legalMoves.length === 0) passing = true;
+      }
+
+      if (passing) {
+        // The mover is done. If they're still closed out on the bar (e.g. entered
+        // some but not all), that's a jan (§10) against the mover.
+        const janResult = checkJanOnPass(newGs);   // newGs.turn still === color
+        if (janResult) {
+          room.gameState = newGs;
+          await handleGameOver(redis, roomId, room, janResult);
+          return;
         }
+        newGs.phase      = "rolling";
+        newGs.turn       = opp(color);
+        newGs.dice       = [];
+        newGs.legalMoves = [];
       }
 
       room.gameState = newGs;
@@ -236,6 +254,14 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
       const gs = room.gameState;
       if (gs.turn !== color) { ws && send(ws, { type: "ERROR", message: "Not your turn" }); break; }
       if (gs.legalMoves.length > 0) { ws && send(ws, { type: "ERROR", message: "You have legal moves" }); break; }
+
+      // A pass while closed out on the bar is a jan (§10) against the passer.
+      const janResult = checkJanOnPass(gs);   // gs.turn still === color
+      if (janResult) {
+        room.gameState = gs;
+        await handleGameOver(redis, roomId, room, janResult);
+        return;
+      }
 
       gs.phase      = "rolling";
       gs.turn       = opp(color);
@@ -298,7 +324,14 @@ async function _triggerAiTurn(roomId, aiDifficulty) {
   gs.legalMoves = getLegalMoves(gs, "black");
 
   if (gs.legalMoves.length === 0) {
-    // No moves — pass
+    // No moves. If the AI is closed out on the bar, that's a jan (§10) for white.
+    const janResult = checkJanOnPass(gs);   // gs.turn still === "black"
+    if (janResult) {
+      room.gameState = gs;
+      await handleGameOver(redis, roomId, room, janResult);
+      return;
+    }
+    // Otherwise pass.
     gs.phase      = "rolling";
     gs.turn       = "white";
     gs.dice       = [];
@@ -340,18 +373,26 @@ async function _triggerAiTurn(roomId, aiDifficulty) {
       return;
     }
 
+    let passing = false;
     if (newGs.dice.length === 0) {
-      newGs.phase      = "rolling";
-      newGs.turn       = "white";
-      newGs.legalMoves = [];
+      passing = true;
     } else {
       newGs.legalMoves = getLegalMoves(newGs, "black");
-      if (newGs.legalMoves.length === 0) {
-        newGs.phase      = "rolling";
-        newGs.turn       = "white";
-        newGs.dice       = [];
-        newGs.legalMoves = [];
+      if (newGs.legalMoves.length === 0) passing = true;
+    }
+
+    if (passing) {
+      // AI is done; if it's still closed out on the bar, that's a jan (§10) for white.
+      const janResult = checkJanOnPass(newGs);   // newGs.turn still === "black"
+      if (janResult) {
+        room.gameState = newGs;
+        await handleGameOver(redis, roomId, room, janResult);
+        return;
       }
+      newGs.phase      = "rolling";
+      newGs.turn       = "white";
+      newGs.dice       = [];
+      newGs.legalMoves = [];
     }
 
     gs = newGs;
