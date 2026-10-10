@@ -16,13 +16,18 @@ export function scheduleDisconnectForfeit(roomId, color, userId) {
   clearTimeout(forfeitTimers.get(key));
   const timer = setTimeout(async () => {
     forfeitTimers.delete(key);
-    const redis  = getRedis();
-    const raw    = await redis.get(keys.room(roomId));
-    if (!raw) return;
-    const room = JSON.parse(raw);
-    if (room.status !== "playing") return;
-    // Force a resign for the disconnected player
-    await handleMessage({ msg: { type: "RESIGN", forfeit: true }, userId, roomId, ws: null });
+    // Caught here: an unhandled rejection from a timer would kill the process.
+    try {
+      const redis  = getRedis();
+      const raw    = await redis.get(keys.room(roomId));
+      if (!raw) return;
+      const room = JSON.parse(raw);
+      if (room.status !== "playing") return;
+      // Force a resign for the disconnected player
+      await handleMessage({ msg: { type: "RESIGN", forfeit: true }, userId, roomId, ws: null });
+    } catch (err) {
+      console.error(`Disconnect forfeit error [${roomId}]:`, err);
+    }
   }, 60_000);
   forfeitTimers.set(key, timer);
 }
@@ -57,6 +62,11 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
     }
 
     case "START_GAME": {
+      // Only a lobby can be started. Tutorial and AI rooms are created already
+      // playing (and tutorial rooms have no games row), so reject them up front.
+      if (room.isTutorial || room.status !== "waiting") {
+        ws && send(ws, { type: "ERROR", message: "Game cannot be started" }); break;
+      }
       if (room.createdBy !== userId) {
         ws && send(ws, { type: "ERROR", message: "Only the host can start" }); break;
       }
@@ -98,6 +108,10 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
       const { rows: [gameRow] } = await query(
         `SELECT id FROM games WHERE room_id = $1`, [roomId]
       );
+      if (!gameRow) {
+        console.error(`START_GAME: no games row for room ${roomId}`);
+        ws && send(ws, { type: "ERROR", message: "Game record not found" }); break;
+      }
 
       const gs       = initGame();
       gs.legalMoves  = []; // will be populated after first ROLL

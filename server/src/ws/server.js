@@ -93,7 +93,14 @@ export function initWebSocketServer(httpServer) {
     ws.on("message", async (data) => {
       let msg;
       try { msg = JSON.parse(data); } catch { return; }
-      await handleMessage({ msg, userId, roomId, ws });
+      // A handler exception must never escape: an unhandled rejection here
+      // would kill the process and drop every live game.
+      try {
+        await handleMessage({ msg, userId, roomId, ws });
+      } catch (err) {
+        console.error(`WS handler error [${roomId}] type=${msg?.type}:`, err);
+        send(ws, { type: "ERROR", message: "Server error" });
+      }
     });
 
     ws.on("close", async () => {

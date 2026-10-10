@@ -28,7 +28,8 @@ const TOPICS = {
     title: "Färdriktning och kvarter",
     section: "rules-movement",
     text: [
-      "Båda spelarna flyttar motsols längs samma bana. Dina brickor går från tunga 1 (nere till höger) åt vänster till tunga 12, och sedan åt höger längs överkanten till tunga 24. Därefter spelas de ut.",
+      "Båda spelarna flyttar åt samma håll längs samma bana. Dina brickor går från tunga 1 (nere till höger) åt vänster till tunga 12, och sedan åt höger längs överkanten till tunga 24. Därefter spelas de ut.",
+      "(Reglerna säger att brickorna går motsols. Det gäller på ett riktigt bräde, där ditt hem ligger på bortre sidan. Här på skärmen ligger ditt hem närmast dig, så samma väg ser ut som medsols.)",
       "Banan delas i fyra kvarter: tunga 1–6 är ditt första kvarter, 7–12 det andra, 13–18 det tredje och 19–24 det fjärde. Tunga 12 kallas din huk.",
     ],
   },
@@ -87,6 +88,9 @@ const TOPICS = {
       "Ett block med fem band i rad kan bara passeras med en sexa från tungan precis bakom. Ett helt ogenomträngligt hinder får sprängas (se Sprängning i checklistan).",
     ],
   },
+  // NOTE: the first case below describes what the engine enforces today: a
+  // wall burst is allowed only when no other move exists. Update this text
+  // together with the engine when issue #11 is resolved.
   bursting: {
     title: "Sprängning",
     section: "rules-bursting",
@@ -104,7 +108,7 @@ const TOPICS = {
     section: "rules-jan",
     text: [
       "Har en spelare fler brickor på ribban än det finns tungor att spela in på i hans första kvarter – tomma tungor eller tungor med motspelarens blottor eller band – har han blivit jan och förlorar partiet direkt. Jan ger 4 poäng.",
-      "Görs jan genom att spränga ett band i motspelarens första kvarter kallas det sprängjan. Det ger 6 poäng och är det finaste sättet att vinna.",
+      "Gör man motspelaren jan genom att spränga ett av hans band i sitt eget första kvarter när man spelar in kallas det sprängjan. Det ger 6 poäng och är det finaste sättet att vinna.",
     ],
   },
   vackertSpel: {
@@ -264,7 +268,7 @@ const ILLEGAL = {
   },
   backwards: {
     title: "Bara framåt", section: "rules-movement", topic: "direction",
-    text: ["Brickorna flyttas bara framåt, motsols: från tunga 1 mot tunga 24."],
+    text: ["Brickorna flyttas bara framåt: från tunga 1 mot tunga 24."],
   },
   notADie: {
     title: "En tärning i taget", section: "rules-movement", topic: "dice",
@@ -355,7 +359,10 @@ function reducer(state, action) {
         ...state,
         history: [...history, entry],
         pos:     history.length,
-        seen:    entry.topic && !state.seen.includes(entry.topic) ? [...state.seen, entry.topic] : state.seen,
+        // Illegal-move notes are short and situational: they must not count as
+        // having explained the topic, or they'd suppress the full explanation.
+        seen:    !entry.illegal && entry.topic && !state.seen.includes(entry.topic)
+          ? [...state.seen, entry.topic] : state.seen,
       };
     }
     case "next":   return { ...state, pos: pos !== null && pos < history.length - 1 ? pos + 1 : null };
@@ -363,7 +370,11 @@ function reducer(state, action) {
     case "close":  return { ...state, pos: null };
     case "reopen": return { ...state, pos: history.length ? history.length - 1 : null };
     case "skip":   return { ...state, skipped: true, pos: null };
-    case "resume": return { ...state, skipped: false };
+    case "resume": {
+      const resumed = { ...state, skipped: false };
+      // Re-enabled after the game ended: show the end card it missed.
+      return action.finished ? reducer(resumed, { type: "finish" }) : resumed;
+    }
     default:       return state;
   }
 }
@@ -489,7 +500,7 @@ export default function TutorialCoach({ room, myColor, noMovesColor, illegalAtte
     return (
       <div style={S.bar}>
         <span>Guiden är avstängd.</span>
-        <button type="button" style={S.btn} onClick={() => dispatch({ type: "resume" })}>Slå på guiden igen</button>
+        <button type="button" style={S.btn} onClick={() => dispatch({ type: "resume", finished })}>Slå på guiden igen</button>
       </div>
     );
   }

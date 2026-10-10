@@ -194,8 +194,10 @@ export default function Board({
     }
     if (onIllegalAttempt && !legalFroms.has(idx)) {
       const ownHere = myColor === "white" ? gs.board[idx] > 0 : gs.board[idx] < 0;
-      if (selected !== null && selected !== idx) onIllegalAttempt({ from: selected, to: idx });
-      else if (ownHere) onIllegalAttempt({ from: idx, to: null });
+      // Clicking another own (immovable) checker is about that checker, not
+      // about moving the selected one onto it.
+      if (ownHere) onIllegalAttempt({ from: idx, to: null });
+      else if (selected !== null) onIllegalAttempt({ from: selected, to: idx });
     }
     setSelected(legalFroms.has(idx) ? (selected === idx ? null : idx) : null);
   }

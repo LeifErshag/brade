@@ -44,7 +44,7 @@ const broadcasts = [];
 jest.unstable_mockModule("./server.js", () => ({
   rooms:           new Map(),
   userConnections: new Map(),
-  send:            () => {},
+  send:            (ws, payload) => ws?.send?.(JSON.stringify(payload)),
   sendToUser:      () => {},
   broadcastToRoom: (roomId, payload) => broadcasts.push(payload),
   broadcastState:  () => {},
@@ -52,7 +52,7 @@ jest.unstable_mockModule("./server.js", () => ({
 
 process.env.JWT_ACCESS_SECRET = "test-access-secret";
 
-const { handleMessage } = await import("./handlers.js");
+const { handleMessage, triggerAiTurn } = await import("./handlers.js");
 const { default: gamesRouter, TUTORIAL_AI_DIFFICULTY } = await import("../routes/games.js");
 const { signAccessToken } = await import("../auth/tokens.js");
 const { getLegalMoves } = await import("../game/engine.js");
@@ -186,6 +186,26 @@ describe("POST /api/games/tutorial", () => {
     expect(store.size).toBe(0);
   });
 
+  test("end to end: create via the endpoint, play to a win, and nothing is written", async () => {
+    const res = await fetch(`${base}/tutorial`, { method: "POST" });
+    const { roomId, guestId } = await res.json();
+
+    // Fast-forward the created room to one move before the learner wins.
+    const room = await getRoom(roomId);
+    room.gameState = oneMoveFromWin();
+    await putRoom(room);
+
+    await handleMessage({
+      msg: { type: "MOVE", from: 23, to: "off", die: 1 },
+      userId: guestId, roomId, ws: null,
+    });
+
+    const after = await getRoom(roomId);
+    expect(after.status).toBe("finished");
+    expect(after.matchResult).toMatchObject({ winner: "white", winType: "hemspel", unrated: true });
+    expect(query).not.toHaveBeenCalled();
+  });
+
   test("accepts no options from the client", async () => {
     const res = await fetch(`${base}/tutorial`, {
       method:  "POST",
@@ -194,6 +214,27 @@ describe("POST /api/games/tutorial", () => {
     });
     expect(res.status).toBe(400);
     expect(store.size).toBe(0);
+  });
+});
+
+// ── START_GAME ───────────────────────────────────────────────────────────────
+
+describe("START_GAME in a tutorial room", () => {
+  test("is rejected, issues no SQL and leaves the room unchanged", async () => {
+    // The learner is the host, black is the AI and both are "ready" — this
+    // used to pass every check and then crash on the missing games row.
+    await putRoom(makeRoom("TUTOR004", { isTutorial: true }));
+    const before = await fakeRedis.get("room:TUTOR004");
+
+    const sent = [];
+    const ws = { readyState: 1, send: (s) => sent.push(JSON.parse(s)) };
+    await expect(handleMessage({
+      msg: { type: "START_GAME" }, userId: HUMAN_ID, roomId: "TUTOR004", ws,
+    })).resolves.toBeUndefined();
+
+    expect(sent).toContainEqual(expect.objectContaining({ type: "ERROR" }));
+    expect(query).not.toHaveBeenCalled();
+    expect(await fakeRedis.get("room:TUTOR004")).toBe(before);
   });
 });
 
@@ -227,6 +268,33 @@ describe("finishing a tutorial game", () => {
     expect(room.matchResult).toMatchObject({ winner: "black", winType: "resign", unrated: true });
     expect(query).not.toHaveBeenCalled();
   });
+
+  test("an AI win (via triggerAiTurn) issues no SQL", async () => {
+    // Black (the AI) has 14 off and its last checker on its point 24 (index
+    // 11): any roll bears it off and wins.
+    const room = makeRoom("TUTOR003", { isTutorial: true });
+    const board = new Array(24).fill(0);
+    board[0]  = 15;
+    board[11] = -1;
+    room.gameState = {
+      ...room.gameState,
+      board,
+      off:        { white: 0, black: 14 },
+      turn:       "black",
+      phase:      "rolling",
+      dice:       [],
+      rolledDice: [],
+      legalMoves: [],
+    };
+    await putRoom(room);
+
+    await triggerAiTurn("TUTOR003", "beginner");
+
+    const after = await getRoom("TUTOR003");
+    expect(after.status).toBe("finished");
+    expect(after.matchResult).toMatchObject({ winner: "black", winType: "hemspel", unrated: true });
+    expect(query).not.toHaveBeenCalled();
+  }, 10_000);
 
   test("control: the same win in a normal AI game is rated", async () => {
     await putRoom(makeRoom("RATED001", { isTutorial: false }));
