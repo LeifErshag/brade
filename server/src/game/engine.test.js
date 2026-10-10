@@ -1038,10 +1038,14 @@ test("§7 (p.5) after being hit, no bear-off until the hit checker is back in th
   gs.off.white = 3;
   place(gs, "white", 20, 11);
   gs.bar.white = 1;
+  gs.dice = [6, 4];                                // a 6/4 would bear off pos 20 if allowed
   expect(canBearOff(gs, "white")).toBe(false);     // on the bar
+  expect(getLegalMoves(gs, "white").some(m => m.to === "off")).toBe(false);
   gs.bar.white = 0;
   place(gs, "white", 2, 1);                        // re-entered, still in Q1
   expect(canBearOff(gs, "white")).toBe(false);
+  expect(getLegalMoves(gs, "white").some(m => m.to === "off")).toBe(false);
+  gs.dice = [];
   gs.board[pathToIdx("white", 2)] = 0;
   place(gs, "white", 18, 1);                       // back in Q4
   expect(canBearOff(gs, "white")).toBe(true);
@@ -1187,6 +1191,53 @@ test("§12 (p.8) last roll need not minimise reduction: 6-2 may hit with the two
   const after = munkLine.moves.reduce(
     (cur, m) => applyMove(cur, "white", m.from, m.to, m.die).gs, gs);
   expect(checkWin(after)?.winType).toBe("hemspel_munk");
+});
+
+test("§12 (p.8) lower die ends the game (jan) → may forfeit the higher die even when only one die is playable", () => {
+  // White's last checker (14 off) on pos 6, roll 6-1. Black: 1 on the bar, a blot
+  // on white pos 7, own checkers on black Q1 pos 1–5, black pos 0 (idx 12) empty
+  // → available 1. Hitting the blot with the 1 → black bar 2 > 1 → jan, game over.
+  // The 6 (pos 6→12) does not end the game, and afterwards the 1 is blocked by the
+  // black band on idx 13, so non-ending sequences have length 1 and the §2
+  // higher-die rule alone would force the 6. §12 lets white end with the 1.
+  const gs = emptyGs("white", [6, 1]);
+  gs.off.white = 14;
+  place(gs, "white", 6, 1);
+  gs.bar.black = 1;
+  placeOppAtMoverPos(gs, "white", 7, 1);          // black blot (idx 7)
+  placeIdx(gs, "black", 13, 2);                   // black pos 1: band
+  for (let idx = 14; idx <= 17; idx++) placeIdx(gs, "black", idx, 1); // black pos 2–5
+  placeIdx(gs, "black", 20, 6);                   // rest of black, out of the way
+  const moves = getLegalMoves(gs, "white");
+  expect(moves).toContainEqual({ from: 6, to: 7, die: 1 });    // ending, lower die
+  expect(moves).toContainEqual({ from: 6, to: 12, die: 6 });   // non-ending, higher die
+  const ender = legalTurnSequences(gs, "white").find(s => s.ends);
+  expect(ender.moves).toEqual([{ from: 6, to: 7, die: 1 }]);
+  const after = applyMove(gs, "white", 6, 7, 1).gs;
+  expect(checkWin(after)?.winType).toBe("jan");
+});
+
+test("§6 (p.3) a wall that is not in the player's path (opp huk + first five of Q3) may not be burst", () => {
+  // From white's view black's huk is white pos 23 and black's Q3 pos 12–16 is white
+  // pos 0–4: six bands in a row around the board, but white never travels 23→0.
+  const gs = emptyGs("white", [3]);
+  place(gs, "white", 20, 1);                      // rearmost; 20+3 = 23 is a band
+  place(gs, "white", 21, 14);                     // cannot move with a 3 (not rearmost)
+  placeOppAtMoverPos(gs, "white", 23, 2);
+  for (let p = 0; p <= 4; p++) placeOppAtMoverPos(gs, "white", p, 2);
+  expect(getLegalMoves(gs, "white")).toEqual([]);
+});
+
+// NOTE: asserts current engine behaviour; the rules are ambiguous here (see
+// audit.md row 6.2b). wallBurstTargets() returns [] while on the bar, so a 6-band
+// wall on white pos 1–6 (only five of them in Q1) never grants a §6 case-1 burst
+// to a checker on the bar; case 2 does not apply either (bar 1 ≤ 1 available).
+test("§6 (p.3) current behaviour: a checker on the bar facing a 6-band wall (pos 1–6) just passes", () => {
+  const gs = emptyGs("white", [3, 4]);
+  gs.bar.white = 1;
+  place(gs, "white", 18, 14);
+  for (let p = 1; p <= 6; p++) placeOppAtMoverPos(gs, "white", p, 2);
+  expect(getLegalMoves(gs, "white")).toEqual([]);
 });
 
 // ── Known discrepancies (skipped until fixed; see docs/rules/audit.md) ───────

@@ -119,10 +119,10 @@ describe("compareMatch", () => {
 
   test("equal points, first ranks tied — second rank breaks tie", () => {
     // a: [trappspel(2), hemspel_munk(2)] sorted ranks: [4, 3] = 4 pts
-    // b: [trappspel(2), hemspel(2)] sorted ranks: [4, 2] = 4 pts
+    // b: [trappspel(2), hemspel(1), hemspel(1)] sorted ranks: [4, 2, 2] = 4 pts
     // index 0: both rank 4 — tie
     // index 1: a rank 3 > b rank 2 → a wins
-    expect(compareMatch(["trappspel", "hemspel_munk"], ["trappspel", "hemspel"])).toBe("a");
+    expect(compareMatch(["trappspel", "hemspel_munk"], ["trappspel", "hemspel", "hemspel"])).toBe("a");
   });
 
   test("empty results for both — tie", () => {
