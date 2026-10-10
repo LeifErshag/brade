@@ -1,5 +1,6 @@
 // ── scoring.js unit tests ─────────────────────────────────────────────────────
 import { winRank, compareMatch } from "./scoring.js";
+import { winPoints } from "./engine.js";
 
 // ── winRank ───────────────────────────────────────────────────────────────────
 
@@ -48,6 +49,41 @@ describe("winRank", () => {
   // but trappspel ranks higher per §14).
   test("trappspel ranks above hemspel_munk despite equal points", () => {
     expect(winRank("trappspel")).toBeGreaterThan(winRank("hemspel_munk"));
+  });
+});
+
+// ── §13–14 table (p.9) "SPELEN I BRÄDE" — boxes, points and ranking ──────────
+
+describe("§13-14 (p.9) scoring table", () => {
+  // Boxes from top (most valuable) to bottom, with the points printed in the PDF.
+  const TABLE = [
+    [["sprangjan"], 6],
+    [["jan"], 4],
+    [["kronspel_enkelt_munk", "kronspel_dubbelt_munk", "trappspel_munk", "uppspel_munk"], 3],
+    [["kronspel_enkelt", "kronspel_dubbelt", "trappspel", "uppspel"], 2],
+    [["hemspel_munk"], 2],
+    [["hemspel"], 1],
+  ];
+
+  test("points match the table and plays in the same box rank equally", () => {
+    for (const [plays, pts] of TABLE) {
+      for (const p of plays) {
+        expect(winPoints(p)).toBe(pts);
+        expect(winRank(p)).toBe(winRank(plays[0]));
+      }
+    }
+  });
+
+  test("a higher box always ranks above every lower box", () => {
+    for (let i = 0; i < TABLE.length - 1; i++) {
+      expect(winRank(TABLE[i][0][0])).toBeGreaterThan(winRank(TABLE[i + 1][0][0]));
+    }
+  });
+
+  test("equal points, equal best play → second-best play decides (\"räknas de näst bästa spelen\")", () => {
+    // a: uppspel(2) + hemspel_munk(2) = 4 ; b: trappspel(2) + hemspel(1) + hemspel(1) = 4
+    // best: same box (vackert spel) → next: hemspel_munk beats hemspel.
+    expect(compareMatch(["uppspel", "hemspel_munk"], ["trappspel", "hemspel", "hemspel"])).toBe("a");
   });
 });
 

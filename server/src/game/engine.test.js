@@ -418,6 +418,8 @@ test("§6 Case A: a 6-band wall directly in path may be burst when no other move
   expect(res.gs.bar.black).toBe(2);
 });
 
+// NOTE: asserts current engine behaviour, which the rules audit found to differ
+// from §6 p.3 (bursting is an optional right, not a last resort). See #11.
 test("§6 Case A: NOT forced when a non-burst move exists", () => {
   const gs = emptyGs("white", [3]);
   place(gs, "white", 5, 1);
@@ -680,6 +682,8 @@ test("§10 jan accessibility: a WINNER band on opp Q1 counts as available (it is
   expect(checkWin(gs)?.winType).toBe("jan");
 });
 
+// NOTE: asserts current engine behaviour, which the rules audit found to differ
+// from §6 p.4 / §10 p.6 (a blocked junker stands over; it is not jan). See #12.
 test("§10 jan edge: loser is junker → winner bands do NOT count as available", () => {
   const gs = emptyGs("white");
   gs.turn = "white";
@@ -910,4 +914,305 @@ test("legalTurnSequences: §12 ending sequences are flagged with ends=true", () 
   expect(ender).toBeDefined();
   // The ending survivor finishes with all 15 off.
   expect(ender.finalGs.off.white).toBe(15);
+});
+
+// ══ Rules audit (#9) — additional coverage, see docs/rules/audit.md ══════════
+// Page references are to docs/rules/nya-svenska-bradspelsregler.pdf.
+
+// Collect first moves as sorted "from:to:die" keys for set comparisons.
+function moveKeys(moves) {
+  return moves.map(m => `${m.from}:${m.to}:${m.die}`).sort();
+}
+
+test("§2 (p.2) taking full with one checker needs a legal intermediate landing", () => {
+  // White checker at pos 0, roll 6-4. Both intermediate points (pos 4 and pos 6)
+  // hold opponent bands; the final point pos 10 is open. The move 0→10 is illegal.
+  const gs = emptyGs("white", [6, 4]);
+  place(gs, "white", 0, 1);
+  placeOppAtMoverPos(gs, "white", 4, 2);
+  placeOppAtMoverPos(gs, "white", 6, 2);
+  expect(getLegalMoves(gs, "white")).toEqual([]);
+});
+
+test("§4 (p.2) a blot is hit by an intermediate landing", () => {
+  // White checker at pos 0, roll 2-3, black blot on white pos 2. Taking full with
+  // one checker via pos 2 hits the blot on the way to pos 5.
+  const gs = emptyGs("white", [2, 3]);
+  place(gs, "white", 0, 1);
+  placeOppAtMoverPos(gs, "white", 2, 1);
+  const seqs = legalTurnSequences(gs, "white");
+  const viaBlot = seqs.find(s =>
+    s.moves.length === 2 &&
+    s.moves[0].to === pathToIdx("white", 2) && s.moves[1].to === pathToIdx("white", 5));
+  expect(viaBlot).toBeDefined();
+  expect(viaBlot.finalGs.bar.black).toBe(1);
+});
+
+test("§4 (p.2–3) re-entry example 3-2: enter on 2nd or 3rd point, then on to the 5th — never directly", () => {
+  const gs = emptyGs("white", [3, 2]);
+  gs.bar.white = 1;
+  // First moves: enter with the 3 (pos 2) or with the 2 (pos 1). Nothing else.
+  expect(moveKeys(getLegalMoves(gs, "white"))).toEqual(moveKeys([
+    { from: "bar", to: pathToIdx("white", 2), die: 3 },
+    { from: "bar", to: pathToIdx("white", 1), die: 2 },
+  ]));
+  // Every complete sequence moves the entered checker on to the 5th point (pos 4).
+  for (const s of legalTurnSequences(gs, "white")) {
+    expect(s.finalGs.board[pathToIdx("white", 4)]).toBe(1);
+  }
+});
+
+test("§4 (p.3) may NOT re-enter onto the own home band", () => {
+  const gs = emptyGs("white", [1]);
+  gs.bar.white = 1;
+  place(gs, "white", 0, 5);    // own band still standing in the home point
+  expect(getLegalMoves(gs, "white")).toEqual([]);
+});
+
+test("§5 (p.3) a block of five bands can be passed only with a six from directly behind it", () => {
+  const gs6 = emptyGs("white", [6]);
+  place(gs6, "white", 5, 1);
+  for (let p = 6; p <= 10; p++) placeOppAtMoverPos(gs6, "white", p, 2);
+  expect(getLegalMoves(gs6, "white")).toContainEqual(
+    { from: pathToIdx("white", 5), to: pathToIdx("white", 11), die: 6 });
+
+  const gs5 = emptyGs("white", [5]);
+  place(gs5, "white", 5, 1);
+  for (let p = 6; p <= 10; p++) placeOppAtMoverPos(gs5, "white", p, 2);
+  expect(getLegalMoves(gs5, "white")).toEqual([]);   // lands on the block; no burst (<6 bands)
+});
+
+// §6 (p.3–4) the worked example in the figure: black has three checkers on the
+// bar; black's first quarter (points 1–6 in the figure) holds black's own home
+// band on 1, nothing on 2, a white blot on 3 and white bands on 4, 5 and 6. Only
+// points 2 and 3 are available, so black may burst ONE band.
+function caseBFigure(dice) {
+  const gs = emptyGs("black", dice);
+  gs.bar.black = 3;
+  place(gs, "black", 0, 2);                       // point 1: black's own band
+  placeOppAtMoverPos(gs, "black", 2, 1);          // point 3: white blot
+  placeOppAtMoverPos(gs, "black", 3, 2);          // point 4: white band
+  placeOppAtMoverPos(gs, "black", 4, 3);          // point 5: white band
+  placeOppAtMoverPos(gs, "black", 5, 2);          // point 6: white band
+  place(gs, "black", 20, 10);                     // rest of black, out of the way
+  place(gs, "white", 20, 7);                      // rest of white, out of the way
+  return gs;
+}
+const bEnter = (pos, die) => ({ from: "bar", to: pathToIdx("black", pos), die });
+
+test("§6 (p.4) figure, 6-2: burst the band on 6 with the six and enter on 2 with the two", () => {
+  const moves = getLegalMoves(caseBFigure([6, 2]), "black");
+  expect(moveKeys(moves)).toEqual(moveKeys([bEnter(5, 6), bEnter(1, 2)]));
+  for (const s of legalTurnSequences(caseBFigure([6, 2]), "black")) expect(s.moves.length).toBe(2);
+});
+
+test("§6 (p.4) figure, 5-3: burst the band on 5 and hit the blot on 3", () => {
+  const gs = caseBFigure([5, 3]);
+  expect(moveKeys(getLegalMoves(gs, "black"))).toEqual(moveKeys([bEnter(4, 5), bEnter(2, 3)]));
+  for (const s of legalTurnSequences(gs, "black")) {
+    expect(s.moves.length).toBe(2);
+    expect(s.finalGs.bar.white).toBe(4);           // 3 from the burst band + the blot
+  }
+});
+
+test("§6 (p.4) figure, 6-5: burst with the six and forfeit the five (may NOT burst on 5)", () => {
+  const moves = getLegalMoves(caseBFigure([6, 5]), "black");
+  expect(moveKeys(moves)).toEqual(moveKeys([bEnter(5, 6)]));
+});
+
+test("§6 (p.4) figure, 2-1: enter with the two and forfeit the one", () => {
+  const moves = getLegalMoves(caseBFigure([2, 1]), "black");
+  expect(moveKeys(moves)).toEqual(moveKeys([bEnter(1, 2)]));
+});
+
+test("§6 (p.4) junker on the bar may not burst bands blocking the first quarter", () => {
+  const gs = emptyGs("white", [3, 4]);
+  gs.off.white = 14;
+  gs.bar.white = 1;
+  for (let p = 0; p <= 5; p++) placeOppAtMoverPos(gs, "white", p, 2);
+  expect(getLegalMoves(gs, "white")).toEqual([]);
+});
+
+test("§7 (p.5) after being hit, no bear-off until the hit checker is back in the fourth quarter", () => {
+  const gs = emptyGs("white");
+  gs.off.white = 3;
+  place(gs, "white", 20, 11);
+  gs.bar.white = 1;
+  expect(canBearOff(gs, "white")).toBe(false);     // on the bar
+  gs.bar.white = 0;
+  place(gs, "white", 2, 1);                        // re-entered, still in Q1
+  expect(canBearOff(gs, "white")).toBe(false);
+  gs.board[pathToIdx("white", 2)] = 0;
+  place(gs, "white", 18, 1);                       // back in Q4
+  expect(canBearOff(gs, "white")).toBe(true);
+});
+
+test("§7 (p.5) a checker taking full must be rearmost at every intermediate landing", () => {
+  // Rearmost checker alone on pos 18; 14 on pos 19. Roll 4-1: moving a pos-19
+  // checker 19→23 and then off with the 1 is illegal (it is not rearmost on 23).
+  const gs = emptyGs("white", [4, 1]);
+  place(gs, "white", 18, 1);
+  place(gs, "white", 19, 14);
+  for (const s of legalTurnSequences(gs, "white")) {
+    expect(s.moves.some(m => m.to === "off")).toBe(false);
+  }
+});
+
+test("§7 (p.5) Fig. 1 exact, 3-2: 21→24 with the three, then the two from 21 or 22", () => {
+  const gs = emptyGs("white", [3, 2]);
+  gs.off.white = 6;
+  place(gs, "white", 20, 2);   // pt 21
+  place(gs, "white", 21, 2);   // pt 22
+  place(gs, "white", 22, 2);   // pt 23
+  place(gs, "white", 23, 3);   // pt 24
+  const seqs = legalTurnSequences(gs, "white");
+  expect(seqs.length).toBeGreaterThan(0);
+  for (const s of seqs) {
+    expect(s.moves).toContainEqual({ from: 20, to: 23, die: 3 });
+    const two = s.moves.find(m => m.die === 2);
+    expect([20, 21]).toContain(two.from);
+    expect(s.moves.some(m => m.to === "off")).toBe(false);
+  }
+});
+
+test("§7 (p.5) Fig. 2 exact, 5-2: bear off from 22 and from 24, total reduction 3", () => {
+  const gs = emptyGs("white", [5, 2]);
+  gs.off.white = 12;
+  place(gs, "white", 21, 1);   // pt 22
+  place(gs, "white", 23, 2);   // pt 24
+  const seqs = legalTurnSequences(gs, "white");
+  expect(seqs.length).toBeGreaterThan(0);
+  for (const s of seqs) {
+    expect(s.reduction).toBe(3);                 // 22→24 then off with the 5 (reduction 4) is illegal
+    expect(s.finalGs.off.white).toBe(14);
+  }
+});
+
+test("§7 (p.5) Fig. 3 exact, 5-3: five moves 19→24, three moves 21→24; no bear-off", () => {
+  const gs = emptyGs("white", [5, 3]);
+  gs.off.white = 2;
+  place(gs, "white", 18, 1);   // pt 19
+  place(gs, "white", 20, 3);   // pt 21
+  place(gs, "white", 21, 3);   // pt 22
+  place(gs, "white", 22, 3);   // pt 23
+  place(gs, "white", 23, 3);   // pt 24
+  const seqs = legalTurnSequences(gs, "white");
+  expect(seqs.length).toBeGreaterThan(0);
+  for (const s of seqs) {
+    expect(s.reduction).toBe(0);
+    expect(s.moves.some(m => m.to === "off")).toBe(false);
+    expect(s.finalGs.board[18]).toBe(0);
+    expect(s.finalGs.board[20]).toBe(2);
+    expect(s.finalGs.board[23]).toBe(5);
+  }
+});
+
+// §11 (p.7–8) the sprängjan figure, numbered from white's view. White has two
+// checkers on the bar and every point of white's first quarter is either white's
+// own or a black band.
+function sprangjanFigure(turn, dice) {
+  const gs = emptyGs(turn, dice);
+  const b = gs.board;
+  b[0] = 3;  b[1] = -2; b[2] = 1;  b[3] = -3; b[4] = -3; b[5] = 1;     // pts 1–6
+  b[9] = 1;  b[11] = 1;                                                 // pts 10, 12
+  b[12] = -2; b[13] = 2; b[14] = -1; b[15] = 2; b[16] = -1; b[17] = -1; // pts 13–18
+  b[21] = 2; b[23] = -2;                                                // pts 22, 24
+  gs.bar.white = 2;
+  return gs;
+}
+
+test("§11 (p.8) figure: white rolling a four bursts the band on 4 → black is sprängjan", () => {
+  const gs = sprangjanFigure("white", [4, 1]);
+  expect(getLegalMoves(gs, "white")).toContainEqual({ from: "bar", to: 3, die: 4 });
+  const { gs: ng, burst } = applyMove(gs, "white", "bar", 3, 4);
+  expect(burst).toBe(true);
+  const r = checkWin(ng, burst);
+  expect(r?.winner).toBe("white");
+  expect(r?.winType).toBe("sprangjan");
+  expect(r?.points).toBe(6);
+});
+
+test("§11 (p.8) figure: white rolling a five bursts the band on 5 → black is sprängjan", () => {
+  const gs = sprangjanFigure("white", [5, 3]);
+  expect(getLegalMoves(gs, "white")).toContainEqual({ from: "bar", to: 4, die: 5 });
+  const { gs: ng, burst } = applyMove(gs, "white", "bar", 4, 5);
+  expect(checkWin(ng, burst)?.winType).toBe("sprangjan");
+});
+
+test("§11 (p.8) figure: 6-2 bursts the band on 2 and forfeits the six; then black may burst back to sprängjan", () => {
+  const gs = sprangjanFigure("white", [6, 2]);
+  expect(moveKeys(getLegalMoves(gs, "white"))).toEqual(moveKeys([{ from: "bar", to: 1, die: 2 }]));
+  const { gs: afterWhite, burst } = applyMove(gs, "white", "bar", 1, 2);
+  expect(checkWin(afterWhite, burst)).toBeNull();   // two black on the bar, two available → not jan
+  // Black now has two on the bar and no available point → black may burst too.
+  const bgs = { ...afterWhite, turn: "black", dice: [2, 1] };
+  expect(getLegalMoves(bgs, "black")).toContainEqual({ from: "bar", to: 13, die: 2 });
+  const { gs: afterBlack, burst: b2 } = applyMove(bgs, "black", "bar", 13, 2);
+  const r = checkWin(afterBlack, b2);
+  expect(r?.winner).toBe("black");
+  expect(r?.winType).toBe("sprangjan");
+});
+
+test("§12 (p.8) the game ends the moment a vackert spel is formed — no further moves that roll", () => {
+  // Two fives complete enkelt kronspel; the remaining two fives may not be used.
+  const gs = emptyGs("white", [5, 5, 5, 5]);
+  place(gs, "white", 18, 2);
+  place(gs, "white", 19, 3);
+  place(gs, "white", 20, 3);
+  place(gs, "white", 21, 3);
+  place(gs, "white", 22, 3);
+  place(gs, "white", 23, 1);
+  const seqs = legalTurnSequences(gs, "white");
+  expect(seqs.length).toBeGreaterThan(0);
+  for (const s of seqs) {
+    expect(s.ends).toBe(true);
+    expect(s.moves.length).toBe(2);
+    expect(s.finalGs.off.white).toBe(0);
+  }
+});
+
+test("§12 (p.8) last roll need not minimise reduction: 6-2 may hit with the two and bear off with the six (munk)", () => {
+  const gs = emptyGs("white", [6, 2]);
+  gs.off.white = 14;
+  place(gs, "white", 18, 1);                     // pt 19
+  placeOppAtMoverPos(gs, "white", 20, 1);        // black blot on pt 21
+  place(gs, "black", 18, 14);                    // rest of black (board idx 6), out of the way
+  const moves = getLegalMoves(gs, "white");
+  expect(moves).toContainEqual({ from: 18, to: "off", die: 6 });   // reduction 0
+  expect(moves).toContainEqual({ from: 18, to: 20, die: 2 });      // hit first
+  const munkLine = legalTurnSequences(gs, "white").find(s => s.moves[0].die === 2);
+  expect(munkLine.ends).toBe(true);
+  expect(munkLine.reduction).toBe(2);
+  expect(munkLine.finalGs.bar.black).toBe(1);
+  const after = munkLine.moves.reduce(
+    (cur, m) => applyMove(cur, "white", m.from, m.to, m.die).gs, gs);
+  expect(checkWin(after)?.winType).toBe("hemspel_munk");
+});
+
+// ── Known discrepancies (skipped until fixed; see docs/rules/audit.md) ───────
+
+// Discrepancy: §6 (p.3) "Spelaren har då rätt att spränga vilket som helst av
+// banden, men han är inte tvungen att spränga om det finns andra möjligheter".
+// The engine only offers a wall burst when NO other move exists. See #11.
+test.skip("§6 (p.3) Case A: a wall burst is optional — still offered when other moves exist (#11)", () => {
+  const gs = emptyGs("white", [3]);
+  place(gs, "white", 5, 1);
+  place(gs, "white", 12, 1);
+  for (let p = 6; p <= 11; p++) placeOppAtMoverPos(gs, "white", p, 2);
+  const moves = getLegalMoves(gs, "white");
+  expect(moves).toContainEqual({ from: pathToIdx("white", 12), to: pathToIdx("white", 15), die: 3 });
+  expect(moves).toContainEqual({ from: pathToIdx("white", 5), to: pathToIdx("white", 8), die: 3 });
+});
+
+// Discrepancy: §10 (p.6) counts points "upptagna av spelarens band" as available,
+// and §6 (p.4) says a blocked junker "måste stå över sitt slag". The engine
+// instead declares jan against a junker stuck on the bar. See #12.
+test.skip("§6/§10 (p.4, p.6) a junker stuck on the bar just passes — it is not jan (#12)", () => {
+  const gs = emptyGs("black");
+  gs.turn = "black";
+  gs.off.black = 14;
+  gs.bar.black = 1;
+  for (let p = 0; p <= 5; p++) placeOppAtMoverPos(gs, "black", p, 2);
+  expect(checkJanOnPass(gs)).toBeNull();
+  expect(checkWin({ ...gs, turn: "white" })).toBeNull();
 });
