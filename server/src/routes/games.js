@@ -7,7 +7,7 @@ import { getRedis, keys, TTL } from "../db/redis.js";
 import { query } from "../db/postgres.js";
 import { initGame } from "../game/engine.js";
 import { AI_USER_ID, AI_DISPLAY } from "../game/ai.js";
-import { signGuestToken } from "../auth/tokens.js";
+import { signGuestToken, verifyAccessToken } from "../auth/tokens.js";
 import { rooms } from "../ws/server.js";
 
 const router = Router();
@@ -26,6 +26,14 @@ const CreateAiGuestGameSchema = z.object({
   ]).default(5),
   aiDifficulty: z.enum(["beginner", "journeyman", "master", "grandmaster"]).default("journeyman"),
 });
+
+// Tutorial games take no options: always one game vs the easiest AI. `.default`
+// lets clients POST with no body at all.
+const CreateTutorialSchema = z.object({}).strict().default({});
+
+// The tutorial opponent plays random legal moves, so the learner usually wins
+// and gets to see the bearing-off and scoring explanations.
+export const TUTORIAL_AI_DIFFICULTY = "beginner";
 
 // ── POST /api/games — create a new game room ──────────────────────────────────
 router.post("/", requireAuth, validate(CreateGameSchema), async (req, res) => {
@@ -173,6 +181,68 @@ router.post("/ai-guest", validate(CreateAiGuestGameSchema), async (req, res) => 
   return res.status(201).json({ roomId, token, guestId, isAi: true });
 });
 
+// ── POST /api/games/tutorial — start an unrated tutorial game vs the AI ──────
+// Works logged in (Bearer token) or not (a guest token is issued). The room is
+// flagged `isTutorial`: no `games` row is created, moves are not logged, and the
+// game-over handler never touches ELO, wins or losses (see ws/handlers.js).
+// The flag is set here, server-side, so the client has no say in it.
+router.post("/tutorial", validate(CreateTutorialSchema), async (req, res) => {
+  let userId = null;
+  const header = req.headers.authorization;
+  if (header?.startsWith("Bearer ")) {
+    try {
+      const payload = verifyAccessToken(header.slice(7));
+      if (payload.isGuest !== true) userId = payload.sub;
+    } catch {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+  }
+
+  const roomId = uuid().slice(0, 8).toUpperCase();
+  let playerId, playerInfo, guest = null;
+
+  if (userId) {
+    const { rows: [user] } = await query(
+      `SELECT display_name, avatar_url FROM users WHERE id = $1`, [userId]
+    );
+    playerId   = userId;
+    playerInfo = { display_name: user?.display_name ?? "Player", avatar_url: user?.avatar_url ?? null };
+  } else {
+    const guestId = uuid();
+    guest      = { guestId, token: signGuestToken(guestId, "Guest") };
+    playerId   = guestId;
+    playerInfo = { display_name: "Guest", avatar_url: null };
+  }
+
+  const gs = initGame();
+  gs.turn       = "white"; // the learner always starts, so the opening explanations fit
+  gs.legalMoves = [];
+
+  const roomState = {
+    roomId,
+    matchLength:  1,
+    createdBy:    playerId,
+    isAi:         true,
+    isTutorial:   true,
+    aiDifficulty: TUTORIAL_AI_DIFFICULTY,
+    players:      { white: playerId, black: AI_USER_ID },
+    playerInfo:   { white: playerInfo, black: AI_DISPLAY },
+    ready:        { white: true, black: true },
+    status:       "playing",
+    score:        { white: 0, black: 0 },
+    gameNum:      1,
+    gameState:    gs,
+    gameDbId:     null, // deliberately no `games` row
+    createdAt:    Date.now(),
+  };
+  if (guest) { roomState.hasGuest = true; roomState.guestColor = "white"; }
+
+  const redis = getRedis();
+  await redis.set(keys.room(roomId), JSON.stringify(roomState), "EX", TTL.room);
+
+  return res.status(201).json({ roomId, isAi: true, isTutorial: true, ...(guest ?? {}) });
+});
+
 // ── GET /api/games/:roomId — get room info ────────────────────────────────────
 router.get("/:roomId", requireAuth, async (req, res) => {
   const { roomId } = req.params;
@@ -194,6 +264,7 @@ router.get("/:roomId", requireAuth, async (req, res) => {
     players:     room.players,
     playerInfo:  room.playerInfo,
     isAi:        room.isAi ?? false,
+    isTutorial:  room.isTutorial ?? false,
   });
 });
 

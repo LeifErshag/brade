@@ -44,6 +44,8 @@ const S = {
     outline: "none",
   },
   error: { color: "#c0392b", fontSize: 12, marginTop: 6 },
+  tutorial:     { marginTop: 20 },
+  tutorialHint: { color: "#a07840", fontSize: 12, margin: "8px auto 0", maxWidth: 340, lineHeight: 1.5 },
   footer:     { marginTop: 40, paddingTop: 14, borderTop: "1px solid #4a2800", maxWidth: 420, marginLeft: "auto", marginRight: "auto" },
   footerText: { color: "#a07840", fontSize: 12, margin: 0, lineHeight: 1.5 },
   footerLink: { color: "#e8b86d" },
@@ -62,6 +64,8 @@ export default function Home() {
   const [joinError, setJoinError]       = useState(null);
   const [joining, setJoining]           = useState(false);
   const [createError, setCreateError]   = useState(null);
+  const [startingTutorial, setStartingTutorial] = useState(false);
+  const [tutorialError, setTutorialError]       = useState(null);
 
   // Matchmaking
   const [mmStatus, setMmStatus]       = useState("idle"); // "idle" | "waiting"
@@ -160,6 +164,34 @@ export default function Home() {
     }
   }
 
+  // Tutorial: an unrated game vs the easiest AI with rules explained as you
+  // play. The server decides it's unrated; there's nothing to choose here.
+  async function handleTutorial() {
+    setStartingTutorial(true);
+    setTutorialError(null);
+    try {
+      const res = user
+        ? await authFetch("/api/games/tutorial", { method: "POST", body: "{}" })
+        : await fetch(`${API}/api/games/tutorial`, { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.token) {
+          sessionStorage.setItem(`guest_token_${data.roomId}`, data.token);
+          sessionStorage.setItem(`guest_id_${data.roomId}`,    data.guestId);
+        }
+        navigate(`/game/${data.roomId}`);
+      } else if (res.status === 401) {
+        setTutorialError("Sessionen har gått ut – logga in igen.");
+      } else {
+        setTutorialError("Kunde inte starta guiden. Försök igen.");
+      }
+    } catch {
+      setTutorialError("Nätverksfel. Försök igen.");
+    } finally {
+      setStartingTutorial(false);
+    }
+  }
+
   async function handleCreate() {
     setCreating(true);
     setCreateError(null);
@@ -217,6 +249,16 @@ export default function Home() {
       <div style={S.center}>
         <h1 style={S.title}>Bräde</h1>
         <p style={S.subtitle}>Svenskt Brädspel</p>
+
+        <div style={S.tutorial}>
+          <button onClick={handleTutorial} disabled={startingTutorial} style={S.btnPrimary}>
+            {startingTutorial ? "Startar…" : "Lär dig spela"}
+          </button>
+          <p style={S.tutorialHint}>
+            Ett övningsparti mot datorn där reglerna förklaras medan du spelar. Räknas inte i statistiken.
+          </p>
+          {tutorialError && <p style={S.error}>{tutorialError}</p>}
+        </div>
 
         {user ? (
           <>
@@ -365,9 +407,9 @@ export default function Home() {
 
         <footer style={S.footer}>
           <p style={S.footerText}>
-            Spelreglerna följer Vasamuseets vänner – Brädspelssektionen.{" "}
+            Spelreglerna kommer från Vasamuseets vänner – Brädspelssektionen.{" "}
             <a href={OFFICIAL_RULES_URL} target="_blank" rel="noopener noreferrer" style={S.footerLink}>
-              Läs de officiella spelreglerna
+              Läs de officiella spelreglerna ↗
             </a>
           </p>
         </footer>

@@ -11,6 +11,8 @@ const CR = Math.min(PT_W * 0.42, 17);
 const BG = "#c8934a", FRAME = "#6b3a10", INNER = "#8b4e18";
 const TD = "#5c2e08", TL = "#e8b86d", BAR_C = "#7a4418", BAR_S = "#5c3010";
 const LEGAL = "rgba(80,255,140,0.5)", SEL = "rgba(255,255,255,0.22)", HINT = "rgba(255,255,255,0.08)";
+// Tutorial mode: movable checkers are marked clearly, not just a faint tint.
+const HINT_STRONG = "rgba(80,255,140,0.2)", HINT_STRONG_STROKE = "rgba(80,255,140,0.6)";
 
 const WHITE_FILL = "#f5edd0", WHITE_STROKE = "#c8a050";
 const BLACK_FILL = "#2a1800", BLACK_STROKE = "#6b3a10";
@@ -161,6 +163,13 @@ export default function Board({
   onResign,
   readOnly = false,
   junkerNotice = null,
+  // Tutorial extras (both optional):
+  //   highlightLegal   – make the "this checker can move" hint clearly visible
+  //   onIllegalAttempt – ({ from, to }) => void, called when the player clicks
+  //                      something they can't move (to === null) or a point the
+  //                      selected checker can't reach
+  highlightLegal = false,
+  onIllegalAttempt,
 }) {
   const [selected, setSelected] = useState(null);
 
@@ -182,6 +191,13 @@ export default function Board({
     if (selected !== null && legalDests.has(idx)) {
       const move = gs.legalMoves.find(m => m.from === selected && m.to === idx);
       if (move) { onMove(move.from, move.to, move.die); setSelected(null); return; }
+    }
+    if (onIllegalAttempt && !legalFroms.has(idx)) {
+      const ownHere = myColor === "white" ? gs.board[idx] > 0 : gs.board[idx] < 0;
+      // Clicking another own (immovable) checker is about that checker, not
+      // about moving the selected one onto it.
+      if (ownHere) onIllegalAttempt({ from: idx, to: null });
+      else if (selected !== null) onIllegalAttempt({ from: selected, to: idx });
     }
     setSelected(legalFroms.has(idx) ? (selected === idx ? null : idx) : null);
   }
@@ -223,8 +239,9 @@ export default function Board({
     if (isLegal || isSel || isHint) {
       elems.push(
         <polygon key={`ov${idx}`} points={triPoints(idx)}
-          fill={isLegal ? LEGAL : isSel ? SEL : HINT}
-          stroke={isSel ? "rgba(255,255,255,0.7)" : isLegal ? "rgba(80,255,140,0.8)" : "none"}
+          fill={isLegal ? LEGAL : isSel ? SEL : highlightLegal ? HINT_STRONG : HINT}
+          stroke={isSel ? "rgba(255,255,255,0.7)" : isLegal ? "rgba(80,255,140,0.8)"
+            : highlightLegal ? HINT_STRONG_STROKE : "none"}
           strokeWidth="1.5" style={{ pointerEvents: "none" }} />
       );
     }
@@ -286,7 +303,8 @@ export default function Board({
     } else if (canSel) {
       elems.push(
         <rect key={`bsh${c}`} x={MARGIN + HALF_W} y={bySec} width={BAR_W} height={bhSec}
-          rx={4} fill={HINT} stroke="rgba(255,255,255,0.3)" strokeWidth="1"
+          rx={4} fill={highlightLegal ? HINT_STRONG : HINT}
+          stroke={highlightLegal ? HINT_STRONG_STROKE : "rgba(255,255,255,0.3)"} strokeWidth="1"
           style={{ pointerEvents: "none" }} />
       );
     }

@@ -31,6 +31,7 @@ export default [
         beforeAll:  "readonly",
         afterAll:   "readonly",
         jest:       "readonly",
+        fetch:      "readonly",
       },
     },
   },

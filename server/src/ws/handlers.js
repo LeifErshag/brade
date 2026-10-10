@@ -16,13 +16,18 @@ export function scheduleDisconnectForfeit(roomId, color, userId) {
   clearTimeout(forfeitTimers.get(key));
   const timer = setTimeout(async () => {
     forfeitTimers.delete(key);
-    const redis  = getRedis();
-    const raw    = await redis.get(keys.room(roomId));
-    if (!raw) return;
-    const room = JSON.parse(raw);
-    if (room.status !== "playing") return;
-    // Force a resign for the disconnected player
-    await handleMessage({ msg: { type: "RESIGN", forfeit: true }, userId, roomId, ws: null });
+    // Caught here: an unhandled rejection from a timer would kill the process.
+    try {
+      const redis  = getRedis();
+      const raw    = await redis.get(keys.room(roomId));
+      if (!raw) return;
+      const room = JSON.parse(raw);
+      if (room.status !== "playing") return;
+      // Force a resign for the disconnected player
+      await handleMessage({ msg: { type: "RESIGN", forfeit: true }, userId, roomId, ws: null });
+    } catch (err) {
+      console.error(`Disconnect forfeit error [${roomId}]:`, err);
+    }
   }, 60_000);
   forfeitTimers.set(key, timer);
 }
@@ -57,6 +62,11 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
     }
 
     case "START_GAME": {
+      // Only a lobby can be started. Tutorial and AI rooms are created already
+      // playing (and tutorial rooms have no games row), so reject them up front.
+      if (room.isTutorial || room.status !== "waiting") {
+        ws && send(ws, { type: "ERROR", message: "Game cannot be started" }); break;
+      }
       if (room.createdBy !== userId) {
         ws && send(ws, { type: "ERROR", message: "Only the host can start" }); break;
       }
@@ -98,6 +108,10 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
       const { rows: [gameRow] } = await query(
         `SELECT id FROM games WHERE room_id = $1`, [roomId]
       );
+      if (!gameRow) {
+        console.error(`START_GAME: no games row for room ${roomId}`);
+        ws && send(ws, { type: "ERROR", message: "Game record not found" }); break;
+      }
 
       const gs       = initGame();
       gs.legalMoves  = []; // will be populated after first ROLL
@@ -196,14 +210,7 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
       // Change 1: capture burst from applyMove
       const { gs: newGs, burst } = applyMove(gs, color, from, to, die);
 
-      // Log move to DB (best-effort, don't block on failure)
-      const fromPt = from === "bar" ? "bar" : String(from + 1);
-      const toPt   = to   === "off" ? "off" : String(to + 1);
-      query(
-        `INSERT INTO moves (game_id, seq, color, from_pt, to_pt, die)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [room.gameDbId, newGs.moveSeq, color, fromPt, toPt, die]
-      ).catch(err => console.error("Move log error:", err.message));
+      logMove(room, newGs.moveSeq, color, from, to, die);
 
       // Change 1: pass burst so sprängjan can be detected
       const result = checkWin(newGs, burst);
@@ -356,14 +363,7 @@ async function _triggerAiTurn(roomId, aiDifficulty) {
     // Change 1: capture burst from applyMove
     const { gs: newGs, burst } = applyMove(gs, "black", move.from, move.to, move.die);
 
-    // Log to DB (best-effort)
-    const fromPt = move.from === "bar" ? "bar" : String(move.from + 1);
-    const toPt   = move.to   === "off" ? "off" : String(move.to   + 1);
-    query(
-      `INSERT INTO moves (game_id, seq, color, from_pt, to_pt, die)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [room.gameDbId, newGs.moveSeq, "black", fromPt, toPt, move.die]
-    ).catch(err => console.error("AI move log error:", err.message));
+    logMove(room, newGs.moveSeq, "black", move.from, move.to, move.die);
 
     // Change 1: pass burst so sprängjan can be detected
     const result = checkWin(newGs, burst);
@@ -410,6 +410,19 @@ function sleep(ms) {
 
 function opp(color) { return color === "white" ? "black" : "white"; }
 
+// Log a move to the DB (best-effort, never blocks the game). Tutorial games
+// have no `games` row, so their moves are never written.
+function logMove(room, seq, color, from, to, die) {
+  if (room.isTutorial || !room.gameDbId) return;
+  const fromPt = from === "bar" ? "bar" : String(from + 1);
+  const toPt   = to   === "off" ? "off" : String(to + 1);
+  query(
+    `INSERT INTO moves (game_id, seq, color, from_pt, to_pt, die)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [room.gameDbId, seq, color, fromPt, toPt, die]
+  ).catch(err => console.error("Move log error:", err.message));
+}
+
 async function saveRoom(redis, roomId, room) {
   await redis.set(keys.room(roomId), JSON.stringify(room), "EX", TTL.room);
 }
@@ -452,6 +465,18 @@ async function handleGameOver(redis, roomId, room, result, forceMatchOver = fals
   // Accumulate per-game result for §14 tie-break
   if (!room.gameResults) room.gameResults = [];
   room.gameResults.push({ winner, winType, points: points ?? 1 });
+
+  // ── Tutorial game: never rated. No games row, no ELO, no wins/losses. ──
+  // Checked before anything touches the DB, and decided by the server-set room
+  // flag, so a client cannot get a tutorial game recorded.
+  if (room.isTutorial) {
+    room.status      = "finished";
+    room.matchResult = { winner, winType, score: room.score, unrated: true };
+    await saveRoom(redis, roomId, room);
+    broadcastState(roomId, room);
+    broadcastToRoom(roomId, { type: "MATCH_OVER", winner, score: room.score, winType });
+    return;
+  }
 
   // Change 2: match is over after matchLength games (or on forced resign)
   const matchOver = forceMatchOver || (room.gameNum >= room.matchLength);
