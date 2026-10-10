@@ -1,0 +1,246 @@
+// ── Tutorial games are never recorded as rated games ─────────────────────────
+// Postgres, Redis and the WebSocket broadcast layer are replaced with in-memory
+// fakes so we can watch every SQL statement the server issues. Verifies that:
+//   1. POST /api/games/tutorial creates an `isTutorial` room vs the beginner AI
+//      without inserting a `games` row (guest and logged-in).
+//   2. Finishing a tutorial game (by winning or resigning) issues no SQL at all:
+//      no move log, no games update, no ELO / wins / losses.
+//   3. Control: the same finish in a normal AI game DOES update the user, so the
+//      fakes really would catch a write.
+
+import { jest } from "@jest/globals";
+
+// ── Fakes ────────────────────────────────────────────────────────────────────
+
+const store = new Map();
+const fakeRedis = {
+  get:    async (k) => store.get(k) ?? null,
+  set:    async (k, v) => { store.set(k, v); return "OK"; },
+  expire: async () => 1,
+  ttl:    async () => 100,
+};
+
+const query = jest.fn(async (sql) => {
+  if (/SELECT display_name, avatar_url FROM users/.test(sql)) {
+    return { rows: [{ display_name: "Lärling", avatar_url: null }] };
+  }
+  if (/SELECT elo FROM users/.test(sql)) return { rows: [{ elo: 1200 }] };
+  return { rows: [] };
+});
+
+jest.unstable_mockModule("../db/postgres.js", () => ({
+  query,
+  connectPostgres: async () => {},
+}));
+
+jest.unstable_mockModule("../db/redis.js", () => ({
+  getRedis: () => fakeRedis,
+  connectRedis: async () => {},
+  keys: { room: (id) => `room:${id}` },
+  TTL:  { room: 86400, refresh: 604800, invite: 172800 },
+}));
+
+const broadcasts = [];
+jest.unstable_mockModule("./server.js", () => ({
+  rooms:           new Map(),
+  userConnections: new Map(),
+  send:            () => {},
+  sendToUser:      () => {},
+  broadcastToRoom: (roomId, payload) => broadcasts.push(payload),
+  broadcastState:  () => {},
+}));
+
+process.env.JWT_ACCESS_SECRET = "test-access-secret";
+
+const { handleMessage } = await import("./handlers.js");
+const { default: gamesRouter, TUTORIAL_AI_DIFFICULTY } = await import("../routes/games.js");
+const { signAccessToken } = await import("../auth/tokens.js");
+const { getLegalMoves } = await import("../game/engine.js");
+const { AI_USER_ID } = await import("../game/ai.js");
+const { default: express } = await import("express");
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+const HUMAN_ID = "11111111-1111-1111-1111-111111111111";
+
+const RATING_SQL = /INSERT INTO games|UPDATE games|UPDATE users|INSERT INTO moves|elo|wins|losses/i;
+
+function sqlCalls() {
+  return query.mock.calls.map(([sql]) => sql);
+}
+
+// White has 14 checkers off and one on point 24 with a 1 to play: the next
+// move bears off the last checker and wins (hemspel).
+function oneMoveFromWin() {
+  const board = new Array(24).fill(0);
+  board[23] = 1;
+  board[12] = -15;
+  const gs = {
+    board,
+    bar:        { white: 0, black: 0 },
+    off:        { white: 14, black: 0 },
+    turn:       "white",
+    phase:      "moving",
+    dice:       [1, 3],
+    rolledDice: [1, 3],
+    legalMoves: [],
+    moveSeq:    40,
+    firstMove:  false,
+  };
+  gs.legalMoves = getLegalMoves(gs, "white");
+  return gs;
+}
+
+function makeRoom(roomId, { isTutorial }) {
+  return {
+    roomId,
+    matchLength:  1,
+    createdBy:    HUMAN_ID,
+    isAi:         true,
+    aiDifficulty: "beginner",
+    ...(isTutorial ? { isTutorial: true, gameDbId: null } : { gameDbId: "game-uuid" }),
+    players:      { white: HUMAN_ID, black: AI_USER_ID },
+    playerInfo:   { white: { display_name: "Lärling" }, black: { display_name: "Computer" } },
+    ready:        { white: true, black: true },
+    status:       "playing",
+    score:        { white: 0, black: 0 },
+    gameNum:      1,
+    gameState:    oneMoveFromWin(),
+  };
+}
+
+async function putRoom(room) {
+  await fakeRedis.set(`room:${room.roomId}`, JSON.stringify(room));
+}
+
+async function getRoom(roomId) {
+  return JSON.parse(await fakeRedis.get(`room:${roomId}`));
+}
+
+beforeEach(() => {
+  store.clear();
+  broadcasts.length = 0;
+  query.mockClear();
+});
+
+// ── Room creation ────────────────────────────────────────────────────────────
+
+describe("POST /api/games/tutorial", () => {
+  let server, base;
+
+  beforeAll(async () => {
+    const app = express();
+    app.use(express.json());
+    app.use("/api/games", gamesRouter);
+    await new Promise((resolve) => { server = app.listen(0, resolve); });
+    base = `http://127.0.0.1:${server.address().port}/api/games`;
+  });
+
+  afterAll(() => new Promise((resolve) => server.close(resolve)));
+
+  test("guest: creates an unrated tutorial room vs the beginner AI and no games row", async () => {
+    const res = await fetch(`${base}/tutorial`, { method: "POST" });
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.isTutorial).toBe(true);
+    expect(body.token).toEqual(expect.any(String));
+    expect(body.roomId).toMatch(/^[A-Z0-9]{8}$/);
+
+    const room = await getRoom(body.roomId);
+    expect(room.isTutorial).toBe(true);
+    expect(room.isAi).toBe(true);
+    expect(room.aiDifficulty).toBe(TUTORIAL_AI_DIFFICULTY);
+    expect(TUTORIAL_AI_DIFFICULTY).toBe("beginner");
+    expect(room.matchLength).toBe(1);
+    expect(room.gameDbId).toBeNull();
+    expect(room.players).toEqual({ white: body.guestId, black: AI_USER_ID });
+    expect(room.gameState.turn).toBe("white");
+
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  test("logged in: uses the user's identity but still writes no games row", async () => {
+    const token = signAccessToken(HUMAN_ID);
+    const res = await fetch(`${base}/tutorial`, {
+      method:  "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body:    "{}",
+    });
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.token).toBeUndefined();
+
+    const room = await getRoom(body.roomId);
+    expect(room.isTutorial).toBe(true);
+    expect(room.players.white).toBe(HUMAN_ID);
+    expect(room.playerInfo.white.display_name).toBe("Lärling");
+
+    for (const sql of sqlCalls()) expect(sql).not.toMatch(RATING_SQL);
+  });
+
+  test("rejects an invalid token instead of silently becoming a guest", async () => {
+    const res = await fetch(`${base}/tutorial`, {
+      method: "POST", headers: { Authorization: "Bearer nope" },
+    });
+    expect(res.status).toBe(401);
+    expect(store.size).toBe(0);
+  });
+
+  test("accepts no options from the client", async () => {
+    const res = await fetch(`${base}/tutorial`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ isTutorial: false, aiDifficulty: "grandmaster" }),
+    });
+    expect(res.status).toBe(400);
+    expect(store.size).toBe(0);
+  });
+});
+
+// ── Game over ────────────────────────────────────────────────────────────────
+
+describe("finishing a tutorial game", () => {
+  test("winning by bearing off issues no SQL (no move log, no games row, no ELO/stats)", async () => {
+    await putRoom(makeRoom("TUTOR001", { isTutorial: true }));
+
+    await handleMessage({
+      msg: { type: "MOVE", from: 23, to: "off", die: 1 },
+      userId: HUMAN_ID, roomId: "TUTOR001", ws: null,
+    });
+
+    const room = await getRoom("TUTOR001");
+    expect(room.status).toBe("finished");
+    expect(room.matchResult).toMatchObject({ winner: "white", winType: "hemspel", unrated: true });
+    expect(room.matchResult.whiteEloAfter).toBeUndefined();
+    expect(broadcasts).toContainEqual(expect.objectContaining({ type: "MATCH_OVER", winner: "white" }));
+
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  test("resigning issues no SQL", async () => {
+    await putRoom(makeRoom("TUTOR002", { isTutorial: true }));
+
+    await handleMessage({ msg: { type: "RESIGN" }, userId: HUMAN_ID, roomId: "TUTOR002", ws: null });
+
+    const room = await getRoom("TUTOR002");
+    expect(room.status).toBe("finished");
+    expect(room.matchResult).toMatchObject({ winner: "black", winType: "resign", unrated: true });
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  test("control: the same win in a normal AI game is rated", async () => {
+    await putRoom(makeRoom("RATED001", { isTutorial: false }));
+
+    await handleMessage({
+      msg: { type: "MOVE", from: 23, to: "off", die: 1 },
+      userId: HUMAN_ID, roomId: "RATED001", ws: null,
+    });
+
+    const calls = sqlCalls();
+    expect(calls.some((sql) => /INSERT INTO moves/.test(sql))).toBe(true);
+    expect(calls.some((sql) => /UPDATE games/.test(sql))).toBe(true);
+    expect(calls.some((sql) => /UPDATE users SET elo = \$2, wins = wins \+ 1/.test(sql))).toBe(true);
+    const room = await getRoom("RATED001");
+    expect(room.matchResult.whiteEloAfter).toEqual(expect.any(Number));
+  });
+});

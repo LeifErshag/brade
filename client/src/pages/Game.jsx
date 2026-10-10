@@ -4,6 +4,8 @@ import { useAuth } from "../AuthContext.jsx";
 import { useSocket } from "../hooks/useSocket.js";
 import Board from "../components/Board.jsx";
 import RulesDrawer from "../components/RulesDrawer.jsx";
+import TutorialCoach from "../components/TutorialCoach.jsx";
+import { OFFICIAL_RULES_URL } from "../components/RulesContent.jsx";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -121,7 +123,17 @@ export default function Game() {
   const [invitedIds, setInvitedIds]         = useState(new Set());
   const [toasts, setToasts]                 = useState([]);
   const [rulesOpen, setRulesOpen]           = useState(false);
+  const [rulesSection, setRulesSection]     = useState(undefined);
   const closeRules = useCallback(() => setRulesOpen(false), []);
+  // Tutorial: explanations open the drawer scrolled to their rules section.
+  const openRulesAt = useCallback((section) => {
+    setRulesSection(section);
+    setRulesOpen(true);
+  }, []);
+  const [illegalAttempt, setIllegalAttempt] = useState(null);
+  const handleIllegalAttempt = useCallback(({ from, to }) => {
+    setIllegalAttempt({ from, to, n: Date.now() });
+  }, []);
 
   // Use whichever token is available (real auth takes precedence over guest)
   const wsToken = token || guestToken;
@@ -198,6 +210,16 @@ export default function Game() {
   const bothIn    = !!(room?.players.white && room?.players.black);
   const bothReady = !!(room?.ready?.white && room?.ready?.black);
   const inviteUrl = `${window.location.origin}/game/${roomId}`;
+  const isTutorial = !!room?.isTutorial;
+  const coach = isTutorial && isPlayer && (
+    <TutorialCoach
+      room={room}
+      myColor={myColor}
+      noMovesColor={junkerNotice}
+      illegalAttempt={illegalAttempt}
+      onOpenRules={openRulesAt}
+    />
+  );
 
   // ── Debug console hooks: window.__brade ─────────────────────────────────────
   // state()  → client's view of the current room (turn/phase/canRoll/wsStatus)
@@ -347,20 +369,33 @@ export default function Game() {
             ? <Link to={`/tournaments/${room.tournamentId}`} style={S.back}>← Tournament</Link>
             : <Link to="/" style={S.back}>← Home</Link>
           }
-          <h2 style={S.title}>Room {roomId}</h2>
-          {room && <span style={S.matchLen}>{room.matchLength}-game match</span>}
+          {isTutorial ? (
+            <>
+              <h2 style={S.title}>Övningsparti</h2>
+              <span style={S.matchLen}>Räknas inte i statistiken</span>
+            </>
+          ) : (
+            <>
+              <h2 style={S.title}>Room {roomId}</h2>
+              {room && <span style={S.matchLen}>{room.matchLength}-game match</span>}
+            </>
+          )}
           {wsStatus === "disconnected" && <span style={S.disconnected}>Disconnected</span>}
           {wsStatus === "reconnecting" && <span style={S.reconnecting}>Reconnecting…</span>}
           <button
             type="button"
             style={S.btnRules}
-            onClick={() => setRulesOpen(true)}
+            onClick={() => openRulesAt(undefined)}
             aria-haspopup="dialog"
             aria-expanded={rulesOpen}
           >
             Regler
           </button>
         </div>
+
+        {/* Rendered once, outside the playing/finished branches, so the coach
+            keeps its history when the game ends. */}
+        {coach}
 
         {!room ? (
           <p style={S.muted}>Connecting…</p>
@@ -396,6 +431,8 @@ export default function Game() {
               onPass={handlePass}
               onResign={handleResign}
               junkerNotice={junkerNotice}
+              highlightLegal={isTutorial}
+              onIllegalAttempt={isTutorial ? handleIllegalAttempt : undefined}
             />
           </>
         ) : (
@@ -490,7 +527,7 @@ export default function Game() {
 
       {/* Rules drawer: fixed overlay sibling of the card. Opening/closing only
           toggles local state — the board and the socket are never re-mounted. */}
-      <RulesDrawer open={rulesOpen} onClose={closeRules} />
+      <RulesDrawer open={rulesOpen} onClose={closeRules} section={rulesSection} />
 
       <Toasts toasts={toasts} onDismiss={dismissToast} />
     </div>
@@ -573,6 +610,24 @@ function MatchResult({ room, myColor }) {
   const winLabel   = WIN_LABELS[r.winType] ?? r.winType ?? "";
 
   const myEloAfter = myColor === "white" ? r.whiteEloAfter : r.blackEloAfter;
+
+  if (room.isTutorial) {
+    return (
+      <div style={S.resultBanner}>
+        <div style={{ ...S.resultTitle, color: iWon ? "#7ddb7d" : "#c0392b" }}>
+          {iWon ? "Du vann övningspartiet!" : "Datorn vann övningspartiet"}
+        </div>
+        {winLabel && <div style={S.resultWinType}>{winLabel}</div>}
+        <div style={S.resultElo}>Övningspartier räknas inte i statistiken.</div>
+        <p style={{ margin: "0 0 12px" }}>
+          <a href={OFFICIAL_RULES_URL} target="_blank" rel="noopener noreferrer" style={{ color: "#e8b86d", fontSize: 14 }}>
+            Läs de fullständiga officiella reglerna ↗
+          </a>
+        </p>
+        <Link to="/" style={{ color: "#a07840", fontSize: 14 }}>← Tillbaka till startsidan</Link>
+      </div>
+    );
+  }
 
   return (
     <div style={S.resultBanner}>
