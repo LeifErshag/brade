@@ -229,6 +229,7 @@ export default function Home() {
               <Link to="/profile"      style={S.btnSecondary}>Profile</Link>
               <Link to="/leaderboard"  style={S.btnSecondary}>Leaderboard</Link>
               <Link to="/tournaments"  style={S.btnSecondary}>Tournaments</Link>
+              <Link to="/rules"        style={S.btnSecondary}>Regler</Link>
               <button style={S.btnSecondary} onClick={logout}>Sign out</button>
             </div>
 
@@ -314,8 +315,9 @@ export default function Home() {
               <a href={`${API}/auth/google`} style={S.btnPrimary}>Sign in with Google</a>
               <a href={`${API}/auth/github`} style={S.btnSecondary}>Sign in with GitHub</a>
             </div>
-            <div style={{ marginTop: 16 }}>
+            <div style={{ marginTop: 16, display: "flex", gap: 10, justifyContent: "center" }}>
               <Link to="/leaderboard" style={{ ...S.btnSecondary, fontSize: 12 }}>Leaderboard</Link>
+              <Link to="/rules"       style={{ ...S.btnSecondary, fontSize: 12 }}>Regler</Link>
             </div>
 
             <hr style={S.divider} />

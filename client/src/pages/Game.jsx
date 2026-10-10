@@ -3,6 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { useAuth } from "../AuthContext.jsx";
 import { useSocket } from "../hooks/useSocket.js";
 import Board from "../components/Board.jsx";
+import RulesDrawer from "../components/RulesDrawer.jsx";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -23,6 +24,10 @@ const S = {
   matchLen: { color: "#a07840", fontSize: 13 },
   disconnected: { color: "#c0392b", fontSize: 11 },
   reconnecting: { color: "#d68910", fontSize: 11 },
+  btnRules: {
+    background: "#2a1400", color: "#e8b86d", border: "1px solid #6b3a10", borderRadius: 6,
+    padding: "5px 12px", fontSize: 12, cursor: "pointer", fontFamily: "Georgia, serif",
+  },
 
   players: { display: "flex", gap: 16, alignItems: "stretch", marginBottom: 16 },
   vsLabel: { color: "#6b3a10", fontSize: 20, display: "flex", alignItems: "center", flexShrink: 0 },
@@ -115,6 +120,8 @@ export default function Game() {
   const [copyFeedback, setCopyFeedback]     = useState(false);
   const [invitedIds, setInvitedIds]         = useState(new Set());
   const [toasts, setToasts]                 = useState([]);
+  const [rulesOpen, setRulesOpen]           = useState(false);
+  const closeRules = useCallback(() => setRulesOpen(false), []);
 
   // Use whichever token is available (real auth takes precedence over guest)
   const wsToken = token || guestToken;
@@ -344,6 +351,15 @@ export default function Game() {
           {room && <span style={S.matchLen}>{room.matchLength}-game match</span>}
           {wsStatus === "disconnected" && <span style={S.disconnected}>Disconnected</span>}
           {wsStatus === "reconnecting" && <span style={S.reconnecting}>Reconnecting…</span>}
+          <button
+            type="button"
+            style={S.btnRules}
+            onClick={() => setRulesOpen(true)}
+            aria-haspopup="dialog"
+            aria-expanded={rulesOpen}
+          >
+            Regler
+          </button>
         </div>
 
         {!room ? (
@@ -471,6 +487,10 @@ export default function Game() {
           </>
         )}
       </div>
+
+      {/* Rules drawer: fixed overlay sibling of the card. Opening/closing only
+          toggles local state — the board and the socket are never re-mounted. */}
+      <RulesDrawer open={rulesOpen} onClose={closeRules} />
 
       <Toasts toasts={toasts} onDismiss={dismissToast} />
     </div>
