@@ -21,7 +21,8 @@ export const RULES_SECTIONS = [
 
 const S = {
   root:     { color: "#e8d5b0", fontFamily: "Georgia, serif", fontSize: 15, lineHeight: 1.6 },
-  intro:    { color: "#a07840", fontSize: 13, fontStyle: "italic", margin: "0 0 16px" },
+  intro:    { color: "#a07840", fontSize: 13, fontStyle: "italic", margin: "0 0 6px" },
+  official: { fontSize: 13, margin: "0 0 16px" },
   toc:      { listStyle: "none", padding: 0, margin: "0 0 8px", display: "flex", flexWrap: "wrap", gap: 6 },
   tocLink:  {
     display: "inline-block", background: "#2a1400", color: "#e8b86d", border: "1px solid #4a2800",
@@ -94,6 +95,11 @@ export default function RulesContent({ showToc = true, onNavigate }) {
         Bräde – ibland även kallat svenskt brädspel – spelas med ett flertal olika regelvarianter.
         Reglerna nedan följer de spelregler som antagits av Vasamuseets Brädspelsvänner (numera
         Vasamuseets vänner – Brädspelssektionen).
+      </p>
+      <p style={S.official}>
+        <a href={OFFICIAL_RULES_URL} target="_blank" rel="noopener noreferrer" style={S.link}>
+          Officiella spelregler hos Brädspelssektionen ↗
+        </a>
       </p>
 
       {showToc && (

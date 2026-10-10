@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../AuthContext.jsx";
+import { OFFICIAL_RULES_URL } from "../components/RulesContent.jsx";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -43,6 +44,9 @@ const S = {
     outline: "none",
   },
   error: { color: "#c0392b", fontSize: 12, marginTop: 6 },
+  footer:     { marginTop: 40, paddingTop: 14, borderTop: "1px solid #4a2800", maxWidth: 420, marginLeft: "auto", marginRight: "auto" },
+  footerText: { color: "#a07840", fontSize: 12, margin: 0, lineHeight: 1.5 },
+  footerLink: { color: "#e8b86d" },
 };
 
 export default function Home() {
@@ -358,6 +362,15 @@ export default function Home() {
             </div>
           </>
         )}
+
+        <footer style={S.footer}>
+          <p style={S.footerText}>
+            Spelreglerna följer Vasamuseets vänner – Brädspelssektionen.{" "}
+            <a href={OFFICIAL_RULES_URL} target="_blank" rel="noopener noreferrer" style={S.footerLink}>
+              Läs de officiella spelreglerna
+            </a>
+          </p>
+        </footer>
       </div>
     </div>
   );
