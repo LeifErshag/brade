@@ -4,6 +4,10 @@ import RulesContent from "./RulesContent.jsx";
 // Narrow screens get a bottom sheet instead of a side panel.
 const MOBILE_QUERY = "(max-width: 640px)";
 
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
+  'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== "undefined" && window.matchMedia?.(MOBILE_QUERY).matches
@@ -20,7 +24,7 @@ function useIsMobile() {
 
 const S = {
   backdrop: {
-    position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 900,
+    position: "fixed", inset: 0, zIndex: 900,
     transition: "opacity 200ms ease",
   },
   panelBase: {
@@ -65,6 +69,7 @@ const S = {
 export default function RulesDrawer({ open, onClose, section }) {
   const isMobile = useIsMobile();
   const closeBtnRef = useRef(null);
+  const panelRef    = useRef(null);
   const bodyRef     = useRef(null);
 
   function scrollToSection(id) {
@@ -83,7 +88,24 @@ export default function RulesDrawer({ open, onClose, section }) {
     const returnFocusTo = document.activeElement;
     closeBtnRef.current?.focus({ preventScroll: true });
     if (section) scrollToSection(section);
-    const onKey = e => { if (e.key === "Escape") onCloseRef.current(); };
+    const onKey = e => {
+      if (e.key === "Escape") { onCloseRef.current(); return; }
+      if (e.key !== "Tab" || !panelRef.current) return;
+      // Focus trap: wrap Tab / Shift+Tab within the drawer (aria-modal).
+      const focusables = panelRef.current.querySelectorAll(FOCUSABLE);
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last  = focusables[focusables.length - 1];
+      const active = document.activeElement;
+      const inside = panelRef.current.contains(active);
+      if (e.shiftKey && (active === first || !inside)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !inside)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
@@ -91,24 +113,32 @@ export default function RulesDrawer({ open, onClose, section }) {
     };
   }, [open, section]);
 
-  // Lock background scroll while open (mainly for the mobile bottom sheet).
+  // Lock background scroll while the mobile bottom sheet is open. Skipped on
+  // desktop, where hiding the scrollbar would shift the layout under the panel.
   useEffect(() => {
-    if (!open) return;
+    if (!open || !isMobile) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = prev; };
-  }, [open]);
+  }, [open, isMobile]);
 
   const hiddenTransform = isMobile ? "translateY(100%)" : "translateX(100%)";
 
   return (
     <>
       <div
-        style={{ ...S.backdrop, opacity: open ? 1 : 0, pointerEvents: open ? "auto" : "none" }}
+        style={{
+          ...S.backdrop,
+          // Lighter on desktop so the board stays readable beside the panel.
+          background: isMobile ? "rgba(0,0,0,0.55)" : "rgba(0,0,0,0.25)",
+          opacity: open ? 1 : 0,
+          pointerEvents: open ? "auto" : "none",
+        }}
         onClick={onClose}
         aria-hidden="true"
       />
       <aside
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="rules-drawer-title"

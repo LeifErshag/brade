@@ -92,7 +92,8 @@ export default function RulesContent({ showToc = true, onNavigate }) {
     <div style={S.root}>
       <p style={S.intro}>
         Bräde – ibland även kallat svenskt brädspel – spelas med ett flertal olika regelvarianter.
-        Reglerna nedan följer de spelregler som antagits av Vasamuseets Brädspelsvänner.
+        Reglerna nedan följer de spelregler som antagits av Vasamuseets Brädspelsvänner (numera
+        Vasamuseets vänner – Brädspelssektionen).
       </p>
 
       {showToc && (
@@ -290,13 +291,17 @@ export default function RulesContent({ showToc = true, onNavigate }) {
             tungor eller tungor med motspelarens blotta) får han spela in på motspelarens band, och
             då slås samtliga brickor i bandet. Banden får sprängas redan innan alla tillgängliga
             tungor utnyttjats. Så snart antalet slagna brickor inte längre överstiger antalet
-            tillgängliga tungor upphör rätten att spränga.
+            tillgängliga tungor upphör rätten att spränga. Den som har byggt banden – alltså
+            motspelaren till den som ska spela in – är skyldig att lämna så mycket plats att alla
+            utslagna brickor hela tiden ryms på det tillgängliga utrymmet i det första kvarteret.
           </li>
         </ul>
         <p style={S.note}>
-          Exempel: svart har tre slagna brickor men bara två tillgängliga tungor (2 och 3), och vit
-          har band på 1, 4, 5 och 6. Med 6–2 spränger svart bandet på 6 med sexan och spelar in på 2
-          med tvåan. Med 6–5 spränger han bandet på 6 och fåtar femman – han får inte spränga på 5,
+          Exempel: svart har tre slagna brickor att spela in. I hans första kvarter ligger hans egna
+          brickor på tunga 1 (hemmet), tunga 2 är tom, vit har en blotta på tunga 3 och band på
+          tungorna 4, 5 och 6. Svart har alltså bara två tillgängliga tungor (2 och 3) och får därför
+          spränga <em>ett</em> av vits band. Med 6–2 spränger svart bandet på 6 med sexan och spelar
+          in på 2 med tvåan. Med 5–3 spränger han bandet på 5 och slår blottan på 3. Med 6–5 spränger han bandet på 6 och fåtar femman – han får inte spränga på 5,
           eftersom han är skyldig att utnyttja den högre tärningen. Med 2–1 spelar han in med tvåan
           och fåtar ettan.
         </p>
@@ -454,8 +459,8 @@ export default function RulesContent({ showToc = true, onNavigate }) {
       </section>
 
       <p style={S.credit}>
-        Källa: <em>Spelregler för bräde</em>, antagna av Vasamuseets vänner – Brädspelssektionen
-        (årsmöte 26 februari 2003).{" "}
+        Källa: <em>Spelregler för bräde</em>, antagna av Vasamuseets Brädspelsvänner (numera
+        Vasamuseets vänner – Brädspelssektionen) vid årsmötet den 26 februari 2003.{" "}
         <a href={OFFICIAL_RULES_URL} target="_blank" rel="noopener noreferrer" style={S.link}>
           Läs de officiella spelreglerna hos Brädspelssektionen
         </a>
