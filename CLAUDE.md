@@ -80,6 +80,18 @@ During development, `vite.config.js` proxies `/api`, `/auth`, and `/ws` to `loca
 - `req.userId` is set by `requireAuth` middleware after JWT verification.
 - Room IDs are 8 uppercase alphanumeric characters (e.g., `A3F9B2C1`).
 
+## Development workflow
+
+Every change reaches `main` through a pull request that has been approved by an **independent reviewer**: a sub-agent that did not write the code and starts without the implementer's context.
+
+1. **Implement** on a feature branch based on `origin/main`, one issue per branch and PR. When using sub-agents, give each its own git worktree. Run `npm run lint` in both `client/` and `server/`, `npm test` in `server/` and `npm run build` in `client/` before pushing. Open the PR with `Closes #N`.
+2. **Review** with a fresh sub-agent that gets only the PR number, the issue and this file, never the implementer's conversation or report. The reviewer checks out the branch in its own temporary worktree (never the main checkout), re-runs lint/tests/build, checks the issue's acceptance criteria, checks rules text against `docs/rules/nya-svenska-bradspelsregler.pdf`, and returns APPROVE or REQUEST_CHANGES with findings ranked blocker / should-fix / nit. It must not push, commit or comment on GitHub.
+3. **Fix** findings on the same branch (the implementer can do this), then review again with a *new* independent reviewer. Repeat until approved.
+4. **Merge** only after an APPROVE (`gh pr merge --merge`). Merging deploys to production (see Deployment), so never merge unreviewed or REQUEST_CHANGES PRs.
+5. **Follow up**: file pre-existing bugs and leftover nits the reviewer found as separate issues instead of widening the PR. Remove merged worktrees when done.
+
+Rule discrepancies between the engine and the official rules are tracked in `docs/rules/audit.md` and issues labelled `rules`.
+
 ## Environment variables
 
 Copy `server/.env.example` → `server/.env` and `client/.env.example` → `client/.env`. Required server vars: `DATABASE_URL`, `REDIS_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `GOOGLE_CLIENT_ID/SECRET`, `GITHUB_CLIENT_ID/SECRET`, `CLIENT_ORIGIN`, `COOKIE_SECRET`.
