@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { query } from "../db/postgres.js";
+import { asyncHandler } from "../middleware/asyncHandler.js";
 
 const router = Router();
 
@@ -10,7 +11,7 @@ const patchMeSchema = z.object({
   display_name: z.string().trim().min(1, "Name too short").max(50, "Name too long"),
 });
 
-router.patch("/me", requireAuth, validate(patchMeSchema), async (req, res) => {
+router.patch("/me", requireAuth, validate(patchMeSchema), asyncHandler(async (req, res) => {
   const { rows } = await query(
     `UPDATE users SET display_name = $1
      WHERE id = $2
@@ -19,9 +20,9 @@ router.patch("/me", requireAuth, validate(patchMeSchema), async (req, res) => {
   );
   if (!rows.length) return res.status(404).json({ error: "User not found" });
   return res.json(rows[0]);
-});
+}));
 
-router.get("/me", requireAuth, async (req, res) => {
+router.get("/me", requireAuth, asyncHandler(async (req, res) => {
   const { rows } = await query(
     `SELECT id, display_name, avatar_url, elo, wins, losses, created_at
      FROM users WHERE id = $1`,
@@ -29,9 +30,9 @@ router.get("/me", requireAuth, async (req, res) => {
   );
   if (!rows.length) return res.status(404).json({ error: "User not found" });
   return res.json(rows[0]);
-});
+}));
 
-router.get("/leaderboard", async (_req, res) => {
+router.get("/leaderboard", asyncHandler(async (_req, res) => {
   const { rows } = await query(
     `SELECT id, display_name, avatar_url, elo, wins, losses
      FROM users
@@ -39,10 +40,10 @@ router.get("/leaderboard", async (_req, res) => {
      ORDER BY elo DESC LIMIT 20`
   );
   return res.json(rows);
-});
+}));
 
 // ── GET /api/users/search?q=name — find users by display name ────────────────
-router.get("/search", requireAuth, async (req, res) => {
+router.get("/search", requireAuth, asyncHandler(async (req, res) => {
   const q = (req.query.q ?? "").trim();
   if (q.length < 2) return res.status(400).json({ error: "Query must be at least 2 characters" });
   const { rows } = await query(
@@ -52,9 +53,9 @@ router.get("/search", requireAuth, async (req, res) => {
     [`%${q}%`, req.userId]
   );
   return res.json(rows);
-});
+}));
 
-router.get("/:id/games", async (req, res) => {
+router.get("/:id/games", asyncHandler(async (req, res) => {
   const { rows } = await query(
     `SELECT g.id, g.win_type, g.monk,
             g.white_score, g.black_score, g.ended_at, g.match_length,
@@ -71,15 +72,15 @@ router.get("/:id/games", async (req, res) => {
     [req.params.id]
   );
   return res.json(rows);
-});
+}));
 
-router.get("/:id", async (req, res) => {
+router.get("/:id", asyncHandler(async (req, res) => {
   const { rows } = await query(
     `SELECT display_name, avatar_url, elo, wins, losses FROM users WHERE id = $1`,
     [req.params.id]
   );
   if (!rows.length) return res.status(404).json({ error: "User not found" });
   return res.json(rows[0]);
-});
+}));
 
 export default router;

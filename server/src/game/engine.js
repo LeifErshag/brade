@@ -141,7 +141,7 @@ function onBoardCount(gs, color) {
   return n;
 }
 
-// Junker exception (§6/§10): borne off 14 → exactly one checker remains (on the
+// Junker exception (§6 p.4): borne off 14 → exactly one checker remains (on the
 // board or on the bar). With 15 checkers total, off===14 uniquely identifies it.
 function isJunker(gs, color) {
   return gs.off[color] === 14;
@@ -596,26 +596,20 @@ function vackertSpel(gs, color) {
 // The opponent is "jan" when bar[opp] > available, where `available` = number
 // of the OPPONENT's Q1 path positions NOT occupied by the OPPONENT's OWN
 // checkers (empty, or holding the winner's blot, or holding the winner's band —
-// the band counts because it is burstable).
+// the band counts: §10 p.6 "tomma eller upptagna av spelarens band eller blottor").
 //
-// Edge: if the junker exception applies to the opponent (14 off + 1 left, no
-// bursting), winner bands do NOT count as available.
+// There is no junker exception: a junker (14 off) has one checker left, so it
+// can never be jan. A blocked junker just stands over (§6 p.4).
 function checkJan(gs, lastMoveBurst) {
   const winner = gs.turn;
   const loser  = winner === "white" ? "black" : "white";
   if (gs.bar[loser] === 0) return null;
 
-  const loserJunker = isJunker(gs, loser);
-
   let available = 0;
   for (let pos = Q1_LO; pos <= Q1_HI; pos++) {
     const loserHere = ownAt(gs, loser, pos);    // >0 own (loser), <0 winner, 0 empty
     if (loserHere > 0) continue;                // loser's own checker → not available
-    if (loserHere <= -2) {
-      // Winner band: burstable → counts as available UNLESS loser is junker.
-      if (loserJunker) continue;
-    }
-    available++;                                 // empty, winner blot, or burstable band
+    available++;                                 // empty, winner blot, or winner band
   }
 
   if (gs.bar[loser] > available) {

@@ -9,6 +9,7 @@ import { initGame } from "../game/engine.js";
 import { AI_USER_ID, AI_DISPLAY } from "../game/ai.js";
 import { signGuestToken, verifyAccessToken } from "../auth/tokens.js";
 import { rooms } from "../ws/server.js";
+import { asyncHandler } from "../middleware/asyncHandler.js";
 
 const router = Router();
 
@@ -36,7 +37,7 @@ const CreateTutorialSchema = z.object({}).strict().default({});
 export const TUTORIAL_AI_DIFFICULTY = "beginner";
 
 // ── POST /api/games — create a new game room ──────────────────────────────────
-router.post("/", requireAuth, validate(CreateGameSchema), async (req, res) => {
+router.post("/", requireAuth, validate(CreateGameSchema), asyncHandler(async (req, res) => {
   const { matchLength, opponent, aiDifficulty } = req.body;
   const isAi  = opponent === "ai";
   const roomId = uuid().slice(0, 8).toUpperCase();
@@ -121,11 +122,11 @@ router.post("/", requireAuth, validate(CreateGameSchema), async (req, res) => {
 
   const inviteUrl = `${process.env.CLIENT_ORIGIN}/game/${roomId}`;
   return res.status(201).json({ roomId, inviteUrl });
-});
+}));
 
 // ── POST /api/games/ai-guest — create an AI game without logging in ──────────
 // Issues a guest token in the same response. White = guest, Black = AI.
-router.post("/ai-guest", validate(CreateAiGuestGameSchema), async (req, res) => {
+router.post("/ai-guest", validate(CreateAiGuestGameSchema), asyncHandler(async (req, res) => {
   const { matchLength, aiDifficulty } = req.body;
   const roomId  = uuid().slice(0, 8).toUpperCase();
   const guestId = uuid();
@@ -179,14 +180,14 @@ router.post("/ai-guest", validate(CreateAiGuestGameSchema), async (req, res) => 
   await redis.set(keys.room(roomId), JSON.stringify(roomState), "EX", TTL.room);
 
   return res.status(201).json({ roomId, token, guestId, isAi: true });
-});
+}));
 
 // ── POST /api/games/tutorial — start an unrated tutorial game vs the AI ──────
 // Works logged in (Bearer token) or not (a guest token is issued). The room is
 // flagged `isTutorial`: no `games` row is created, moves are not logged, and the
 // game-over handler never touches ELO, wins or losses (see ws/handlers.js).
 // The flag is set here, server-side, so the client has no say in it.
-router.post("/tutorial", validate(CreateTutorialSchema), async (req, res) => {
+router.post("/tutorial", validate(CreateTutorialSchema), asyncHandler(async (req, res) => {
   let userId = null;
   const header = req.headers.authorization;
   if (header?.startsWith("Bearer ")) {
@@ -241,10 +242,10 @@ router.post("/tutorial", validate(CreateTutorialSchema), async (req, res) => {
   await redis.set(keys.room(roomId), JSON.stringify(roomState), "EX", TTL.room);
 
   return res.status(201).json({ roomId, isAi: true, isTutorial: true, ...(guest ?? {}) });
-});
+}));
 
 // ── GET /api/games/:roomId — get room info ────────────────────────────────────
-router.get("/:roomId", requireAuth, async (req, res) => {
+router.get("/:roomId", requireAuth, asyncHandler(async (req, res) => {
   const { roomId } = req.params;
   if (!/^[A-Z0-9]{8}$/.test(roomId)) {
     return res.status(400).json({ error: "Invalid room ID" });
@@ -266,13 +267,13 @@ router.get("/:roomId", requireAuth, async (req, res) => {
     isAi:        room.isAi ?? false,
     isTutorial:  room.isTutorial ?? false,
   });
-});
+}));
 
 // ── GET /api/games/:roomId/debug — dump full room state for debugging ─────────
 // Returns the authoritative Redis room JSON plus live WS connection info, scoped
 // to a single room. Gated to that room's players so game state isn't exposed to
 // arbitrary authenticated users.
-router.get("/:roomId/debug", requireAuth, async (req, res) => {
+router.get("/:roomId/debug", requireAuth, asyncHandler(async (req, res) => {
   const { roomId } = req.params;
   if (!/^[A-Z0-9]{8}$/.test(roomId)) {
     return res.status(400).json({ error: "Invalid room ID" });
@@ -294,10 +295,10 @@ router.get("/:roomId/debug", requireAuth, async (req, res) => {
     connections, // userIds with a live WebSocket to this room
     room,        // full authoritative room state
   });
-});
+}));
 
 // ── GET /api/games — current user's match history ─────────────────────────────
-router.get("/", requireAuth, async (req, res) => {
+router.get("/", requireAuth, asyncHandler(async (req, res) => {
   const { rows } = await query(
     `SELECT g.id, g.room_id, g.win_type, g.monk,
             g.white_score, g.black_score, g.ended_at, g.match_length,
@@ -314,6 +315,6 @@ router.get("/", requireAuth, async (req, res) => {
     [req.userId]
   );
   return res.json(rows);
-});
+}));
 
 export default router;

@@ -712,9 +712,10 @@ test("§10 jan accessibility: a WINNER band on opp Q1 counts as available (it is
   expect(checkWin(gs)?.winType).toBe("jan");
 });
 
-// NOTE: asserts current engine behaviour, which the rules audit found to differ
-// from §6 p.4 / §10 p.6 (a blocked junker stands over; it is not jan). See #12.
-test("§10 jan edge: loser is junker → winner bands do NOT count as available", () => {
+// §10 (p.6) counts points "upptagna av spelarens band" as available, with no
+// junker exception. A junker has a single checker, so it can never be jan; when
+// blocked it "måste stå över sitt slag" (§6 p.4). See #12.
+test("§10 jan edge: loser is junker → winner bands still count as available (no jan)", () => {
   const gs = emptyGs("white");
   gs.turn = "white";
   // Black is junker: 14 off + its single remaining checker on the bar.
@@ -722,17 +723,26 @@ test("§10 jan edge: loser is junker → winner bands do NOT count as available"
   gs.bar.black = 1;            // the one remaining black checker is on the bar
   // Winner (white) bands on black's Q1 (black Q1 pos 0..5 = black idx 12..17).
   for (let p = 0; p <= 5; p++) placeIdx(gs, "white", pathToIdx("black", p), 2);
-  // Normally winner bands count as available, but the junker exception suppresses
-  // that → available = 0. bar 1 > 0 → jan.
-  const r = checkWin(gs);
-  expect(r?.winType).toBe("jan");
-  // Sanity: if black were NOT junker (off < 14), the winner bands WOULD count as
-  // available (6) and 1 <= 6 → no jan.
+  // Winner bands count as available (6) even for a junker → 1 <= 6 → no jan.
+  expect(checkWin(gs)).toBeNull();
+  // Same result when black is not a junker (off < 14).
   const gs2 = emptyGs("white");
   gs2.turn = "white";
   gs2.bar.black = 1;
   for (let p = 0; p <= 5; p++) placeIdx(gs2, "white", pathToIdx("black", p), 2);
   expect(checkWin(gs2)).toBeNull();
+});
+
+// §10 (p.6) counts points "upptagna av spelarens band" as available, and §6
+// (p.4) says a blocked junker "måste stå över sitt slag": a pass, not jan. See #12.
+test("§6/§10 (p.4, p.6) a junker stuck on the bar just passes — it is not jan (#12)", () => {
+  const gs = emptyGs("black");
+  gs.turn = "black";
+  gs.off.black = 14;
+  gs.bar.black = 1;
+  for (let p = 0; p <= 5; p++) placeOppAtMoverPos(gs, "black", p, 2);
+  expect(checkJanOnPass(gs)).toBeNull();
+  expect(checkWin({ ...gs, turn: "white" })).toBeNull();
 });
 
 // ── §10 Jan on a forced pass (the player to move is the one closed out) ────────
@@ -1268,19 +1278,4 @@ test("§6 (p.3) current behaviour: a checker on the bar facing a 6-band wall (po
   place(gs, "white", 18, 14);
   for (let p = 1; p <= 6; p++) placeOppAtMoverPos(gs, "white", p, 2);
   expect(getLegalMoves(gs, "white")).toEqual([]);
-});
-
-// ── Known discrepancies (skipped until fixed; see docs/rules/audit.md) ───────
-
-// Discrepancy: §10 (p.6) counts points "upptagna av spelarens band" as available,
-// and §6 (p.4) says a blocked junker "måste stå över sitt slag". The engine
-// instead declares jan against a junker stuck on the bar. See #12.
-test.skip("§6/§10 (p.4, p.6) a junker stuck on the bar just passes — it is not jan (#12)", () => {
-  const gs = emptyGs("black");
-  gs.turn = "black";
-  gs.off.black = 14;
-  gs.bar.black = 1;
-  for (let p = 0; p <= 5; p++) placeOppAtMoverPos(gs, "black", p, 2);
-  expect(checkJanOnPass(gs)).toBeNull();
-  expect(checkWin({ ...gs, turn: "white" })).toBeNull();
 });

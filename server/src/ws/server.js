@@ -12,122 +12,132 @@ export const userConnections = new Map();
 export function initWebSocketServer(httpServer) {
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
-  wss.on("connection", async (ws, req) => {
-    const url    = new URL(req.url, "http://localhost");
-    const token  = url.searchParams.get("token");
-    const roomId = url.searchParams.get("room");
-
-    if (!token || !roomId) { ws.close(4001, "Missing token or room"); return; }
-
-    let userId, isGuest = false, guestDisplayName = "Guest";
-    try {
-      const payload = verifyAccessToken(token);
-      userId = payload.sub;
-      if (payload.isGuest === true) {
-        isGuest = true;
-        guestDisplayName = payload.display_name ?? "Guest";
-      }
-    } catch {
-      ws.close(4001, "Invalid token"); return;
-    }
-
-    if (!/^[A-Z0-9]{8}$/.test(roomId)) { ws.close(4002, "Invalid room"); return; }
-
-    const redis = getRedis();
-    const rawRoom = await redis.get(keys.room(roomId));
-    if (!rawRoom) { ws.close(4003, "Room not found"); return; }
-
-    let room = JSON.parse(rawRoom);
-    // Reset TTL on every connect so active rooms never expire mid-session
-    await redis.expire(keys.room(roomId), TTL.room);
-
-    // Auto-assign black seat if empty and this is not the white player.
-    // Tournament rooms always have both seats pre-assigned — skip for them.
-    if (!room.tournamentId && !room.players.black && room.players.white !== userId) {
-      let blackInfo;
-      if (isGuest) {
-        blackInfo = { display_name: guestDisplayName, avatar_url: null };
-      } else {
-        const { rows: [player] } = await query(
-          `SELECT display_name, avatar_url FROM users WHERE id = $1`,
-          [userId]
-        );
-        blackInfo = {
-          display_name: player?.display_name ?? "Player",
-          avatar_url:   player?.avatar_url   ?? null,
-        };
-      }
-      room.players.black    = userId;
-      room.playerInfo       = room.playerInfo ?? { white: null, black: null };
-      room.playerInfo.black = blackInfo;
-      if (isGuest) room.hasGuest = true;
-      await redis.set(keys.room(roomId), JSON.stringify(room), "EX", TTL.room);
-    }
-
-    // Cancel any pending disconnect forfeit for this player
-    const reconnectColor = room.players.white === userId ? "white"
-                         : room.players.black === userId ? "black" : null;
-    if (reconnectColor && room.status === "playing") {
-      cancelDisconnectForfeit(roomId, reconnectColor);
-    }
-
-    // Add to rooms and userConnections before broadcasting so count is accurate
-    if (!rooms.has(roomId)) rooms.set(roomId, new Set());
-    const client = { ws, userId };
-    rooms.get(roomId).add(client);
-
-    if (!userConnections.has(userId)) userConnections.set(userId, new Set());
-    userConnections.get(userId).add(ws);
-
-    // Send full room state to every client in the room (including new arrival)
-    broadcastState(roomId, room);
-
-    // If this is an AI game and it's the AI's turn to roll first, kick it off.
-    // This covers the case where the game was created with AI going first before
-    // any WebSocket connection existed to trigger the normal ROLL/MOVE flow.
-    const gs = room.gameState;
-    if (room.isAi && room.status === "playing" && gs?.turn === "black" && gs?.phase === "rolling") {
-      triggerAiTurn(roomId, room.aiDifficulty).catch(e => console.error("AI first-turn error:", e));
-    }
-
-    ws.on("message", async (data) => {
-      let msg;
-      try { msg = JSON.parse(data); } catch { return; }
-      // A handler exception must never escape: an unhandled rejection here
-      // would kill the process and drop every live game.
-      try {
-        await handleMessage({ msg, userId, roomId, ws });
-      } catch (err) {
-        console.error(`WS handler error [${roomId}] type=${msg?.type}:`, err);
-        send(ws, { type: "ERROR", message: "Server error" });
-      }
+  wss.on("connection", (ws, req) => {
+    // The connection handler is async: an error escaping it (e.g. Redis or
+    // Postgres down) would be an unhandled rejection. Log it and close the
+    // socket with 1011 (internal error) so the client can retry.
+    handleConnection(ws, req).catch((err) => {
+      console.error("WS connection error:", err);
+      ws.close(1011, "Server error");
     });
-
-    ws.on("close", async () => {
-      rooms.get(roomId)?.delete(client);
-      if (rooms.get(roomId)?.size === 0) rooms.delete(roomId);
-
-      userConnections.get(userId)?.delete(ws);
-      if (userConnections.get(userId)?.size === 0) userConnections.delete(userId);
-
-      broadcastToRoom(roomId, { type: "PLAYER_DISCONNECTED", userId });
-
-      // Schedule forfeit if a player disconnects mid-game
-      const freshRaw = await getRedis().get(keys.room(roomId)).catch(() => null);
-      if (freshRaw) {
-        const freshRoom = JSON.parse(freshRaw);
-        if (freshRoom.status === "playing") {
-          const dc = freshRoom.players.white === userId ? "white"
-                   : freshRoom.players.black === userId ? "black" : null;
-          if (dc) scheduleDisconnectForfeit(roomId, dc, userId);
-        }
-      }
-    });
-
-    ws.on("error", (err) => console.error(`WS error [${roomId}]:`, err.message));
   });
 
   console.log("WebSocket server initialised");
+}
+
+export async function handleConnection(ws, req) {
+  const url    = new URL(req.url, "http://localhost");
+  const token  = url.searchParams.get("token");
+  const roomId = url.searchParams.get("room");
+
+  if (!token || !roomId) { ws.close(4001, "Missing token or room"); return; }
+
+  let userId, isGuest = false, guestDisplayName = "Guest";
+  try {
+    const payload = verifyAccessToken(token);
+    userId = payload.sub;
+    if (payload.isGuest === true) {
+      isGuest = true;
+      guestDisplayName = payload.display_name ?? "Guest";
+    }
+  } catch {
+    ws.close(4001, "Invalid token"); return;
+  }
+
+  if (!/^[A-Z0-9]{8}$/.test(roomId)) { ws.close(4002, "Invalid room"); return; }
+
+  const redis = getRedis();
+  const rawRoom = await redis.get(keys.room(roomId));
+  if (!rawRoom) { ws.close(4003, "Room not found"); return; }
+
+  let room = JSON.parse(rawRoom);
+  // Reset TTL on every connect so active rooms never expire mid-session
+  await redis.expire(keys.room(roomId), TTL.room);
+
+  // Auto-assign black seat if empty and this is not the white player.
+  // Tournament rooms always have both seats pre-assigned — skip for them.
+  if (!room.tournamentId && !room.players.black && room.players.white !== userId) {
+    let blackInfo;
+    if (isGuest) {
+      blackInfo = { display_name: guestDisplayName, avatar_url: null };
+    } else {
+      const { rows: [player] } = await query(
+        `SELECT display_name, avatar_url FROM users WHERE id = $1`,
+        [userId]
+      );
+      blackInfo = {
+        display_name: player?.display_name ?? "Player",
+        avatar_url:   player?.avatar_url   ?? null,
+      };
+    }
+    room.players.black    = userId;
+    room.playerInfo       = room.playerInfo ?? { white: null, black: null };
+    room.playerInfo.black = blackInfo;
+    if (isGuest) room.hasGuest = true;
+    await redis.set(keys.room(roomId), JSON.stringify(room), "EX", TTL.room);
+  }
+
+  // Cancel any pending disconnect forfeit for this player
+  const reconnectColor = room.players.white === userId ? "white"
+                       : room.players.black === userId ? "black" : null;
+  if (reconnectColor && room.status === "playing") {
+    cancelDisconnectForfeit(roomId, reconnectColor);
+  }
+
+  // Add to rooms and userConnections before broadcasting so count is accurate
+  if (!rooms.has(roomId)) rooms.set(roomId, new Set());
+  const client = { ws, userId };
+  rooms.get(roomId).add(client);
+
+  if (!userConnections.has(userId)) userConnections.set(userId, new Set());
+  userConnections.get(userId).add(ws);
+
+  // Send full room state to every client in the room (including new arrival)
+  broadcastState(roomId, room);
+
+  // If this is an AI game and it's the AI's turn to roll first, kick it off.
+  // This covers the case where the game was created with AI going first before
+  // any WebSocket connection existed to trigger the normal ROLL/MOVE flow.
+  const gs = room.gameState;
+  if (room.isAi && room.status === "playing" && gs?.turn === "black" && gs?.phase === "rolling") {
+    triggerAiTurn(roomId, room.aiDifficulty).catch(e => console.error("AI first-turn error:", e));
+  }
+
+  ws.on("message", async (data) => {
+    let msg;
+    try { msg = JSON.parse(data); } catch { return; }
+    // A handler exception must never escape: an unhandled rejection here
+    // would kill the process and drop every live game.
+    try {
+      await handleMessage({ msg, userId, roomId, ws });
+    } catch (err) {
+      console.error(`WS handler error [${roomId}] type=${msg?.type}:`, err);
+      send(ws, { type: "ERROR", message: "Server error" });
+    }
+  });
+
+  ws.on("close", async () => {
+    rooms.get(roomId)?.delete(client);
+    if (rooms.get(roomId)?.size === 0) rooms.delete(roomId);
+
+    userConnections.get(userId)?.delete(ws);
+    if (userConnections.get(userId)?.size === 0) userConnections.delete(userId);
+
+    broadcastToRoom(roomId, { type: "PLAYER_DISCONNECTED", userId });
+
+    // Schedule forfeit if a player disconnects mid-game
+    const freshRaw = await getRedis().get(keys.room(roomId)).catch(() => null);
+    if (freshRaw) {
+      const freshRoom = JSON.parse(freshRaw);
+      if (freshRoom.status === "playing") {
+        const dc = freshRoom.players.white === userId ? "white"
+                 : freshRoom.players.black === userId ? "black" : null;
+        if (dc) scheduleDisconnectForfeit(roomId, dc, userId);
+      }
+    }
+  });
+
+  ws.on("error", (err) => console.error(`WS error [${roomId}]:`, err.message));
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
