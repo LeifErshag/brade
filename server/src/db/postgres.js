@@ -9,8 +9,17 @@ const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "
 
 let pool;
 
+// An idle client in the pool can error (e.g. Postgres restarts). pg emits that
+// on the Pool; without a listener it becomes an uncaught exception and the
+// process exits, dropping every live game. Log it instead: pg discards the
+// broken client and the next query opens a fresh connection.
+export function handlePoolError(err, logger = console) {
+  logger.error("PostgreSQL idle client error:", err);
+}
+
 export async function connectPostgres() {
   pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  pool.on("error", (err) => handlePoolError(err));
   await pool.query("SELECT 1"); // verify connection
   console.log("PostgreSQL connected");
   await runMigrations();

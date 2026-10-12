@@ -21,7 +21,8 @@ jest.unstable_mockModule("./handlers.js", () => ({
 
 process.env.JWT_ACCESS_SECRET = "test-access-secret";
 
-const { initWebSocketServer, handleConnection } = await import("./server.js");
+const { initWebSocketServer, handleConnection, rooms, userConnections } = await import("./server.js");
+const { cancelDisconnectForfeit } = await import("./handlers.js");
 const { signAccessToken } = await import("../auth/tokens.js");
 const { WebSocketServer } = await import("ws");
 
@@ -80,4 +81,45 @@ test("a missing room still closes with 4003 and is not treated as an error", asy
   await handleConnection(ws, fakeReq());
   expect(ws.close).toHaveBeenCalledWith(4003, "Room not found");
   expect(errorSpy).not.toHaveBeenCalled();
+});
+
+describe("client disconnects while handleConnection is awaiting", () => {
+  const room = {
+    players: { white: USER_ID, black: "22222222-2222-2222-2222-222222222222" },
+    status: "playing",
+    gameState: { turn: "white", phase: "rolling" },
+  };
+
+  test("no room or user entry is registered and no listeners are attached", async () => {
+    const ws = fakeWs();
+    redisGet.mockImplementation(async () => {
+      // The socket closes (and emits "close") mid-await.
+      ws.readyState = 3;
+      ws.emit("close");
+      return JSON.stringify(room);
+    });
+
+    await handleConnection(ws, fakeReq());
+
+    expect(rooms.has("ABCD1234")).toBe(false);
+    expect(userConnections.has(USER_ID)).toBe(false);
+    expect(ws.listenerCount("close")).toBe(0);
+    expect(ws.listenerCount("message")).toBe(0);
+    expect(ws.send).not.toHaveBeenCalled();
+    expect(cancelDisconnectForfeit).not.toHaveBeenCalled();
+  });
+
+  test("an open socket is still registered and cleaned up on close", async () => {
+    const ws = fakeWs();
+    redisGet.mockResolvedValue(JSON.stringify(room));
+
+    await handleConnection(ws, fakeReq());
+    expect(rooms.get("ABCD1234")?.size).toBe(1);
+    expect(userConnections.get(USER_ID)?.has(ws)).toBe(true);
+
+    ws.readyState = 3;
+    ws.emit("close");
+    expect(rooms.has("ABCD1234")).toBe(false);
+    expect(userConnections.has(USER_ID)).toBe(false);
+  });
 });
