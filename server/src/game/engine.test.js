@@ -418,17 +418,47 @@ test("§6 Case A: a 6-band wall directly in path may be burst when no other move
   expect(res.gs.bar.black).toBe(2);
 });
 
-// NOTE: asserts current engine behaviour, which the rules audit found to differ
-// from §6 p.3 (bursting is an optional right, not a last resort). See #11.
-test("§6 Case A: NOT forced when a non-burst move exists", () => {
+// §6 (p.3): "Spelaren har då rätt att spränga vilket som helst av banden, men
+// han är inte tvungen att spränga om det finns andra möjligheter att flytta för
+// tärningarna." Bursting is an optional right, not a last resort. See #11.
+test("§6 (p.3) Case A: a wall burst is optional — still offered when other moves exist (#11)", () => {
   const gs = emptyGs("white", [3]);
   place(gs, "white", 5, 1);
   place(gs, "white", 12, 1);            // a second checker with a clear move
-  for (let p = 6; p <= 11; p++) placeIdx(gs, "black", pathToIdx("white", p), 2);  // wall
+  for (let p = 6; p <= 11; p++) placeOppAtMoverPos(gs, "white", p, 2);  // 6-band wall
   const moves = getLegalMoves(gs, "white");
-  // The pos-12 checker can move 12→15 (no wall there) → no burst is offered.
   expect(moves).toContainEqual({ from: pathToIdx("white", 12), to: pathToIdx("white", 15), die: 3 });
-  expect(moves.find(m => m.to === pathToIdx("white", 8))).toBeUndefined(); // no burst
+  expect(moves).toContainEqual({ from: pathToIdx("white", 5), to: pathToIdx("white", 8), die: 3 });
+});
+
+test("§6 (p.3) Case A: NOT forced — a complete turn without a burst is legal when other moves exist", () => {
+  const gs = emptyGs("white", [3]);
+  place(gs, "white", 5, 1);
+  place(gs, "white", 12, 1);
+  for (let p = 6; p <= 11; p++) placeOppAtMoverPos(gs, "white", p, 2);
+  const wall = new Set([6, 7, 8, 9, 10, 11].map(p => pathToIdx("white", p)));
+  const seqs = legalTurnSequences(gs, "white");
+  // Some surviving turn plays the ordinary 12→15 and bursts nothing.
+  expect(seqs.some(s => s.moves.every(m => !wall.has(m.to)))).toBe(true);
+  // Playing 12→15 bursts nothing and leaves the wall intact.
+  const res = applyMove(gs, "white", pathToIdx("white", 12), pathToIdx("white", 15), 3);
+  expect(res.burst).toBe(false);
+  expect(res.gs.bar.black).toBe(0);
+});
+
+test("§6 (p.3) + §2 Case A: an optional burst that would forfeit a die is excluded by maximal use", () => {
+  const gs = emptyGs("white", [1, 2]);
+  place(gs, "white", 5, 1);
+  place(gs, "white", 12, 1);
+  for (let p = 6; p <= 11; p++) placeOppAtMoverPos(gs, "white", p, 2);  // 6-band wall
+  placeOppAtMoverPos(gs, "white", 13, 2);  // blocks 12→13
+  const moves = getLegalMoves(gs, "white");
+  // Both dice can be used: burst 5→6 with the 1 and play 12→14 with the 2.
+  expect(moves).toContainEqual({ from: pathToIdx("white", 5), to: pathToIdx("white", 6), die: 1 });
+  expect(moves).toContainEqual({ from: pathToIdx("white", 12), to: pathToIdx("white", 14), die: 2 });
+  // Bursting 5→7 with the 2 leaves the wall at 4 bands, so the 1 can no longer
+  // be played (7→8 and 12→13 are blocked). §2 maximal use rules it out.
+  expect(moves).not.toContainEqual({ from: pathToIdx("white", 5), to: pathToIdx("white", 7), die: 2 });
 });
 
 test("§6 Case A: a wall shorter than 6 does NOT grant a burst (player simply stuck)", () => {
@@ -1241,19 +1271,6 @@ test("§6 (p.3) current behaviour: a checker on the bar facing a 6-band wall (po
 });
 
 // ── Known discrepancies (skipped until fixed; see docs/rules/audit.md) ───────
-
-// Discrepancy: §6 (p.3) "Spelaren har då rätt att spränga vilket som helst av
-// banden, men han är inte tvungen att spränga om det finns andra möjligheter".
-// The engine only offers a wall burst when NO other move exists. See #11.
-test.skip("§6 (p.3) Case A: a wall burst is optional — still offered when other moves exist (#11)", () => {
-  const gs = emptyGs("white", [3]);
-  place(gs, "white", 5, 1);
-  place(gs, "white", 12, 1);
-  for (let p = 6; p <= 11; p++) placeOppAtMoverPos(gs, "white", p, 2);
-  const moves = getLegalMoves(gs, "white");
-  expect(moves).toContainEqual({ from: pathToIdx("white", 12), to: pathToIdx("white", 15), die: 3 });
-  expect(moves).toContainEqual({ from: pathToIdx("white", 5), to: pathToIdx("white", 8), die: 3 });
-});
 
 // Discrepancy: §10 (p.6) counts points "upptagna av spelarens band" as available,
 // and §6 (p.4) says a blocked junker "måste stå över sitt slag". The engine

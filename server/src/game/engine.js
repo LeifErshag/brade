@@ -190,18 +190,16 @@ function mayBurstFromBar(gs, color) {
   return gs.bar[color] > availableQ1ForReentry(gs, color);
 }
 
-// Case A (impenetrable wall): the player is NOT on the bar but has no legal
-// non-burst move for ANY remaining die, AND there is a contiguous run of ≥6
-// opponent bands directly in his forward path. Then he may burst one wall band.
-// Not forced if any non-burst move exists. Suppressed for the junker.
+// Case A (impenetrable wall): the player is NOT on the bar and there is a
+// contiguous run of ≥6 opponent bands directly in his forward path. He then has
+// the RIGHT to burst any band of that wall (§6 p.3: "rätt att spränga vilket som
+// helst av banden"). It is an optional right, not a last resort: the burst is
+// offered alongside any ordinary moves, and he "är inte tvungen att spränga om
+// det finns andra möjligheter". The §2 turn-level filters (maximal use, higher
+// die) still apply to sequences containing a burst. Suppressed for the junker.
 function wallBurstTargets(gs, color, dice) {
   if (gs.bar[color] > 0) return [];
   if (isJunker(gs, color)) return [];
-
-  // If any ordinary (non-burst) move exists for any die, no wall-burst.
-  for (const die of new Set(dice)) {
-    if (genNormalAndBearOff(gs, color, die).length > 0) return [];
-  }
 
   // Find, per occupied source, whether a die would land/intermediate-land on a
   // contiguous wall of ≥6 opponent bands lying in the forward path. We only
@@ -298,7 +296,7 @@ function genFirstMovesForDie(gs, color, die, dice) {
   // Not on bar: normal moves + bear-off.
   moves.push(...genNormalAndBearOff(gs, color, die));
 
-  // Case A wall-burst, only if no ordinary move exists at all.
+  // Case A wall-burst: an optional right, offered alongside ordinary moves.
   const wall = wallBurstTargets(gs, color, dice);
   for (const w of wall) if (w.die === die) moves.push(w);
 
