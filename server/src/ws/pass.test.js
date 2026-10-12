@@ -161,6 +161,8 @@ describe("PASS while closed out on the bar", () => {
   test("ends the game by jan against the passer (§10)", async () => {
     // White is to move with three checkers on the bar, and its own checkers
     // block four of its six entry points (available 2 < bar 3): white is jan.
+    // The position is deliberately partial (7 white checkers, not 15): only
+    // the bar count and the blocked entry points matter for the jan check.
     const gs = whiteState("moving");
     gs.board = new Array(24).fill(0);
     for (const pos of [0, 1, 2, 3]) gs.board[pathToIdx("white", pos)] = 1;
