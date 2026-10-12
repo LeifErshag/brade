@@ -56,7 +56,9 @@ export async function handleConnection(ws, req) {
 
   // Auto-assign black seat if empty and this is not the white player.
   // Tournament rooms always have both seats pre-assigned — skip for them.
+  let assignedSeat = null; // set when this connection takes the black seat
   if (!room.tournamentId && !room.players.black && room.players.white !== userId) {
+    assignedSeat = { hadGuest: room.hasGuest === true };
     let blackInfo;
     if (isGuest) {
       blackInfo = { display_name: guestDisplayName, avatar_url: null };
@@ -82,7 +84,12 @@ export async function handleConnection(ws, req) {
   // existed, so registering it now would leave rooms/userConnections entries
   // that are never cleaned up. Nothing below awaits, so this check suffices.
   // Returning before cancelDisconnectForfeit keeps any pending forfeit.
-  if (ws.readyState !== 1 /* OPEN */) return;
+  if (ws.readyState !== 1 /* OPEN */) {
+    // A black seat assigned above was never announced (no ROOM_STATE went
+    // out), so give it back instead of leaving it held by a gone client.
+    if (assignedSeat) await releaseUnannouncedSeat(roomId, userId, isGuest, assignedSeat.hadGuest);
+    return;
+  }
 
   // Cancel any pending disconnect forfeit for this player
   const reconnectColor = room.players.white === userId ? "white"
@@ -145,6 +152,27 @@ export async function handleConnection(ws, req) {
   });
 
   ws.on("error", (err) => console.error(`WS error [${roomId}]:`, err.message));
+}
+
+// Undo a black seat auto-assigned to a client that disconnected before it was
+// registered. Re-reads the room so a concurrent change is not overwritten, and
+// keeps the seat if the room has left the lobby, the seat has changed hands,
+// or the same user has another live connection in the room that uses it.
+async function releaseUnannouncedSeat(roomId, userId, isGuest, hadGuest) {
+  const redis = getRedis();
+  const raw = await redis.get(keys.room(roomId));
+  if (!raw) return;
+  const room = JSON.parse(raw);
+  if (room.status !== "waiting" || room.players.black !== userId) return;
+  const stillConnected = [...(rooms.get(roomId) ?? [])].some(c => c.userId === userId);
+  if (stillConnected) return;
+
+  room.players.black = null;
+  if (room.playerInfo) room.playerInfo.black = null;
+  if (room.ready) room.ready.black = false;
+  if (isGuest && !hadGuest) delete room.hasGuest;
+  await redis.set(keys.room(roomId), JSON.stringify(room), "EX", TTL.room);
+  broadcastState(roomId, room);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
