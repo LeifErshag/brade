@@ -1,5 +1,6 @@
 import { Router } from "express";
 import passport from "../auth/passport.js";
+import { oauthCallback } from "../auth/stateStore.js";
 import {
   signAccessToken, signRefreshToken,
   storeRefreshToken, revokeRefreshToken,
@@ -18,7 +19,7 @@ router.get("/google",
   passport.authenticate("google", { scope: ["profile"], session: false })
 );
 router.get("/google/callback",
-  passport.authenticate("google", { session: false, failureRedirect: `${CLIENT}/?error=auth` }),
+  oauthCallback(passport, "google", `${CLIENT}/?error=auth`),
   asyncHandler(issueTokens)
 );
 
@@ -28,7 +29,7 @@ router.get("/github",
   passport.authenticate("github", { scope: ["read:user"], session: false })
 );
 router.get("/github/callback",
-  passport.authenticate("github", { session: false, failureRedirect: `${CLIENT}/?error=auth` }),
+  oauthCallback(passport, "github", `${CLIENT}/?error=auth`),
   asyncHandler(issueTokens)
 );
 
