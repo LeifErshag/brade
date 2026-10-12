@@ -6,6 +6,7 @@ import { validate } from "../middleware/validate.js";
 import { getRedis, keys, TTL } from "../db/redis.js";
 import { query } from "../db/postgres.js";
 import { initGame } from "../game/engine.js";
+import { asyncHandler } from "../middleware/asyncHandler.js";
 
 const router = Router();
 
@@ -14,7 +15,7 @@ const JoinSchema = z.object({
 });
 
 // ── POST /api/matchmaking/join ────────────────────────────────────────────────
-router.post("/join", requireAuth, validate(JoinSchema), async (req, res) => {
+router.post("/join", requireAuth, validate(JoinSchema), asyncHandler(async (req, res) => {
   const { matchLength } = req.body;
   const userId = req.userId;
   const redis  = getRedis();
@@ -50,10 +51,10 @@ router.post("/join", requireAuth, validate(JoinSchema), async (req, res) => {
 
   const queueSize = await redis.zcard(keys.matchQueue());
   return res.json({ status: "waiting", queueSize, joinedAt });
-});
+}));
 
 // ── GET /api/matchmaking/status ───────────────────────────────────────────────
-router.get("/status", requireAuth, async (req, res) => {
+router.get("/status", requireAuth, asyncHandler(async (req, res) => {
   const userId = req.userId;
   const redis  = getRedis();
 
@@ -85,13 +86,13 @@ router.get("/status", requireAuth, async (req, res) => {
   const queueSize = await redis.zcard(keys.matchQueue());
   const joinedAt  = infoRaw ? JSON.parse(infoRaw).joinedAt : null;
   return res.json({ status: "waiting", queueSize, joinedAt });
-});
+}));
 
 // ── POST /api/matchmaking/leave ───────────────────────────────────────────────
-router.post("/leave", requireAuth, async (req, res) => {
+router.post("/leave", requireAuth, asyncHandler(async (req, res) => {
   await leaveQueue(getRedis(), req.userId);
   return res.json({ status: "left" });
-});
+}));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
