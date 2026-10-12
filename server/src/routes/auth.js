@@ -7,6 +7,7 @@ import {
   setRefreshCookie, clearRefreshCookie,
 } from "../auth/tokens.js";
 import { rateLimitAuth } from "../middleware/ratelimit.js";
+import { asyncHandler } from "../middleware/asyncHandler.js";
 
 const router = Router();
 const CLIENT = process.env.CLIENT_ORIGIN;
@@ -18,7 +19,7 @@ router.get("/google",
 );
 router.get("/google/callback",
   passport.authenticate("google", { session: false, failureRedirect: `${CLIENT}/?error=auth` }),
-  issueTokens
+  asyncHandler(issueTokens)
 );
 
 // ── GitHub OAuth ──────────────────────────────────────────────────────────────
@@ -28,11 +29,11 @@ router.get("/github",
 );
 router.get("/github/callback",
   passport.authenticate("github", { session: false, failureRedirect: `${CLIENT}/?error=auth` }),
-  issueTokens
+  asyncHandler(issueTokens)
 );
 
 // ── Refresh access token ──────────────────────────────────────────────────────
-router.post("/refresh", async (req, res) => {
+router.post("/refresh", asyncHandler(async (req, res) => {
   const token = req.signedCookies?.refresh_token;
   if (!token) return res.status(401).json({ error: "No refresh token" });
   try {
@@ -45,10 +46,10 @@ router.post("/refresh", async (req, res) => {
   } catch {
     return res.status(401).json({ error: "Invalid refresh token" });
   }
-});
+}));
 
 // ── Logout ────────────────────────────────────────────────────────────────────
-router.post("/logout", async (req, res) => {
+router.post("/logout", asyncHandler(async (req, res) => {
   const token = req.signedCookies?.refresh_token;
   if (token) {
     try {
@@ -58,7 +59,7 @@ router.post("/logout", async (req, res) => {
   }
   clearRefreshCookie(res);
   return res.json({ ok: true });
-});
+}));
 
 // ── Shared token issuance after OAuth callback ────────────────────────────────
 async function issueTokens(req, res) {

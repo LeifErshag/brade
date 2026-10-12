@@ -15,6 +15,9 @@ import guestRoutes       from "./routes/guest.js";
 import matchmakingRoutes  from "./routes/matchmaking.js";
 import tournamentRoutes   from "./routes/tournaments.js";
 import { rateLimitApi } from "./middleware/ratelimit.js";
+import { installProcessErrorHandlers } from "./processErrors.js";
+
+installProcessErrorHandlers();
 
 const app = express();
 const httpServer = createServer(app);
@@ -57,9 +60,11 @@ app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
 // ── 404 & error handler ───────────────────────────────────────────────────────
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
-app.use((err, _req, res, _next) => {
+app.use((err, _req, res, next) => {
   // Never leak stack traces to client
   console.error(err);
+  // Response already started: let Express abort the connection.
+  if (res.headersSent) return next(err);
   res.status(500).json({ error: "Internal server error" });
 });
 
@@ -75,4 +80,7 @@ async function start() {
   });
 }
 
-start();
+start().catch((err) => {
+  console.error("Server failed to start:", err);
+  process.exit(1);
+});

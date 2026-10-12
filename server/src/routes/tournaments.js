@@ -9,6 +9,7 @@ import {
   generateSwissPairings,
   createMatchRound,
 } from "../game/tournament.js";
+import { asyncHandler } from "../middleware/asyncHandler.js";
 
 const router = Router();
 
@@ -21,7 +22,7 @@ const CreateSchema = z.object({
 });
 
 // ── POST /api/tournaments ─────────────────────────────────────────────────────
-router.post("/", requireAuth, validate(CreateSchema), async (req, res) => {
+router.post("/", requireAuth, validate(CreateSchema), asyncHandler(async (req, res) => {
   const { name, tournament_type, match_length, max_players, total_rounds } = req.body;
   const creatorId = req.userId;
 
@@ -43,10 +44,10 @@ router.post("/", requireAuth, validate(CreateSchema), async (req, res) => {
   );
 
   return res.status(201).json(t);
-});
+}));
 
 // ── GET /api/tournaments ──────────────────────────────────────────────────────
-router.get("/", async (req, res) => {
+router.get("/", asyncHandler(async (req, res) => {
   const { rows } = await query(`
     SELECT t.*,
            u.display_name AS creator_name,
@@ -60,10 +61,10 @@ router.get("/", async (req, res) => {
     LIMIT  50
   `);
   return res.json(rows);
-});
+}));
 
 // ── GET /api/tournaments/:id ──────────────────────────────────────────────────
-router.get("/:id", async (req, res) => {
+router.get("/:id", asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   const { rows: [t] } = await query(
@@ -101,10 +102,10 @@ router.get("/:id", async (req, res) => {
   );
 
   return res.json({ ...t, players, matches });
-});
+}));
 
 // ── POST /api/tournaments/:id/join ────────────────────────────────────────────
-router.post("/:id/join", requireAuth, async (req, res) => {
+router.post("/:id/join", requireAuth, asyncHandler(async (req, res) => {
   const { id }   = req.params;
   const userId   = req.userId;
 
@@ -137,10 +138,10 @@ router.post("/:id/join", requireAuth, async (req, res) => {
   }
 
   return res.json({ status: "joined" });
-});
+}));
 
 // ── POST /api/tournaments/:id/leave ───────────────────────────────────────────
-router.post("/:id/leave", requireAuth, async (req, res) => {
+router.post("/:id/leave", requireAuth, asyncHandler(async (req, res) => {
   const { id } = req.params;
   const userId = req.userId;
 
@@ -158,10 +159,10 @@ router.post("/:id/leave", requireAuth, async (req, res) => {
     [id, userId]
   );
   return res.json({ status: "left" });
-});
+}));
 
 // ── POST /api/tournaments/:id/cancel ─────────────────────────────────────────
-router.post("/:id/cancel", requireAuth, async (req, res) => {
+router.post("/:id/cancel", requireAuth, asyncHandler(async (req, res) => {
   const { id } = req.params;
   const userId = req.userId;
 
@@ -178,10 +179,10 @@ router.post("/:id/cancel", requireAuth, async (req, res) => {
     `UPDATE tournaments SET status = 'cancelled' WHERE id = $1`, [id]
   );
   return res.json({ status: "cancelled" });
-});
+}));
 
 // ── POST /api/tournaments/:id/start ──────────────────────────────────────────
-router.post("/:id/start", requireAuth, async (req, res) => {
+router.post("/:id/start", requireAuth, asyncHandler(async (req, res) => {
   const { id } = req.params;
   const userId = req.userId;
 
@@ -239,6 +240,6 @@ router.post("/:id/start", requireAuth, async (req, res) => {
   await createMatchRound(id, 1, t.match_length, pairs);
 
   return res.json({ status: "started", tournamentId: id });
-});
+}));
 
 export default router;
