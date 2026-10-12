@@ -32,7 +32,12 @@ describe("GET /api/users/search", () => {
     token = signAccessToken(USER_ID);
   });
 
-  afterAll(() => new Promise((resolve) => server.close(resolve)));
+  // Drop any request left hanging by a crashed handler, so a regression fails
+  // the suite instead of making server.close() wait forever.
+  afterAll(() => new Promise((resolve) => {
+    server.closeAllConnections();
+    server.close(resolve);
+  }));
 
   beforeEach(() => query.mockClear());
 
