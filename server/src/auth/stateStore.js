@@ -40,8 +40,8 @@ export const cookieStateStore = {
 
   verify(req, providedState, _meta, callback) {
     const expected = req.signedCookies?.[STATE_COOKIE];
-    // Single use. Only the path has to match for the browser to drop the
-    // cookie; the other cookieOptions() flags don't matter to clearCookie.
+    // Single use. Only the path (and domain) must match for the browser to
+    // drop the cookie; `signed` is ignored by clearCookie.
     req.res.clearCookie(STATE_COOKIE, { path: "/auth" });
 
     if (typeof expected !== "string" || typeof providedState !== "string"

@@ -59,10 +59,10 @@ describe("cookieStateStore", () => {
 
 describe("OAuth flow with cookieStateStore", () => {
   let server, base;
-  // A fresh Passport instance keeps the test strategy off the global singleton.
-  const authenticator = new passport.Passport();
 
   beforeAll(async () => {
+    // A fresh Passport instance keeps the test strategy off the global singleton.
+    const authenticator = new passport.Passport();
     authenticator.use("github-test", new GitHubStrategy(
       {
         clientID: "id", clientSecret: "secret",
