@@ -2,6 +2,7 @@ import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { Strategy as GitHubStrategy } from "passport-github2";
 import { query } from "../db/postgres.js";
+import { cookieStateStore } from "./stateStore.js";
 
 function makeOAuthHandler(provider) {
   return async (_accessToken, _refreshToken, profile, done) => {
@@ -31,6 +32,7 @@ passport.use(new GoogleStrategy(
     clientID:     process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     callbackURL:  process.env.GOOGLE_CALLBACK_URL,
+    store:        cookieStateStore,
   },
   makeOAuthHandler("google")
 ));
@@ -40,6 +42,7 @@ passport.use(new GitHubStrategy(
     clientID:     process.env.GITHUB_CLIENT_ID,
     clientSecret: process.env.GITHUB_CLIENT_SECRET,
     callbackURL:  process.env.GITHUB_CALLBACK_URL,
+    store:        cookieStateStore,
   },
   makeOAuthHandler("github")
 ));
