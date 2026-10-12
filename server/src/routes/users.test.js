@@ -86,6 +86,14 @@ describe("GET /api/users/search", () => {
     expect(query.mock.calls[0][1]).toEqual(["%an%", USER_ID]);
   });
 
+  test("ILIKE wildcards and the escape character in q match literally (issue #37)", async () => {
+    // ?q=%% would otherwise match every user; _ would match any character.
+    const res = await search(`?q=${encodeURIComponent("%%_a\\b")}`);
+    expect(res.status).toBe(200);
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls[0][1]).toEqual(["%\\%\\%\\_a\\\\b%", USER_ID]);
+  });
+
   test("still requires authentication", async () => {
     const res = await fetch(`${base}?q=ab`);
     expect(res.status).toBe(401);

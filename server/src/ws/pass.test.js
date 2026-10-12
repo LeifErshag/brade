@@ -5,6 +5,11 @@
 //      skip its own roll), and the room is left untouched.
 //   2. After a legitimate PASS in an AI or tutorial room, the AI takes its turn
 //      instead of stalling until the player reconnects.
+//   3. A PASS while closed out on the bar ends the game by jan (§10).
+//
+// The fixtures below store a moving phase with no legal moves left. In real
+// play the server auto-passes as soon as a player has no legal moves, so a
+// client-sent PASS in that state is only a fallback; these tests exercise it.
 
 import { jest } from "@jest/globals";
 
@@ -42,7 +47,7 @@ jest.unstable_mockModule("./server.js", () => ({
 }));
 
 const { handleMessage } = await import("./handlers.js");
-const { initGame } = await import("../game/engine.js");
+const { initGame, pathToIdx } = await import("../game/engine.js");
 const { AI_USER_ID } = await import("../game/ai.js");
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -148,4 +153,33 @@ describe.each([
     }, 12_000);
     expect(aiPlayed).toBe(true);
   }, 15_000);
+});
+
+// ── Jan on PASS ──────────────────────────────────────────────────────────────
+
+describe("PASS while closed out on the bar", () => {
+  test("ends the game by jan against the passer (§10)", async () => {
+    // White is to move with three checkers on the bar, and its own checkers
+    // block four of its six entry points (available 2 < bar 3): white is jan.
+    const gs = whiteState("moving");
+    gs.board = new Array(24).fill(0);
+    for (const pos of [0, 1, 2, 3]) gs.board[pathToIdx("white", pos)] = 1;
+    gs.board[pathToIdx("black", 18)] = -15;   // clear of white's entry quarter
+    gs.bar        = { white: 3, black: 0 };
+    gs.off        = { white: 0, black: 0 };
+    gs.dice       = [];
+    gs.rolledDice = [6, 5];
+    gs.legalMoves = [];
+    // Tutorial room: game over is handled without touching Postgres.
+    await putRoom(makeRoom("PASSJAN1", gs, { isTutorial: true }));
+
+    const { sent, ws } = fakeWs();
+    await handleMessage({ msg: { type: "PASS" }, userId: HUMAN_ID, roomId: "PASSJAN1", ws });
+    expect(sent).toEqual([]);
+
+    const room = await getRoom("PASSJAN1");
+    expect(room.status).toBe("finished");
+    expect(room.matchResult).toMatchObject({ winner: "black", winType: "jan" });
+    expect(room.score.black).toBeGreaterThan(0);
+  });
 });

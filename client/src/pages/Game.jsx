@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link } from "react-router";
 import { useAuth } from "../AuthContext.jsx";
 import { useSocket } from "../hooks/useSocket.js";
 import Board from "../components/Board.jsx";
@@ -179,7 +179,8 @@ export default function Game() {
     if (searchQuery.length < 2) { setSearchResults([]); return; }
     const t = setTimeout(async () => {
       const res = await authFetch(`/api/users/search?q=${encodeURIComponent(searchQuery)}`);
-      if (res.ok) setSearchResults(await res.json());
+      // A rejected query (e.g. under 2 characters after trimming) clears stale results.
+      setSearchResults(res.ok ? await res.json() : []);
     }, 300);
     return () => clearTimeout(t);
   }, [searchQuery]);
@@ -494,6 +495,7 @@ export default function Game() {
                 <input
                   style={S.searchInput}
                   placeholder="Search player by name…"
+                  maxLength={50}
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
                 />

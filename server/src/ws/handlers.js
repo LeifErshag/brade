@@ -280,7 +280,7 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
       broadcastState(roomId, room);
 
       // Trigger AI if turn switched to it
-      if (room.isAi && gs.turn === "black") {
+      if (room.isAi && gs.turn === "black" && gs.phase === "rolling") {
         triggerAiTurn(roomId, room.aiDifficulty).catch(e => console.error("AI turn error:", e));
       }
       break;
