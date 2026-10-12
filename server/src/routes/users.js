@@ -42,9 +42,16 @@ router.get("/leaderboard", async (_req, res) => {
 });
 
 // ── GET /api/users/search?q=name — find users by display name ────────────────
-router.get("/search", requireAuth, async (req, res) => {
-  const q = (req.query.q ?? "").trim();
-  if (q.length < 2) return res.status(400).json({ error: "Query must be at least 2 characters" });
+// q must be a single string: a repeated ?q= or ?q[]= is parsed as an array/object and rejected.
+const searchQuerySchema = z.object({
+  q: z.string({ required_error: "Query is required", invalid_type_error: "Query must be a single string" })
+    .trim()
+    .min(2, "Query must be at least 2 characters")
+    .max(50, "Query too long"),
+});
+
+router.get("/search", requireAuth, validate(searchQuerySchema, "query"), async (req, res) => {
+  const { q } = req.query;
   const { rows } = await query(
     `SELECT id, display_name, avatar_url FROM users
      WHERE display_name ILIKE $1 AND id != $2
