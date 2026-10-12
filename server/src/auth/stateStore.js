@@ -30,6 +30,39 @@ function safeEqual(a, b) {
   return bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
 }
 
+const CLEARED = Symbol("oauthStateCleared");
+
+// Expire the state cookie. Only name, path and domain have to match for the
+// browser to drop it. Idempotent per response, so the callback route's
+// failure handling does not add a second Set-Cookie after `verify` cleared it.
+export function clearStateCookie(res) {
+  if (res[CLEARED]) return;
+  res[CLEARED] = true;
+  res.clearCookie(STATE_COOKIE, { path: "/auth" });
+}
+
+// OAuth callback middleware. passport-oauth2 fails or errors without calling
+// the store's `verify` when the provider reports an error (e.g. the user
+// declines consent: `?error=access_denied`), so the state cookie is cleared
+// here on every unsuccessful outcome. Failures redirect to `failureRedirect`;
+// errors go to the Express error handler, as with passport's built-in options.
+export function oauthCallback(authenticator, strategy, failureRedirect) {
+  return (req, res, next) => {
+    authenticator.authenticate(strategy, { session: false }, (err, user) => {
+      if (err) {
+        clearStateCookie(res);
+        return next(err);
+      }
+      if (!user) {
+        clearStateCookie(res);
+        return res.redirect(failureRedirect);
+      }
+      req.user = user;
+      return next();
+    })(req, res, next);
+  };
+}
+
 // Arity matters: passport-oauth2 picks the call signature from `.length`.
 export const cookieStateStore = {
   store(req, _meta, callback) {
@@ -40,9 +73,8 @@ export const cookieStateStore = {
 
   verify(req, providedState, _meta, callback) {
     const expected = req.signedCookies?.[STATE_COOKIE];
-    // Single use. Only the path (and domain) must match for the browser to
-    // drop the cookie; `signed` is ignored by clearCookie.
-    req.res.clearCookie(STATE_COOKIE, { path: "/auth" });
+    // Single use: cleared whether or not the state matches.
+    clearStateCookie(req.res);
 
     if (typeof expected !== "string" || typeof providedState !== "string"
         || !safeEqual(expected, providedState)) {
