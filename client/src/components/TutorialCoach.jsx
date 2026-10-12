@@ -108,7 +108,7 @@ const TOPICS = {
     section: "rules-jan",
     text: [
       "Har en spelare fler brickor på ribban än det finns tungor att spela in på i hans första kvarter – tomma tungor eller tungor med motspelarens blottor eller band – har han blivit jan och förlorar partiet direkt. Jan ger 4 poäng.",
-      "Blir motspelaren jan på ett drag där man spränger ett av hans band kallas det sprängjan – både när bandet sprängs vid inspel i ens första kvarter och när det sprängs i ett hinder med fler än fem band i rad någon annanstans på brädet. Det ger 6 poäng och är det finaste sättet att vinna.",
+      "Gör man motspelaren jan genom att spränga ett av hans band i sitt första kvarter kallas det sprängjan. Det ger 6 poäng och är det finaste sättet att vinna.",
     ],
   },
   vackertSpel: {
