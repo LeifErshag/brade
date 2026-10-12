@@ -192,7 +192,9 @@ export default function Board({
       const move = gs.legalMoves.find(m => m.from === selected && m.to === idx);
       if (move) { onMove(move.from, move.to, move.die); setSelected(null); return; }
     }
-    if (onIllegalAttempt && !legalFroms.has(idx)) {
+    // The bar is never a destination, so there is no reason to explain there
+    // (pathOf("bar") is NaN and would yield the wrong "one die" note).
+    if (onIllegalAttempt && idx !== "bar" && !legalFroms.has(idx)) {
       const ownHere = myColor === "white" ? gs.board[idx] > 0 : gs.board[idx] < 0;
       // Clicking another own (immovable) checker is about that checker, not
       // about moving the selected one onto it.

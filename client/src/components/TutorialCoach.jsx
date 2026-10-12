@@ -108,7 +108,7 @@ const TOPICS = {
     section: "rules-jan",
     text: [
       "Har en spelare fler brickor på ribban än det finns tungor att spela in på i hans första kvarter – tomma tungor eller tungor med motspelarens blottor eller band – har han blivit jan och förlorar partiet direkt. Jan ger 4 poäng.",
-      "Gör man motspelaren jan genom att spränga ett av hans band i sitt eget första kvarter när man spelar in kallas det sprängjan. Det ger 6 poäng och är det finaste sättet att vinna.",
+      "Gör man motspelaren jan genom att spränga ett av hans band i sitt första kvarter kallas det sprängjan. Det ger 6 poäng och är det finaste sättet att vinna.",
     ],
   },
   vackertSpel: {
@@ -355,10 +355,13 @@ function reducer(state, action) {
       const current = pos !== null ? history[pos] : null;
       const same = current && current.topic === entry.topic && current.illegal === entry.illegal;
       if (same) return state;
+      // Insert right after the entry being viewed, so explanations queued
+      // after `pos` (already marked seen) stay reachable with "Nästa".
+      const at = pos !== null && pos < history.length - 1 ? pos + 1 : history.length;
       return {
         ...state,
-        history: [...history, entry],
-        pos:     history.length,
+        history: [...history.slice(0, at), entry, ...history.slice(at)],
+        pos:     at,
         // Illegal-move notes are short and situational: they must not count as
         // having explained the topic, or they'd suppress the full explanation.
         seen:    !entry.illegal && entry.topic && !state.seen.includes(entry.topic)
