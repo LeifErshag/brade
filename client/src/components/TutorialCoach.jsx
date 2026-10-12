@@ -88,16 +88,13 @@ const TOPICS = {
       "Ett block med fem band i rad kan bara passeras med en sexa från tungan precis bakom. Ett helt ogenomträngligt hinder får sprängas (se Sprängning i checklistan).",
     ],
   },
-  // NOTE: the first case below describes what the engine enforces today: a
-  // wall burst is allowed only when no other move exists. Update this text
-  // together with the engine when issue #11 is resolved.
   bursting: {
     title: "Sprängning",
     section: "rules-bursting",
     text: [
       "Om det är omöjligt att ta sig förbi motspelarens band får man spränga ett av dem genom att landa, mellanlanda eller spela in på det. Alla brickor i bandet räknas då som slagna.",
       [
-        "när motspelaren har mer än fem band i rad i din färdväg, och du inte kan flytta på annat sätt, eller",
+        "när motspelaren har mer än fem band i rad i din färdväg – du får då spränga vilket som helst av dem, men du måste inte om du kan flytta på annat sätt, eller",
         "när du har fler slagna brickor än det finns tillgängliga tungor (tomma eller med motspelarens blotta) i ditt första kvarter.",
       ],
       "Undantag: har en spelare spelat hem fjorton brickor och bara en kvar får inga band sprängas. Kan den sista brickan inte flytta står han över – han är junker.",
