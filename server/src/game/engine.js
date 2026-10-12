@@ -275,7 +275,7 @@ function genNormalAndBearOff(gs, color, die) {
 }
 
 // All candidate first-moves for one die, INCLUDING bar re-entry and bursting.
-function genFirstMovesForDie(gs, color, die, dice) {
+function genFirstMovesForDie(gs, color, die, wall) {
   const moves = [];
 
   if (gs.bar[color] > 0) {
@@ -297,7 +297,7 @@ function genFirstMovesForDie(gs, color, die, dice) {
   moves.push(...genNormalAndBearOff(gs, color, die));
 
   // Case A wall-burst: an optional right, offered alongside ordinary moves.
-  const wall = wallBurstTargets(gs, color, dice);
+  // `wall` is computed once per state by genAllFirstMoves.
   for (const w of wall) if (w.die === die) moves.push(w);
 
   return moves;
@@ -307,8 +307,9 @@ function genFirstMovesForDie(gs, color, die, dice) {
 function genAllFirstMoves(gs, color) {
   const seen  = new Set();
   const moves = [];
+  const wall  = wallBurstTargets(gs, color, gs.dice);
   for (const die of new Set(gs.dice)) {
-    for (const m of genFirstMovesForDie(gs, color, die, gs.dice)) {
+    for (const m of genFirstMovesForDie(gs, color, die, wall)) {
       const k = `${m.from}:${m.to}:${m.die}`;
       if (!seen.has(k)) { seen.add(k); moves.push(m); }
     }
@@ -427,13 +428,19 @@ function finalState(simGs) {
   };
 }
 
+// Transposition: the subtree below a state depends only on that state (board,
+// bar, off and remaining dice), and so do the sequence's length (dice used) and
+// its total bear-off reduction (dice used minus pips advanced). Re-exploring a
+// state reached by another move order therefore adds nothing — EXCEPT a new
+// first move, which getLegalMoves must still offer. So the visited set is
+// global and keyed on (first move, state): every first move keeps its full
+// subtree, and no other move order is explored twice. There is no cap, so no
+// legal first move can be dropped (#38).
 function enumerateSequences(gs, color) {
   const results = [];        // { moves:[...], length, reduction, ends, finalGs }
-  const MAX = 4000;          // safety cap
+  const visited = new Set(); // `${firstMoveKey}@${stateKey}`
 
   function recurse(curGs, played, reduction) {
-    if (results.length >= MAX) return;
-
     // Game-ending check at this state (after the moves played so far).
     if (played.length > 0) {
       const win = checkWin({ ...curGs, turn: color });
@@ -451,13 +458,13 @@ function enumerateSequences(gs, color) {
       return;
     }
 
-    const seen = new Set();
+    const first = played.length > 0 ? played[0] : null;
     for (const m of firsts) {
       const { gs: nextGs } = simApply(curGs, color, m);
-      // Dedup identical resulting states (different die-order, etc.).
-      const key = stateKey(nextGs) + "#" + (played.length + 1);
-      if (seen.has(key)) continue;
-      seen.add(key);
+      const f   = first || m;
+      const key = `${f.from}:${f.to}:${f.die}@${stateKey(nextGs)}`;
+      if (visited.has(key)) continue;
+      visited.add(key);
       const add = m.to === "off" ? bearOffReduction(color, m.from, m.die) : 0;
       played.push(m);
       recurse(nextGs, played, reduction + add);
