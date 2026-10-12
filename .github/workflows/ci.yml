@@ -44,10 +44,13 @@ jobs:
         run: npm run build
         working-directory: client
 
-      - name: Audit dependencies
-        run: |
-          npm audit --audit-level=high
+      - name: Audit server dependencies
+        run: npm audit --audit-level=high
         working-directory: server
+
+      - name: Audit client dependencies
+        run: npm audit --audit-level=high
+        working-directory: client
 
   # Render deploys automatically on push to main via GitHub integration.
   # No deploy step needed here — Render watches the repo directly.
