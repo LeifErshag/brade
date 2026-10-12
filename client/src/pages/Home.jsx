@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router";
 import { useAuth } from "../AuthContext.jsx";
 import { OFFICIAL_RULES_URL } from "../components/RulesContent.jsx";
 

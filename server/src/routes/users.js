@@ -51,13 +51,19 @@ const searchQuerySchema = z.object({
     .max(50, "Query too long"),
 });
 
+// Escape the ILIKE wildcards % and _ so they match literally. The backslash is
+// Postgres' default LIKE escape character, so it is escaped too (first).
+export function escapeLike(s) {
+  return s.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
 router.get("/search", requireAuth, validate(searchQuerySchema, "query"), asyncHandler(async (req, res) => {
   const { q } = req.query;
   const { rows } = await query(
     `SELECT id, display_name, avatar_url FROM users
      WHERE display_name ILIKE $1 AND id != $2
      ORDER BY display_name LIMIT 10`,
-    [`%${q}%`, req.userId]
+    [`%${escapeLike(q)}%`, req.userId]
   );
   return res.json(rows);
 }));

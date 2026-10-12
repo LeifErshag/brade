@@ -1,4 +1,4 @@
-﻿import { Routes, Route } from "react-router-dom";
+﻿import { Routes, Route } from "react-router";
 import Home             from "./pages/Home.jsx";
 import Game             from "./pages/Game.jsx";
 import Profile          from "./pages/Profile.jsx";
