@@ -53,15 +53,17 @@ describe("cookieStateStore", () => {
 
   test("verify clears the cookie so a state is single-use", () => {
     const { res } = verify({ [STATE_COOKIE]: "abc123" }, "abc123");
-    expect(res.clearCookie).toHaveBeenCalledWith(STATE_COOKIE, expect.objectContaining({ path: "/auth" }));
+    expect(res.clearCookie).toHaveBeenCalledWith(STATE_COOKIE, { path: "/auth" });
   });
 });
 
 describe("OAuth flow with cookieStateStore", () => {
   let server, base;
+  // A fresh Passport instance keeps the test strategy off the global singleton.
+  const authenticator = new passport.Passport();
 
   beforeAll(async () => {
-    passport.use("github-test", new GitHubStrategy(
+    authenticator.use("github-test", new GitHubStrategy(
       {
         clientID: "id", clientSecret: "secret",
         callbackURL: "http://localhost/auth/github/callback",
@@ -71,9 +73,9 @@ describe("OAuth flow with cookieStateStore", () => {
     ));
     const app = express();
     app.use(cookieParser("test-secret"));
-    app.get("/auth/github", passport.authenticate("github-test", { session: false }));
+    app.get("/auth/github", authenticator.authenticate("github-test", { session: false }));
     app.get("/auth/github/callback",
-      passport.authenticate("github-test", { session: false, failureRedirect: "/failed" }),
+      authenticator.authenticate("github-test", { session: false, failureRedirect: "/failed" }),
       (_req, res) => res.send("ok"));
     await new Promise((resolve) => { server = app.listen(0, resolve); });
     base = `http://127.0.0.1:${server.address().port}`;

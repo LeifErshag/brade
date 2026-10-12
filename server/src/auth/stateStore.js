@@ -5,6 +5,11 @@ import { Buffer } from "buffer";
 // browser with a short-lived signed httpOnly cookie, so a callback can only
 // complete in the browser that started the flow (login CSRF protection).
 // Stateless on the server: no session store needed.
+//
+// Known limitation (accepted, no change planned): there is one state cookie
+// per browser, so starting login in two tabs at once overwrites the first
+// tab's state. That tab's callback then fails and lands on `?error=auth`;
+// the user just retries.
 export const STATE_COOKIE = "oauth_state";
 
 const STATE_MAX_AGE = 10 * 60 * 1000; // 10 minutes ms
@@ -35,7 +40,9 @@ export const cookieStateStore = {
 
   verify(req, providedState, _meta, callback) {
     const expected = req.signedCookies?.[STATE_COOKIE];
-    req.res.clearCookie(STATE_COOKIE, cookieOptions()); // single use
+    // Single use. Only the path has to match for the browser to drop the
+    // cookie; the other cookieOptions() flags don't matter to clearCookie.
+    req.res.clearCookie(STATE_COOKIE, { path: "/auth" });
 
     if (typeof expected !== "string" || typeof providedState !== "string"
         || !safeEqual(expected, providedState)) {
