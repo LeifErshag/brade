@@ -1168,9 +1168,10 @@ function sprangjanFigure(turn, dice) {
 test("§11 (p.8) figure: white rolling a four bursts the band on 4 → black is sprängjan", () => {
   const gs = sprangjanFigure("white", [4, 1]);
   expect(getLegalMoves(gs, "white")).toContainEqual({ from: "bar", to: 3, die: 4 });
-  const { gs: ng, burst } = applyMove(gs, "white", "bar", 3, 4);
+  const { gs: ng, burst, burstFirstQuarter } = applyMove(gs, "white", "bar", 3, 4);
   expect(burst).toBe(true);
-  const r = checkWin(ng, burst);
+  expect(burstFirstQuarter).toBe(true);
+  const r = checkWin(ng, burstFirstQuarter);
   expect(r?.winner).toBe("white");
   expect(r?.winType).toBe("sprangjan");
   expect(r?.points).toBe(6);
@@ -1179,22 +1180,71 @@ test("§11 (p.8) figure: white rolling a four bursts the band on 4 → black is 
 test("§11 (p.8) figure: white rolling a five bursts the band on 5 → black is sprängjan", () => {
   const gs = sprangjanFigure("white", [5, 3]);
   expect(getLegalMoves(gs, "white")).toContainEqual({ from: "bar", to: 4, die: 5 });
-  const { gs: ng, burst } = applyMove(gs, "white", "bar", 4, 5);
-  expect(checkWin(ng, burst)?.winType).toBe("sprangjan");
+  const { gs: ng, burstFirstQuarter } = applyMove(gs, "white", "bar", 4, 5);
+  expect(checkWin(ng, burstFirstQuarter)?.winType).toBe("sprangjan");
 });
 
 test("§11 (p.8) figure: 6-2 bursts the band on 2 and forfeits the six; then black may burst back to sprängjan", () => {
   const gs = sprangjanFigure("white", [6, 2]);
   expect(moveKeys(getLegalMoves(gs, "white"))).toEqual(moveKeys([{ from: "bar", to: 1, die: 2 }]));
-  const { gs: afterWhite, burst } = applyMove(gs, "white", "bar", 1, 2);
-  expect(checkWin(afterWhite, burst)).toBeNull();   // two black on the bar, two available → not jan
+  const { gs: afterWhite, burstFirstQuarter } = applyMove(gs, "white", "bar", 1, 2);
+  expect(checkWin(afterWhite, burstFirstQuarter)).toBeNull();   // two black on the bar, two available → not jan
   // Black now has two on the bar and no available point → black may burst too.
   const bgs = { ...afterWhite, turn: "black", dice: [2, 1] };
   expect(getLegalMoves(bgs, "black")).toContainEqual({ from: "bar", to: 13, die: 2 });
-  const { gs: afterBlack, burst: b2 } = applyMove(bgs, "black", "bar", 13, 2);
+  const { gs: afterBlack, burstFirstQuarter: b2 } = applyMove(bgs, "black", "bar", 13, 2);
+  expect(b2).toBe(true);                            // idx 13 = black pos 1, black's first quarter
   const r = checkWin(afterBlack, b2);
   expect(r?.winner).toBe("black");
   expect(r?.winType).toBe("sprangjan");
+});
+
+// §11 (p.7): sprängjan is jan made "genom att spränga något av hans band i det
+// första kvarteret", i.e. a band in the bursting player's own first quarter.
+// A §6 wall burst further along the board that leaves the opponent jan is plain
+// jan (4 points). See #34.
+test("§11 (p.7) a wall burst outside the first quarter that makes jan is plain jan, not sprängjan (#34)", () => {
+  const gs = emptyGs("white", [3]);
+  place(gs, "white", 5, 1);
+  for (let p = 6; p <= 11; p++) placeOppAtMoverPos(gs, "white", p, 2);  // wall in white Q2
+  for (let p = 0; p <= 4; p++) place(gs, "black", p, 1);                // black Q1: 1 available
+  expect(getLegalMoves(gs, "white")).toContainEqual({ from: 5, to: 8, die: 3 });
+  const res = applyMove(gs, "white", 5, 8, 3);
+  expect(res.burst).toBe(true);
+  expect(res.burstFirstQuarter).toBe(false);
+  expect(res.gs.bar.black).toBe(2);                 // 2 on the bar > 1 available → jan
+  const r = checkWin(res.gs, res.burstFirstQuarter);
+  expect(r?.winner).toBe("white");
+  expect(r?.winType).toBe("jan");
+  expect(r?.points).toBe(4);
+});
+
+test("§11 (p.7) a wall burst inside the first quarter that makes jan is sprängjan (#34)", () => {
+  const gs = emptyGs("white", [3]);
+  place(gs, "white", 0, 1);
+  for (let p = 1; p <= 6; p++) placeOppAtMoverPos(gs, "white", p, 2);   // wall on white pos 1–6
+  for (let p = 0; p <= 4; p++) place(gs, "black", p, 1);                // black Q1: 1 available
+  expect(getLegalMoves(gs, "white")).toContainEqual({ from: 0, to: 3, die: 3 });
+  const res = applyMove(gs, "white", 0, 3, 3);
+  expect(res.burst).toBe(true);
+  expect(res.burstFirstQuarter).toBe(true);
+  const r = checkWin(res.gs, res.burstFirstQuarter);
+  expect(r?.winType).toBe("sprangjan");
+  expect(r?.points).toBe(6);
+});
+
+test("§11 applyMove: a burst on the mover's path pos 6 (first point of Q2) is not a first-quarter burst (#34)", () => {
+  const gs = emptyGs("black", [6]);
+  gs.bar.black = 3;
+  for (let p = 0; p <= 5; p++) placeOppAtMoverPos(gs, "black", p, 2);   // black Q1 closed by white
+  const atQ1Edge = applyMove(gs, "black", "bar", pathToIdx("black", 5), 6);
+  expect(atQ1Edge.burstFirstQuarter).toBe(true);                       // black pos 5 is Q1
+  const g2 = emptyGs("white", [1]);
+  place(g2, "white", 5, 1);
+  placeOppAtMoverPos(g2, "white", 6, 2);
+  const atQ2 = applyMove(g2, "white", 5, 6, 1);
+  expect(atQ2.burst).toBe(true);
+  expect(atQ2.burstFirstQuarter).toBe(false);
 });
 
 test("§12 (p.8) the game ends the moment a vackert spel is formed — no further moves that roll", () => {
