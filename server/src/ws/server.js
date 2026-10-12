@@ -77,6 +77,13 @@ export async function handleConnection(ws, req) {
     await redis.set(keys.room(roomId), JSON.stringify(room), "EX", TTL.room);
   }
 
+  // The client may have disconnected while we awaited Redis/Postgres above.
+  // Its "close" event has then already fired, before our close listener
+  // existed, so registering it now would leave rooms/userConnections entries
+  // that are never cleaned up. Nothing below awaits, so this check suffices.
+  // Returning before cancelDisconnectForfeit keeps any pending forfeit.
+  if (ws.readyState !== 1 /* OPEN */) return;
+
   // Cancel any pending disconnect forfeit for this player
   const reconnectColor = room.players.white === userId ? "white"
                        : room.players.black === userId ? "black" : null;
