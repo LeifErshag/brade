@@ -259,6 +259,7 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
       if (room.status !== "playing") break;
       if (!color) break;
       const gs = room.gameState;
+      if (gs.phase !== "moving") { ws && send(ws, { type: "ERROR", message: "Not moving phase" }); break; }
       if (gs.turn !== color) { ws && send(ws, { type: "ERROR", message: "Not your turn" }); break; }
       if (gs.legalMoves.length > 0) { ws && send(ws, { type: "ERROR", message: "You have legal moves" }); break; }
 
@@ -277,6 +278,11 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
       room.gameState = gs;
       await saveRoom(redis, roomId, room);
       broadcastState(roomId, room);
+
+      // Trigger AI if turn switched to it
+      if (room.isAi && gs.turn === "black") {
+        triggerAiTurn(roomId, room.aiDifficulty).catch(e => console.error("AI turn error:", e));
+      }
       break;
     }
 
