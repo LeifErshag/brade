@@ -172,7 +172,7 @@ async function pickMoveMaster(gs, color, legalMoves, roomId) {
       `- Huk = path pos 11 (the junction of Q2). Making it a band (2+ own) is a key strategic goal.\n` +
       `- Bar re-entry: a checker enters at path pos = die - 1 (die 1 enters at home point).\n\n` +
       `BRÄDE WIN CONDITIONS (highest value first):\n` +
-      `- Sprängjan (6 pts): win while opponent has more checkers on the bar than available re-entry points, and the winning move was a burst.\n` +
+      `- Sprängjan (6 pts): win while opponent has more checkers on the bar than available re-entry points, and the winning move burst an opponent band in your own first quarter (Q1).\n` +
       `- Jan (4 pts): win while opponent has more bar checkers than available Q1 entry points.\n` +
       `- Kronspel / Trappspel / Uppspel (2-3 pts): vackert spel — bear off all 15 in a special pattern without losing any.\n` +
       `- Hemspel (1 pt): standard bear-off win.\n\n` +

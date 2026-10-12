@@ -317,7 +317,10 @@ function genAllFirstMoves(gs, color) {
 }
 
 // ── applyMove (§4, §6, §7) ───────────────────────────────────────────────────
-// Returns { gs, hit, burst }. Deep-clones; consumes one die; increments moveSeq.
+// Returns { gs, hit, burst, burstFirstQuarter }. Deep-clones; consumes one die;
+// increments moveSeq. `burst` is set for any band burst (§6 case A or B);
+// `burstFirstQuarter` only when the burst band lay in the MOVER's first quarter
+// (path pos 0–5), the only kind of burst that can make a sprängjan (§11 p.7).
 
 function deepClone(o) { return JSON.parse(JSON.stringify(o)); }
 
@@ -332,7 +335,7 @@ export function applyMove(gs, color, from, to, die) {
     color === "white" ? s.board[from]-- : s.board[from]++;
   }
 
-  let hit = false, burst = false;
+  let hit = false, burst = false, burstFirstQuarter = false;
 
   if (to === "off") {
     s.off[color]++;
@@ -350,6 +353,7 @@ export function applyMove(gs, color, from, to, die) {
       s.board[to] = 0;
       hit = true;
       burst = true;
+      burstFirstQuarter = quarterOf(idxToPath(color, to)) === 1;
     }
     color === "white" ? s.board[to]++ : s.board[to]--;
   }
@@ -360,7 +364,7 @@ export function applyMove(gs, color, from, to, die) {
 
   s.moveSeq++;
   s.firstMove = false;
-  return { gs: s, hit, burst };
+  return { gs: s, hit, burst, burstFirstQuarter };
 }
 
 // Lightweight clone+apply used internally by the turn-level enumerator.
@@ -600,7 +604,13 @@ function vackertSpel(gs, color) {
 //
 // There is no junker exception: a junker (14 off) has one checker left, so it
 // can never be jan. A blocked junker just stands over (§6 p.4).
-function checkJan(gs, lastMoveBurst) {
+//
+// Sprängjan (§11 p.7): "spränga något av hans band i det första kvarteret", i.e.
+// a loser's band standing in the WINNER's first quarter, the quarter the winner
+// re-enters into (cf. "motspelaren har många band … i spelarens första kvarter").
+// A burst elsewhere (e.g. a §6 wall burst further along the board) that leaves
+// the opponent jan is plain jan. Callers pass applyMove().burstFirstQuarter.
+function checkJan(gs, lastMoveBurstFirstQuarter) {
   const winner = gs.turn;
   const loser  = winner === "white" ? "black" : "white";
   if (gs.bar[loser] === 0) return null;
@@ -613,7 +623,7 @@ function checkJan(gs, lastMoveBurst) {
   }
 
   if (gs.bar[loser] > available) {
-    const winType = lastMoveBurst ? "sprangjan" : "jan";
+    const winType = lastMoveBurstFirstQuarter ? "sprangjan" : "jan";
     return { winner, winType, points: winPoints(winType), monk: false };
   }
   return null;
@@ -621,10 +631,11 @@ function checkJan(gs, lastMoveBurst) {
 
 // ── checkWin (§7–§11) ────────────────────────────────────────────────────────
 // Called on the POST-move state; the mover is gs.turn.
-// Optional lastMoveBurst upgrades jan → sprängjan (§11).
+// Optional lastMoveBurstFirstQuarter (applyMove().burstFirstQuarter: the move
+// burst a band in the mover's first quarter) upgrades jan → sprängjan (§11).
 // Returns { winner, winType, points, monk } | null.
 
-export function checkWin(gs, lastMoveBurst = false) {
+export function checkWin(gs, lastMoveBurstFirstQuarter = false) {
   const mover = gs.turn;
   const opp   = mover === "white" ? "black" : "white";
 
@@ -644,7 +655,7 @@ export function checkWin(gs, lastMoveBurst = false) {
   }
 
   // 3. Jan / sprängjan (§10, §11).
-  const jan = checkJan(gs, lastMoveBurst);
+  const jan = checkJan(gs, lastMoveBurstFirstQuarter);
   if (jan) return jan;
 
   return null;

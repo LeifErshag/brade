@@ -207,13 +207,13 @@ export async function handleMessage({ msg, userId, roomId, ws }) {
       const legal = gs.legalMoves.find(m => m.from === from && m.to === to && m.die === die);
       if (!legal) { ws && send(ws, { type: "ERROR", message: "Illegal move" }); break; }
 
-      // Change 1: capture burst from applyMove
-      const { gs: newGs, burst } = applyMove(gs, color, from, to, die);
+      // Capture whether the move burst a band in the mover's first quarter.
+      const { gs: newGs, burstFirstQuarter } = applyMove(gs, color, from, to, die);
 
       logMove(room, newGs.moveSeq, color, from, to, die);
 
-      // Change 1: pass burst so sprängjan can be detected
-      const result = checkWin(newGs, burst);
+      // Only a first-quarter burst can make a sprängjan (§11 p.7).
+      const result = checkWin(newGs, burstFirstQuarter);
       if (result) {
         room.gameState = newGs;
         await handleGameOver(redis, roomId, room, result);
@@ -366,13 +366,13 @@ async function _triggerAiTurn(roomId, aiDifficulty) {
     const move = await pickMove(gs, "black", gs.legalMoves, aiDifficulty, roomId);
     if (!move) break;
 
-    // Change 1: capture burst from applyMove
-    const { gs: newGs, burst } = applyMove(gs, "black", move.from, move.to, move.die);
+    // Capture whether the move burst a band in the mover's first quarter.
+    const { gs: newGs, burstFirstQuarter } = applyMove(gs, "black", move.from, move.to, move.die);
 
     logMove(room, newGs.moveSeq, "black", move.from, move.to, move.die);
 
-    // Change 1: pass burst so sprängjan can be detected
-    const result = checkWin(newGs, burst);
+    // Only a first-quarter burst can make a sprängjan (§11 p.7).
+    const result = checkWin(newGs, burstFirstQuarter);
     if (result) {
       room.gameState = newGs;
       await handleGameOver(redis, roomId, room, result);
