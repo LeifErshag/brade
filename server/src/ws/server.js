@@ -8,6 +8,9 @@ import { query } from "../db/postgres.js";
 export const rooms = new Map();
 // userConnections: Map<userId, Set<ws>> — for in-app invite delivery
 export const userConnections = new Map();
+// inFlightConnections: Map<`${roomId}:${userId}`, number> — connects still
+// inside handleConnection (not yet registered in rooms, not yet given up)
+export const inFlightConnections = new Map();
 
 export function initWebSocketServer(httpServer) {
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
@@ -46,6 +49,21 @@ export async function handleConnection(ws, req) {
 
   if (!/^[A-Z0-9]{8}$/.test(roomId)) { ws.close(4002, "Invalid room"); return; }
 
+  // Count this connect as in flight (synchronously, before the first await)
+  // until it has registered or given up, so a seat release can tell that the
+  // same user has another connection on its way in.
+  const flightKey = `${roomId}:${userId}`;
+  inFlightConnections.set(flightKey, (inFlightConnections.get(flightKey) ?? 0) + 1);
+  try {
+    await connectToRoom(ws, roomId, userId, isGuest, guestDisplayName);
+  } finally {
+    const n = inFlightConnections.get(flightKey) - 1;
+    if (n > 0) inFlightConnections.set(flightKey, n);
+    else inFlightConnections.delete(flightKey);
+  }
+}
+
+async function connectToRoom(ws, roomId, userId, isGuest, guestDisplayName) {
   const redis = getRedis();
   const rawRoom = await redis.get(keys.room(roomId));
   if (!rawRoom) { ws.close(4003, "Room not found"); return; }
@@ -82,7 +100,8 @@ export async function handleConnection(ws, req) {
   // The client may have disconnected while we awaited Redis/Postgres above.
   // Its "close" event has then already fired, before our close listener
   // existed, so registering it now would leave rooms/userConnections entries
-  // that are never cleaned up. Nothing below awaits, so this check suffices.
+  // that are never cleaned up. Nothing on the registration path below
+  // awaits, so this check suffices.
   // Returning before cancelDisconnectForfeit keeps any pending forfeit.
   if (ws.readyState !== 1 /* OPEN */) {
     // A black seat assigned above was never announced (no ROOM_STATE went
@@ -157,15 +176,21 @@ export async function handleConnection(ws, req) {
 // Undo a black seat auto-assigned to a client that disconnected before it was
 // registered. Re-reads the room so a concurrent change is not overwritten, and
 // keeps the seat if the room has left the lobby, the seat has changed hands,
-// or the same user has another live connection in the room that uses it.
+// or the same user has another connection in the room that uses it, either
+// registered or still in flight (e.g. a quick reconnect that read the room
+// with this seat already assigned and so will not assign it again).
 async function releaseUnannouncedSeat(roomId, userId, isGuest, hadGuest) {
   const redis = getRedis();
   const raw = await redis.get(keys.room(roomId));
   if (!raw) return;
   const room = JSON.parse(raw);
   if (room.status !== "waiting" || room.players.black !== userId) return;
-  const stillConnected = [...(rooms.get(roomId) ?? [])].some(c => c.userId === userId);
-  if (stillConnected) return;
+  // From here to redis.set nothing awaits, and ioredis keeps command order,
+  // so any connect starting after this check reads the released room.
+  const registered = [...(rooms.get(roomId) ?? [])].some(c => c.userId === userId);
+  // The count includes this (releasing) connection itself.
+  const othersInFlight = (inFlightConnections.get(`${roomId}:${userId}`) ?? 0) > 1;
+  if (registered || othersInFlight) return;
 
   room.players.black = null;
   if (room.playerInfo) room.playerInfo.black = null;

@@ -4,11 +4,13 @@
 
 import { jest } from "@jest/globals";
 import { EventEmitter } from "events";
+import { setImmediate } from "timers";
 
 const redisGet = jest.fn();
 const redisSet = jest.fn(async () => "OK");
+const redisExpire = jest.fn(async () => 1);
 jest.unstable_mockModule("../db/redis.js", () => ({
-  getRedis: () => ({ get: redisGet, expire: async () => 1, set: redisSet }),
+  getRedis: () => ({ get: redisGet, expire: redisExpire, set: redisSet }),
   keys: { room: (id) => `room:${id}` },
   TTL:  { room: 86400 },
 }));
@@ -24,7 +26,8 @@ jest.unstable_mockModule("./handlers.js", () => ({
 
 process.env.JWT_ACCESS_SECRET = "test-access-secret";
 
-const { initWebSocketServer, handleConnection, rooms, userConnections } = await import("./server.js");
+const { initWebSocketServer, handleConnection, rooms, userConnections, inFlightConnections } =
+  await import("./server.js");
 const { cancelDisconnectForfeit, scheduleDisconnectForfeit } = await import("./handlers.js");
 const { signAccessToken, signGuestToken } = await import("../auth/tokens.js");
 const { WebSocketServer } = await import("ws");
@@ -48,11 +51,14 @@ beforeEach(() => {
   redisGet.mockReset();
   redisSet.mockReset();
   redisSet.mockResolvedValue("OK");
+  redisExpire.mockReset();
+  redisExpire.mockResolvedValue(1);
   cancelDisconnectForfeit.mockClear();
   scheduleDisconnectForfeit.mockClear();
   // Shared module state: every test starts with no registered connections.
   rooms.clear();
   userConnections.clear();
+  inFlightConnections.clear();
   errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
   jest.spyOn(console, "log").mockImplementation(() => {});
 });
@@ -209,6 +215,44 @@ describe("auto-assigned black seat when the client disconnects mid-connect", () 
 
     expect(saved().players.black).toBe(USER_ID);
     expect(redisSet).toHaveBeenCalledTimes(1); // only the assignment
+  });
+
+  test("the seat is kept for a same-user reconnect that is still in flight", async () => {
+    // Each Redis read/TTL call resolves after a setImmediate tick, so the
+    // second connect is still awaiting when the first one tries to release.
+    const tick = () => new Promise((resolve) => setImmediate(resolve));
+    redisGet.mockImplementation(async (key) => { await tick(); return store.get(key) ?? null; });
+    redisExpire.mockImplementation(async () => { await tick(); return 1; });
+
+    const ws1 = fakeWs();
+    const ws2 = fakeWs();
+    let conn2;
+    redisSet.mockImplementationOnce(async (key, written) => {
+      store.set(key, written);
+      // conn1 closes as its seat write lands; the client reconnects at once
+      // (e.g. a StrictMode effect re-run) and reads the room with black=USER_ID.
+      ws1.readyState = 3;
+      ws1.emit("close");
+      conn2 = handleConnection(ws2, fakeReq());
+      return "OK";
+    });
+
+    await handleConnection(ws1, fakeReq());
+    await conn2;
+
+    expect(saved().players.black).toBe(USER_ID);
+    expect(redisSet).toHaveBeenCalledTimes(1); // no release write
+    expect(rooms.get("ABCD1234")?.size).toBe(1);
+    expect(userConnections.get(USER_ID)?.has(ws2)).toBe(true);
+    const sent = JSON.parse(ws2.send.mock.calls.at(-1)[0]);
+    expect(sent.room.players.black).toBe(USER_ID);
+    expect(inFlightConnections.size).toBe(0);
+  });
+
+  test("the in-flight count is cleared even when the connect fails", async () => {
+    redisGet.mockRejectedValue(new Error("redis down"));
+    await expect(handleConnection(fakeWs(), fakeReq())).rejects.toThrow("redis down");
+    expect(inFlightConnections.size).toBe(0);
   });
 
   test("the seat is kept when it changed hands in the meantime", async () => {
