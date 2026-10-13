@@ -41,6 +41,15 @@ describe("errorHandler over HTTP", () => {
     expect(logger.error).not.toHaveBeenCalled();
   });
 
+  test("a 4xx log line has the status and type but none of the client's body", async () => {
+    const res = await post("{secret-body-fragment");
+    expect(res.status).toBe(400);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    const [line] = logger.warn.mock.calls[0];
+    expect(line).toBe("Client error 400 (entity.parse.failed)");
+    expect(line).not.toContain("secret");
+  });
+
   test("a body over the size limit returns 413", async () => {
     const res = await post(JSON.stringify({ pad: "x".repeat(20 * 1024) }));
     expect(res.status).toBe(413);
@@ -58,6 +67,7 @@ describe("errorHandler over HTTP", () => {
     const res = await fetch(`${base}/teapot`);
     expect(res.status).toBe(418);
     expect(await res.json()).toEqual({ error: "Bad request" });
+    expect(logger.warn).toHaveBeenCalledWith("Client error 418");
   });
 
   test("a valid request still works", async () => {

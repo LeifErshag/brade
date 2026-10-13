@@ -10,7 +10,9 @@ export function errorHandler(logger = console) {
     const isClientError = Number.isInteger(status) && status >= 400 && status < 500;
 
     if (isClientError) {
-      logger.warn(`Client error ${status}: ${err.message}`);
+      // Not err.message: for malformed JSON it quotes part of the client's
+      // body. Log only the status and the http-errors `type`, if any.
+      logger.warn(`Client error ${status}${typeof err.type === "string" ? ` (${err.type})` : ""}`);
     } else {
       logger.error(err);
     }
