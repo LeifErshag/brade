@@ -7,6 +7,7 @@ import { pickMove } from "../game/ai.js";
 import { clearExpectimaxCache } from "../game/expectimax.js";
 import { advanceTournament } from "../game/tournament.js";
 import { compareMatch } from "../game/scoring.js";
+import { withRoomLock } from "./roomLock.js";
 
 // ── Disconnect forfeit timers ─────────────────────────────────────────────────
 const forfeitTimers = new Map(); // key: `${roomId}:${color}`
@@ -39,7 +40,15 @@ export function cancelDisconnectForfeit(roomId, color) {
 }
 
 // ── Main message handler ──────────────────────────────────────────────────────
-export async function handleMessage({ msg, userId, roomId, ws }) {
+// Each message is processed under the room's lock (see roomLock.js), so its
+// read-modify-write of the room state cannot interleave with another writer.
+// Nothing reachable from handleRoomMessage may take the same room's lock and
+// await it; triggerAiTurn is started fire-and-forget and just queues behind.
+export function handleMessage(args) {
+  return withRoomLock(args.roomId, () => handleRoomMessage(args));
+}
+
+async function handleRoomMessage({ msg, userId, roomId, ws }) {
   const redis   = getRedis();
   const rawRoom = await redis.get(keys.room(roomId));
   if (!rawRoom) { ws && send(ws, { type: "ERROR", message: "Room not found" }); return; }
@@ -316,18 +325,34 @@ export async function triggerAiTurn(roomId, aiDifficulty) {
   }
 }
 
+// The AI turn is split into short locked sections (the roll, then one section
+// per move) so the "thinking" delays run without holding the room's lock.
+// Each section re-reads the room and checks it is still the AI's turn in the
+// expected phase, because other writers (e.g. a human RESIGN) may have run
+// during a delay.
 async function _triggerAiTurn(roomId, aiDifficulty) {
   // Brief "thinking" delay
   await sleep(700 + Math.random() * 800);
 
-  const redis = getRedis();
-  const raw   = await redis.get(keys.room(roomId));
-  if (!raw) return;
-  let room = JSON.parse(raw);
-  if (room.status !== "playing") return;
+  const redis  = getRedis();
+  const rolled = await withRoomLock(roomId, () => aiRoll(redis, roomId));
+  if (!rolled) return;
 
-  let gs = room.gameState;
-  if (gs.turn !== "black" || gs.phase !== "rolling") return; // sanity check
+  // Play moves one at a time with a small visual delay between each
+  for (;;) {
+    await sleep(500);
+    const more = await withRoomLock(roomId, () => aiMove(redis, roomId, aiDifficulty));
+    if (!more) return;
+  }
+}
+
+// Locked section: roll for the AI. Returns true when the AI has moves to play.
+async function aiRoll(redis, roomId) {
+  const room = await loadRoom(redis, roomId);
+  if (!room || room.status !== "playing") return false;
+
+  const gs = room.gameState;
+  if (gs.turn !== "black" || gs.phase !== "rolling") return false; // sanity check
 
   // Roll dice
   const dice    = rollDice();
@@ -342,7 +367,7 @@ async function _triggerAiTurn(roomId, aiDifficulty) {
     if (janResult) {
       room.gameState = gs;
       await handleGameOver(redis, roomId, room, janResult);
-      return;
+      return false;
     }
     // Otherwise pass.
     gs.phase      = "rolling";
@@ -352,60 +377,66 @@ async function _triggerAiTurn(roomId, aiDifficulty) {
     room.gameState = gs;
     await saveRoom(redis, roomId, room);
     broadcastState(roomId, room);
-    return;
+    return false;
   }
 
   room.gameState = gs;
   await saveRoom(redis, roomId, room);
   broadcastState(roomId, room);
+  return true;
+}
 
-  // Play moves one at a time with a small visual delay between each
-  while (gs.legalMoves.length > 0 && gs.dice.length > 0) {
-    await sleep(500);
+// Locked section: play one AI move. Returns true when the AI has more to play.
+async function aiMove(redis, roomId, aiDifficulty) {
+  const room = await loadRoom(redis, roomId);
+  if (!room || room.status !== "playing") return false;
 
-    const move = await pickMove(gs, "black", gs.legalMoves, aiDifficulty, roomId);
-    if (!move) break;
+  const gs = room.gameState;
+  if (gs.turn !== "black" || gs.phase !== "moving") return false;
+  if (gs.legalMoves.length === 0 || gs.dice.length === 0) return false;
 
-    // Capture whether the move burst a band in the mover's first quarter.
-    const { gs: newGs, burstFirstQuarter } = applyMove(gs, "black", move.from, move.to, move.die);
+  const move = await pickMove(gs, "black", gs.legalMoves, aiDifficulty, roomId);
+  if (!move) return false;
 
-    logMove(room, newGs.moveSeq, "black", move.from, move.to, move.die);
+  // Capture whether the move burst a band in the mover's first quarter.
+  const { gs: newGs, burstFirstQuarter } = applyMove(gs, "black", move.from, move.to, move.die);
 
-    // Only a first-quarter burst can make a sprängjan (§11 p.7).
-    const result = checkWin(newGs, burstFirstQuarter);
-    if (result) {
-      room.gameState = newGs;
-      await handleGameOver(redis, roomId, room, result);
-      return;
-    }
+  logMove(room, newGs.moveSeq, "black", move.from, move.to, move.die);
 
-    let passing = false;
-    if (newGs.dice.length === 0) {
-      passing = true;
-    } else {
-      newGs.legalMoves = getLegalMoves(newGs, "black");
-      if (newGs.legalMoves.length === 0) passing = true;
-    }
-
-    if (passing) {
-      // AI is done; if it's still closed out on the bar, that's a jan (§10) for white.
-      const janResult = checkJanOnPass(newGs);   // newGs.turn still === "black"
-      if (janResult) {
-        room.gameState = newGs;
-        await handleGameOver(redis, roomId, room, janResult);
-        return;
-      }
-      newGs.phase      = "rolling";
-      newGs.turn       = "white";
-      newGs.dice       = [];
-      newGs.legalMoves = [];
-    }
-
-    gs = newGs;
-    room.gameState = gs;
-    await saveRoom(redis, roomId, room);
-    broadcastState(roomId, room);
+  // Only a first-quarter burst can make a sprängjan (§11 p.7).
+  const result = checkWin(newGs, burstFirstQuarter);
+  if (result) {
+    room.gameState = newGs;
+    await handleGameOver(redis, roomId, room, result);
+    return false;
   }
+
+  let passing = false;
+  if (newGs.dice.length === 0) {
+    passing = true;
+  } else {
+    newGs.legalMoves = getLegalMoves(newGs, "black");
+    if (newGs.legalMoves.length === 0) passing = true;
+  }
+
+  if (passing) {
+    // AI is done; if it's still closed out on the bar, that's a jan (§10) for white.
+    const janResult = checkJanOnPass(newGs);   // newGs.turn still === "black"
+    if (janResult) {
+      room.gameState = newGs;
+      await handleGameOver(redis, roomId, room, janResult);
+      return false;
+    }
+    newGs.phase      = "rolling";
+    newGs.turn       = "white";
+    newGs.dice       = [];
+    newGs.legalMoves = [];
+  }
+
+  room.gameState = newGs;
+  await saveRoom(redis, roomId, room);
+  broadcastState(roomId, room);
+  return !passing;
 }
 
 function sleep(ms) {
@@ -427,6 +458,11 @@ function logMove(room, seq, color, from, to, die) {
      VALUES ($1, $2, $3, $4, $5, $6)`,
     [room.gameDbId, seq, color, fromPt, toPt, die]
   ).catch(err => console.error("Move log error:", err.message));
+}
+
+async function loadRoom(redis, roomId) {
+  const raw = await redis.get(keys.room(roomId));
+  return raw ? JSON.parse(raw) : null;
 }
 
 async function saveRoom(redis, roomId, room) {
