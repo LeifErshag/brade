@@ -26,10 +26,22 @@ export function handlePoolError(err, logger = console) {
 //   queries are small indexed lookups/updates, so 20 s is far above normal.
 //   Migrations may legitimately run longer and disable it for their own
 //   transaction (see runMigrations).
+// - query_timeout: node-postgres gives up on a query client-side after this
+//   long. statement_timeout only helps while the server is reachable; if the
+//   network hangs after a query was sent, no cancellation ever arrives and
+//   the query would wait forever. Kept a little above statement_timeout so a
+//   reachable server's own cancellation (a clearer error) normally wins.
 export const POOL_TIMEOUTS = Object.freeze({
   connectionTimeoutMillis: 10_000,
   statement_timeout:       20_000,
+  query_timeout:           25_000,
 });
+
+// Client-side timeout for a migration's own SQL. The pool's query_timeout
+// would cut off a long migration whose statement_timeout is lifted, so the
+// migration statement gets its own, much larger bound (node-postgres only
+// accepts a truthy per-query value as an override, so it cannot be 0).
+export const MIGRATION_QUERY_TIMEOUT = 60 * 60_000; // 1 h
 
 export async function connectPostgres() {
   pool = new Pool({ connectionString: process.env.DATABASE_URL, ...POOL_TIMEOUTS });
@@ -61,20 +73,29 @@ async function runMigrations() {
     const raw = await fs.readFile(path.join(MIGRATIONS_DIR, filename), "utf8");
     const sql = raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw; // strip BOM if present
     const client = await pool.connect();
+    let releaseErr;
     try {
       await client.query("BEGIN");
       // A migration on a large table (e.g. ALTER TABLE moves) can exceed the
-      // pool's statement_timeout; lift it for this transaction only.
+      // pool's statement_timeout; lift it for this transaction only, and
+      // raise the client-side timeout for the migration statement to match.
       await client.query("SET LOCAL statement_timeout = 0");
-      await client.query(sql);
+      await client.query({ text: sql, query_timeout: MIGRATION_QUERY_TIMEOUT });
       await client.query("INSERT INTO _migrations (filename) VALUES ($1)", [filename]);
       await client.query("COMMIT");
       console.log(`Migration applied: ${filename}`);
     } catch (err) {
-      await client.query("ROLLBACK");
+      // After a client-side timeout the connection may still be busy with the
+      // abandoned statement; discard it rather than return it to the pool.
+      releaseErr = err;
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // The original error is the one worth reporting.
+      }
       throw new Error(`Migration failed (${filename}): ${err.message}`);
     } finally {
-      client.release();
+      client.release(releaseErr);
     }
   }
 }
