@@ -237,26 +237,31 @@ function countWeightedBlots(gs, color) {
   return penalty;
 }
 
-// Jan threat: bonus when the opponent has checkers on the bar and our bands
-// block enough of their Q1 entry points that bar[opp] > available.
-function janThreat(gs, color, opp) {
-  if (gs.bar[opp] === 0) return 0;
+// Jan threat (§10 p.6): bonus when the opponent is on the bar with more
+// checkers than they have entry points in their first quarter. Mirrors the
+// engine's checkJan: an entry point (opponent path pos 0-5) is available unless
+// the opponent's OWN checkers stand on it. Empty points, our blots and our
+// bands all count as available ("tomma eller upptagna av spelarens band eller
+// blottor"), so our bands there never make the opponent jan.
+// Returns >= 50 exactly when bar[opp] > available (checkJan's jan condition
+// with `color` as the winner); otherwise at most a near-jan bonus below 50.
+export function janThreat(gs, color, opp) {
+  const onBar = gs.bar[opp];
+  if (onBar === 0) return 0;
 
-  // Count how many of the opponent's Q1 positions (pos 0-5 in opp's path)
-  // are blocked by our bands (our checkers ≥ 2 at that board index).
-  let blocked = 0;
+  let available = 0;
   for (let pos = Q1_LO; pos <= Q1_HI; pos++) {
     const idx = pathToIdx(opp, pos);
-    // "Our" count at that index
-    const n = color === "white" ? gs.board[idx] : -gs.board[idx];
-    if (n >= 2) blocked++;
+    // The opponent's own count at that index (>0 theirs, <0 ours, 0 empty)
+    const theirs = opp === "white" ? gs.board[idx] : -gs.board[idx];
+    if (theirs <= 0) available++;
   }
 
-  const available = 6 - blocked;
-  if (gs.bar[opp] > available) {
-    return 50 + (gs.bar[opp] - available) * 20;
+  if (onBar > available) {
+    return 50 + (onBar - available) * 20;
   }
-  if (blocked >= 4) return 30;
+  // Near jan: one more checker on the bar (or one fewer entry point) wins.
+  if (onBar === available) return 30;
   return 0;
 }
 
