@@ -34,3 +34,15 @@ test("connectPostgres attaches an error listener to the pool", async () => {
   expect(() => pool.emit("error", err, {})).not.toThrow();
   expect(errorSpy).toHaveBeenCalledWith("PostgreSQL idle client error:", err);
 });
+
+test("connectPostgres configures connection and statement timeouts", async () => {
+  process.env.DATABASE_URL = "postgres://u:p@db.example:5432/brade?sslmode=require";
+  await connectPostgres();
+  const { opts } = getPool();
+  expect(opts.connectionString).toBe(process.env.DATABASE_URL);
+  expect(opts.connectionTimeoutMillis).toBeGreaterThanOrEqual(1000);
+  expect(opts.connectionTimeoutMillis).toBeLessThanOrEqual(60000);
+  expect(opts.statement_timeout).toBeGreaterThanOrEqual(1000);
+  expect(opts.statement_timeout).toBeLessThanOrEqual(120000);
+  expect(opts.options).toBeUndefined();
+});

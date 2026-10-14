@@ -1,6 +1,6 @@
 import { getRedis, keys, TTL } from "../db/redis.js";
 import { query } from "../db/postgres.js";
-import { send, broadcastToRoom, broadcastState, sendToUser } from "./server.js";
+import { send, broadcastToRoom, broadcastState, sendToUser, rooms } from "./server.js";
 import { initGame, rollDice, getLegalMoves, applyMove, checkWin, checkJanOnPass } from "../game/engine.js";
 import { computeElo } from "../game/elo.js";
 import { pickMove } from "../game/ai.js";
@@ -19,18 +19,29 @@ export function scheduleDisconnectForfeit(roomId, color, userId) {
     forfeitTimers.delete(key);
     // Caught here: an unhandled rejection from a timer would kill the process.
     try {
-      const redis  = getRedis();
-      const raw    = await redis.get(keys.room(roomId));
-      if (!raw) return;
-      const room = JSON.parse(raw);
-      if (room.status !== "playing") return;
-      // Force a resign for the disconnected player
-      await handleMessage({ msg: { type: "RESIGN", forfeit: true }, userId, roomId, ws: null });
+      await withRoomLock(roomId, () => forfeitIfStillDisconnected(roomId, userId));
     } catch (err) {
       console.error(`Disconnect forfeit error [${roomId}]:`, err);
     }
   }, 60_000);
   forfeitTimers.set(key, timer);
+}
+
+// Runs under the room's lock. Once the timer has fired, cancelDisconnectForfeit
+// can no longer stop it, and this section may have queued behind a reconnect
+// (or the close handler may have scheduled the timer after a quick reconnect
+// had already registered). So the decision is made here, atomically with the
+// resign: if the player has a registered connection in this room now, they are
+// back and nothing is forfeited. Calls handleRoomMessage directly, not
+// handleMessage, because this section already holds the lock (DEADLOCK RULE).
+async function forfeitIfStillDisconnected(roomId, userId) {
+  const reconnected = [...(rooms.get(roomId) ?? [])].some(c => c.userId === userId);
+  if (reconnected) return;
+  const raw = await getRedis().get(keys.room(roomId));
+  if (!raw) return;
+  if (JSON.parse(raw).status !== "playing") return;
+  // Force a resign for the disconnected player
+  await handleRoomMessage({ msg: { type: "RESIGN", forfeit: true }, userId, roomId, ws: null });
 }
 
 export function cancelDisconnectForfeit(roomId, color) {
