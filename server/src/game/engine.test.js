@@ -470,6 +470,66 @@ test("§6 Case A: a wall shorter than 6 does NOT grant a burst (player simply st
   expect(moves).toEqual([]);
 });
 
+// §6 (p.3) + §2: the burst is optional only "om det finns andra möjligheter att
+// flytta för tärningarna". When bursting is the only way to use both dice, §2
+// maximal use makes it effectively mandatory (audit.md row 6.3b).
+test("§6 (p.3) + §2 Case A: a wall burst becomes mandatory when it is the only way to use both dice", () => {
+  const gs = emptyGs("white", [1, 2]);
+  place(gs, "white", 5, 1);             // behind the wall
+  place(gs, "white", 22, 1);            // can only play the 1 (22→23); no bear-off yet
+  for (let p = 6; p <= 11; p++) placeOppAtMoverPos(gs, "white", p, 2);  // 6-band wall
+  placeOppAtMoverPos(gs, "white", 1, 3);   // black's remaining 3 checkers, out of the way
+  const wall = new Set([6, 7, 8, 9, 10, 11].map(p => pathToIdx("white", p)));
+  const seqs = legalTurnSequences(gs, "white");
+  expect(seqs.length).toBeGreaterThan(0);
+  // Every surviving turn uses both dice, and every one of them bursts 5→7.
+  for (const s of seqs) {
+    expect(s.moves).toHaveLength(2);
+    expect(s.moves.some(m => wall.has(m.to))).toBe(true);
+    expect(s.finalGs.bar.black).toBe(2);
+  }
+  // 22→23 is still a legal first move (followed by the burst), but the turn
+  // that plays only 22→23 and bursts nothing does not survive.
+  const moves = getLegalMoves(gs, "white");
+  expect(moves).toContainEqual({ from: pathToIdx("white", 22), to: pathToIdx("white", 23), die: 1 });
+  expect(moves).toContainEqual({ from: pathToIdx("white", 5), to: pathToIdx("white", 7), die: 2 });
+  // Bursting 5→6 with the 1 shrinks the wall to 5 bands and strands the 2.
+  expect(moves).not.toContainEqual({ from: pathToIdx("white", 5), to: pathToIdx("white", 6), die: 1 });
+});
+
+// §6 (p.3): the burst right holds "vilket som helst av banden" as long as the
+// wall has more than five bands. Each move is judged in the position it is
+// played from, so a 7-band wall can be burst twice in one turn (audit.md 6.2c).
+test("§6 (p.3) Case A: a 7-band wall may be burst twice in one turn with 1-1-1-1", () => {
+  const gs = emptyGs("white", [1, 1, 1, 1]);
+  place(gs, "white", 5, 1);
+  for (let p = 6; p <= 12; p++) placeOppAtMoverPos(gs, "white", p, 2);  // 7-band wall
+  placeOppAtMoverPos(gs, "white", 1, 1);
+  const seqs = legalTurnSequences(gs, "white");
+  // 5→6 bursts (6 bands left), 6→7 bursts (5 bands left), then 7→8 is blocked.
+  expect(seqs).toHaveLength(1);
+  expect(seqs[0].moves).toEqual([
+    { from: pathToIdx("white", 5), to: pathToIdx("white", 6), die: 1 },
+    { from: pathToIdx("white", 6), to: pathToIdx("white", 7), die: 1 },
+  ]);
+  expect(seqs[0].finalGs.bar.black).toBe(4);
+});
+
+// #38: the sequence enumerator used to stop after 4000 sequences, which dropped
+// legal first moves with doubles (here 5 of the 10 were offered, including
+// losing the optional wall burst 3→4).
+test("§2 + §6 (#38) doubles with a 6-band wall: every legal first move is offered", () => {
+  const gs = emptyGs("white", [1, 1, 1, 1]);
+  gs.board = [2,0,0,1,-2,-2,-2,-2,-2,-2,1,0,0,0,1,3,0,2,2,1,1,1,0,-3];
+  const moves = getLegalMoves(gs, "white");
+  const firsts = moves.map(m => `${m.from}→${m.to}`).sort();
+  expect(firsts).toEqual([
+    "0→1", "10→11", "14→15", "15→16", "17→18",
+    "18→19", "19→20", "20→21", "21→22", "3→4",
+  ].sort());
+  expect(moves.every(m => m.die === 1)).toBe(true);
+});
+
 test("§6 junker exception: 14 off + 1 left → NO bursting allowed, simply no move (junker)", () => {
   const gs = emptyGs("white", [6]);
   gs.off.white = 14;
