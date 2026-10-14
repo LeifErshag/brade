@@ -20,6 +20,11 @@ export const inFlightConnections = new Map();
 // flight, so entries never outlive the connects that created them.
 const pendingSeatReleases = new Map();
 
+// Test helper: number of seats still waiting to be released or confirmed.
+export function pendingSeatReleaseCount() {
+  return pendingSeatReleases.size;
+}
+
 export function initWebSocketServer(httpServer) {
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
@@ -72,11 +77,16 @@ export async function handleConnection(ws, req) {
     const n = inFlightConnections.get(flightKey) - 1;
     if (n > 0) inFlightConnections.set(flightKey, n);
     else inFlightConnections.delete(flightKey);
-    // Backstop for a connect whose section failed (threw) while a release
-    // was pending, e.g. an earlier same-user connect dropped and deferred the
-    // release to this one, whose Redis read then failed. A connect that
-    // returns normally has already released or deferred in its own section,
-    // and a deferring connect's finally sees the others still in flight.
+    // When the user's last in-flight connect to this room has settled and a
+    // seat auto-assigned to them is still pending (no connection of theirs
+    // registered), give it back now. This catches every way a section can
+    // end without handling the pending release itself: it threw (e.g. its
+    // Redis read failed after an earlier same-user connect had deferred the
+    // release to it) or it returned early (e.g. room not found, 4003). It
+    // also makes the in-section release redundant in today's orderings; that
+    // one just releases a little sooner, before other queued sections run.
+    // Re-checks happen inside releasePendingSeat, under the lock, so a new
+    // connect that arrived meanwhile keeps the release deferred to itself.
     // Taking the lock is safe here (DEADLOCK RULE): this code runs after our
     // locked section has settled, not inside it.
     if (n <= 0 && pendingSeatReleases.has(flightKey)) {

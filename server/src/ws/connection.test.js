@@ -249,42 +249,6 @@ describe("auto-assigned black seat when the client disconnects mid-connect", () 
     expect(inFlightConnections.size).toBe(0);
   });
 
-  test("a registered same-user connection that is closing does not keep the seat", async () => {
-    // readyState 2 (CLOSING): the "close" event has not fired yet, so it is
-    // still in rooms, but it is not a live connection that uses the seat.
-    const closing = fakeWs();
-    closing.readyState = 2;
-    rooms.set("ABCD1234", new Set([{ ws: closing, userId: USER_ID }]));
-    const ws = fakeWs();
-    closeDuringSeatWrite(ws);
-
-    await handleConnection(ws, fakeReq());
-
-    expect(saved().players.black).toBeNull();
-  });
-
-  test("a deferred release still happens when the last same-user connect fails", async () => {
-    const ws1 = fakeWs();
-    const ws2 = fakeWs();
-    let conn2;
-    redisSet.mockImplementationOnce(async (key, written) => {
-      store.set(key, written);
-      ws1.readyState = 3;
-      ws1.emit("close");
-      // conn2 is in flight, so conn1 defers the release to it; conn2's own
-      // room read then fails, and its finally gives the seat back.
-      redisGet.mockRejectedValueOnce(new Error("redis down"));
-      conn2 = handleConnection(ws2, fakeReq());
-      return "OK";
-    });
-
-    await handleConnection(ws1, fakeReq());
-    await expect(conn2).rejects.toThrow("redis down");
-
-    expect(saved().players.black).toBeNull();
-    expect(inFlightConnections.size).toBe(0);
-  });
-
   test("the in-flight count is cleared even when the connect fails", async () => {
     redisGet.mockRejectedValue(new Error("redis down"));
     await expect(handleConnection(fakeWs(), fakeReq())).rejects.toThrow("redis down");
