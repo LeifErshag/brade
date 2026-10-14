@@ -53,6 +53,12 @@ const S = {
   notReadyBadge: { display: "inline-block", marginTop: 6, padding: "2px 8px", borderRadius: 10, background: "#4a2800", color: "#a07840", fontSize: 11 },
 
   spectators: { color: "#6b3a10", fontSize: 12, textAlign: "center", margin: "0 0 12px" },
+  // Under the board during play: one compact line that fits inside the
+  // board height budget in Board.jsx (100vh - 300px), so it never scrolls.
+  spectatorsPlaying: {
+    color: "#6b3a10", fontSize: 12, lineHeight: "16px", height: 16, textAlign: "center",
+    margin: "2px 0 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+  },
   coachWrap:  { marginTop: 12 },
 
   actions:        { display: "flex", gap: 10, justifyContent: "center", marginBottom: 20, flexWrap: "wrap" },
@@ -427,13 +433,16 @@ export default function Game() {
               onMove={handleMove}
               onPass={handlePass}
               onResign={handleResign}
+              // Spectators watch: no Roll / Pass / Resign and no "Waiting for
+              // opponent…" (the server ignores their actions anyway).
+              readOnly={!isPlayer}
               junkerNotice={junkerNotice}
               highlightLegal={isTutorial}
               onIllegalAttempt={isTutorial ? handleIllegalAttempt : undefined}
             />
             {/* Below the board so it appearing doesn't push the board down. */}
             {spectatorCount > 0 && (
-              <p style={S.spectators}>{spectatorCount} spectator{spectatorCount !== 1 ? "s" : ""} watching</p>
+              <p style={S.spectatorsPlaying}>{spectatorCount} spectator{spectatorCount !== 1 ? "s" : ""} watching</p>
             )}
           </>
         ) : (
