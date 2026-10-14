@@ -72,11 +72,13 @@ export async function handleConnection(ws, req) {
     const n = inFlightConnections.get(flightKey) - 1;
     if (n > 0) inFlightConnections.set(flightKey, n);
     else inFlightConnections.delete(flightKey);
-    // This was the user's last connect in flight and a seat assigned to them
-    // is still unused (e.g. this connect failed, or it was the one that
-    // deferred the release in its own section while others were in flight):
-    // give it back now. Taking the lock is safe here (DEADLOCK RULE): this
-    // code runs after our locked section has settled, not inside it.
+    // Backstop for a connect whose section failed (threw) while a release
+    // was pending, e.g. an earlier same-user connect dropped and deferred the
+    // release to this one, whose Redis read then failed. A connect that
+    // returns normally has already released or deferred in its own section,
+    // and a deferring connect's finally sees the others still in flight.
+    // Taking the lock is safe here (DEADLOCK RULE): this code runs after our
+    // locked section has settled, not inside it.
     if (n <= 0 && pendingSeatReleases.has(flightKey)) {
       try {
         await withRoomLock(roomId, () => releasePendingSeat(roomId, userId, 0));

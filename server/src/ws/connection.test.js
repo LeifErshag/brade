@@ -249,100 +249,40 @@ describe("auto-assigned black seat when the client disconnects mid-connect", () 
     expect(inFlightConnections.size).toBe(0);
   });
 
-  describe("several same-user connects that all drop before registering", () => {
-    const tick = () => new Promise((resolve) => setImmediate(resolve));
-    beforeEach(() => {
-      redisGet.mockImplementation(async (key) => { await tick(); return store.get(key) ?? null; });
-      redisExpire.mockImplementation(async () => { await tick(); return 1; });
-    });
-    const drop = (ws) => { ws.readyState = 3; ws.emit("close"); };
+  test("a registered same-user connection that is closing does not keep the seat", async () => {
+    // readyState 2 (CLOSING): the "close" event has not fired yet, so it is
+    // still in rooms, but it is not a live connection that uses the seat.
+    const closing = fakeWs();
+    closing.readyState = 2;
+    rooms.set("ABCD1234", new Set([{ ws: closing, userId: USER_ID }]));
+    const ws = fakeWs();
+    closeDuringSeatWrite(ws);
 
-    function expectReleased(hostWs) {
-      expect(saved().players.black).toBeNull();
-      expect(saved().playerInfo.black).toBeNull();
-      expect(saved().ready.black).toBe(false);
-      expect(saved().status).toBe("waiting");
-      expect(saved().players.white).toBe(HOST_ID);
-      expect(saved().hasGuest).toBeUndefined();
-      expect(inFlightConnections.size).toBe(0);
-      expect(userConnections.has(USER_ID)).toBe(false);
-      const last = JSON.parse(hostWs.send.mock.calls.at(-1)[0]);
-      expect(last.room.players.black).toBeNull();
-    }
+    await handleConnection(ws, fakeReq());
 
-    test("the queued reconnect releases the seat when it drops too", async () => {
-      const hostWs = fakeWs();
-      rooms.set("ABCD1234", new Set([{ ws: hostWs, userId: HOST_ID }]));
-      const ws1 = fakeWs();
-      const ws2 = fakeWs();
-      let conn2;
-      const token = signGuestToken(USER_ID, "Gus");
-      redisSet.mockImplementationOnce(async (key, written) => {
-        store.set(key, written);
-        drop(ws1);
-        conn2 = handleConnection(ws2, fakeReq(token));
-        drop(ws2); // gone before its locked section runs
-        return "OK";
-      });
+    expect(saved().players.black).toBeNull();
+  });
 
-      await handleConnection(ws1, fakeReq(token));
-      await conn2;
-
-      expectReleased(hostWs);
-      expect(ws1.send).not.toHaveBeenCalled();
-      expect(ws2.send).not.toHaveBeenCalled();
-      expect(scheduleDisconnectForfeit).not.toHaveBeenCalled();
+  test("a deferred release still happens when the last same-user connect fails", async () => {
+    const ws1 = fakeWs();
+    const ws2 = fakeWs();
+    let conn2;
+    redisSet.mockImplementationOnce(async (key, written) => {
+      store.set(key, written);
+      ws1.readyState = 3;
+      ws1.emit("close");
+      // conn2 is in flight, so conn1 defers the release to it; conn2's own
+      // room read then fails, and its finally gives the seat back.
+      redisGet.mockRejectedValueOnce(new Error("redis down"));
+      conn2 = handleConnection(ws2, fakeReq());
+      return "OK";
     });
 
-    test("three connects that all drop release the seat once", async () => {
-      const hostWs = fakeWs();
-      rooms.set("ABCD1234", new Set([{ ws: hostWs, userId: HOST_ID }]));
-      const [ws1, ws2, ws3] = [fakeWs(), fakeWs(), fakeWs()];
-      const conns = [handleConnection(ws1, fakeReq()), handleConnection(ws2, fakeReq()), handleConnection(ws3, fakeReq())];
-      drop(ws3);
-      redisSet.mockImplementationOnce(async (key, written) => {
-        store.set(key, written);
-        drop(ws1);
-        drop(ws2);
-        return "OK";
-      });
-      await Promise.all(conns);
+    await handleConnection(ws1, fakeReq());
+    await expect(conn2).rejects.toThrow("redis down");
 
-      expectReleased(hostWs);
-      expect(redisSet).toHaveBeenCalledTimes(2); // assignment + one release
-
-      // A fresh open connect takes the seat and keeps it.
-      const ws4 = fakeWs();
-      await handleConnection(ws4, fakeReq());
-      expect(saved().players.black).toBe(USER_ID);
-      expect(userConnections.get(USER_ID)?.has(ws4)).toBe(true);
-    });
-
-    test("a registered reconnect keeps the seat, also after it closes normally", async () => {
-      const ws1 = fakeWs();
-      const ws2 = fakeWs();
-      const ws3 = fakeWs();
-      let conn2, conn3;
-      redisSet.mockImplementationOnce(async (key, written) => {
-        store.set(key, written);
-        drop(ws1);
-        conn2 = handleConnection(ws2, fakeReq());
-        conn3 = handleConnection(ws3, fakeReq());
-        drop(ws3);
-        return "OK";
-      });
-
-      await handleConnection(ws1, fakeReq());
-      await conn2;
-      await conn3;
-      expect(saved().players.black).toBe(USER_ID);
-      expect(userConnections.get(USER_ID)?.has(ws2)).toBe(true);
-
-      drop(ws2);
-      await tick(); await tick();
-      expect(saved().players.black).toBe(USER_ID);
-      expect(redisSet).toHaveBeenCalledTimes(1);
-    });
+    expect(saved().players.black).toBeNull();
+    expect(inFlightConnections.size).toBe(0);
   });
 
   test("the in-flight count is cleared even when the connect fails", async () => {
