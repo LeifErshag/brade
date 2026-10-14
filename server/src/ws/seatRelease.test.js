@@ -28,7 +28,9 @@ jest.unstable_mockModule("./handlers.js", () => ({
 
 process.env.JWT_ACCESS_SECRET = "test-access-secret";
 
-const { handleConnection, rooms, userConnections, inFlightConnections } =
+// pendingSeatReleaseCount is a test-only export: the number of seat releases
+// the server is still holding on to (must be 0 once every connect settled).
+const { handleConnection, rooms, userConnections, inFlightConnections, pendingSeatReleaseCount } =
   await import("./server.js");
 const { scheduleDisconnectForfeit } = await import("./handlers.js");
 const { signAccessToken, signGuestToken } = await import("../auth/tokens.js");
@@ -124,6 +126,14 @@ function expectSeatReleased() {
   expect(room.status).toBe("waiting");
 }
 
+// Once every connect has settled, no connect is counted as in flight and no
+// seat release is left pending.
+function expectDrained() {
+  expect(inFlightConnections.size).toBe(0);
+  expect(typeof pendingSeatReleaseCount).toBe("function");
+  expect(pendingSeatReleaseCount()).toBe(0);
+}
+
 function expectNoUserRegistration() {
   const userClients = [...(rooms.get(ROOM_ID) ?? [])].filter((c) => c.userId === USER_ID);
   expect(userClients).toHaveLength(0);
@@ -154,7 +164,7 @@ describe("every connection of the user drops before registering", () => {
       room: { players: { white: HOST_ID, black: null } },
     });
     expect(scheduleDisconnectForfeit).not.toHaveBeenCalled();
-    expect(inFlightConnections.size).toBe(0);
+    expectDrained();
   });
 
   test("queued reconnect whose socket closes while its own section is running: seat released", async () => {
@@ -175,7 +185,7 @@ describe("every connection of the user drops before registering", () => {
     expectNoUserRegistration();
     expectSeatReleased();
     expect(lastHostState().room.players.black).toBeNull();
-    expect(inFlightConnections.size).toBe(0);
+    expectDrained();
   });
 
   test("two concurrent connects, the later one closing first: seat released", async () => {
@@ -194,7 +204,7 @@ describe("every connection of the user drops before registering", () => {
     expectNoUserRegistration();
     expectSeatReleased();
     expect(lastHostState().room.players.black).toBeNull();
-    expect(inFlightConnections.size).toBe(0);
+    expectDrained();
   });
 
   test("three connects that all drop before registering: seat released", async () => {
@@ -215,7 +225,7 @@ describe("every connection of the user drops before registering", () => {
 
     expectNoUserRegistration();
     expectSeatReleased();
-    expect(inFlightConnections.size).toBe(0);
+    expectDrained();
   });
 
   test("a guest's hasGuest flag is undone with the seat after a double drop", async () => {
@@ -259,7 +269,7 @@ describe("every connection of the user drops before registering", () => {
     expect(userConnections.get(USER_ID)?.has(ws3)).toBe(true);
     const sent = JSON.parse(ws3.send.mock.calls.at(-1)[0]);
     expect(sent.room.players.black).toBe(USER_ID);
-    expect(inFlightConnections.size).toBe(0);
+    expectDrained();
   });
 });
 
@@ -280,7 +290,7 @@ describe("a registered, still-open connection of the user keeps the seat", () =>
     expect(userConnections.get(USER_ID)?.has(ws2)).toBe(true);
     expect(JSON.parse(ws2.send.mock.calls.at(-1)[0]).room.players.black).toBe(USER_ID);
     expect(lastHostState().room.players.black).toBe(USER_ID);
-    expect(inFlightConnections.size).toBe(0);
+    expectDrained();
   });
 
   test("conn1 drops, conn2 registers and stays open, conn3 drops before registering: seat kept", async () => {
@@ -304,7 +314,7 @@ describe("a registered, still-open connection of the user keeps the seat", () =>
     expect(userConnections.get(USER_ID)?.has(ws2)).toBe(true);
     expect(userConnections.get(USER_ID)?.has(ws3)).toBe(false);
     expect(lastHostState().room.players.black).toBe(USER_ID);
-    expect(inFlightConnections.size).toBe(0);
+    expectDrained();
   });
 
   test("a connection registered before the drops keeps the seat through two dropped connects", async () => {
@@ -322,7 +332,36 @@ describe("a registered, still-open connection of the user keeps the seat", () =>
 
     expect(saved().players.black).toBe(USER_ID);
     expect(userConnections.get(USER_ID)?.has(ws0)).toBe(true);
-    expect(inFlightConnections.size).toBe(0);
+    expectDrained();
+  });
+
+  test("conn1 takes the seat and registers, then closes; queued conn2 drops before registering: seat kept", async () => {
+    const ws1 = fakeWs();
+    const ws2 = fakeWs();
+    let conn2;
+    // conn2 is queued behind conn1 while conn1 is still assigning the seat;
+    // conn1's socket stays open, so conn1 registers and announces the seat.
+    duringSeatWrite(() => {
+      conn2 = handleConnection(ws2, userReq());
+    });
+
+    await handleConnection(ws1, userReq());
+    expect(userConnections.get(USER_ID)?.has(ws1)).toBe(true);
+    expect(JSON.parse(ws1.send.mock.calls.at(-1)[0]).room.players.black).toBe(USER_ID);
+
+    // The registered socket closes normally, then conn2 drops before registering.
+    closeWs(ws1);
+    closeWs(ws2);
+    await conn2;
+    for (let i = 0; i < 5; i++) await tick();
+
+    // The user was already announced in the seat, so it is not given back.
+    expect(saved().players.black).toBe(USER_ID);
+    expect(saved().playerInfo.black).toEqual({ display_name: "Bob", avatar_url: null });
+    expect(ws2.send).not.toHaveBeenCalled();
+    expect(lastHostState().room.players.black).toBe(USER_ID);
+    expectNoUserRegistration();
+    expectDrained();
   });
 
   test("a deferred release is not carried out later when the registered connection closes", async () => {
@@ -343,6 +382,7 @@ describe("a registered, still-open connection of the user keeps the seat", () =>
 
     expect(saved().players.black).toBe(USER_ID);
     expect(userConnections.has(USER_ID)).toBe(false);
+    expectDrained();
   });
 });
 
@@ -389,7 +429,7 @@ describe("the last in-flight connect fails instead of dropping", () => {
     expectSeatReleased();
     expect(lastHostState().room.players.black).toBeNull();
     expect(scheduleDisconnectForfeit).not.toHaveBeenCalled();
-    expect(inFlightConnections.size).toBe(0);
+    expectDrained();
 
     // The room is still usable afterwards: a new connect takes the seat.
     const ws3 = fakeWs();
@@ -425,6 +465,6 @@ describe("a registered connection that is closing does not keep the seat", () =>
     expect(ws1.send).not.toHaveBeenCalled();
     expectSeatReleased();
     expect(lastHostState().room.players.black).toBeNull();
-    expect(inFlightConnections.size).toBe(0);
+    expectDrained();
   });
 });
