@@ -803,6 +803,11 @@ test("§6/§10 (p.4, p.6) a junker stuck on the bar just passes — it is not ja
   for (let p = 0; p <= 5; p++) placeOppAtMoverPos(gs, "black", p, 2);
   expect(checkJanOnPass(gs)).toBeNull();
   expect(checkWin({ ...gs, turn: "white" })).toBeNull();
+  // "Stands over": every Q1 point is a white band and the junker has no burst
+  // right, so no roll lets black move at all.
+  for (const dice of [[6, 5], [3, 1], [2, 2, 2, 2], [6, 6, 6, 6]]) {
+    expect(getLegalMoves({ ...gs, dice, rolledDice: dice }, "black")).toEqual([]);
+  }
 });
 
 // ── §10 Jan on a forced pass (the player to move is the one closed out) ────────

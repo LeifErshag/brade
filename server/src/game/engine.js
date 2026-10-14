@@ -141,8 +141,10 @@ function onBoardCount(gs, color) {
   return n;
 }
 
-// Junker exception (§6 p.4): borne off 14 → exactly one checker remains (on the
-// board or on the bar). With 15 checkers total, off===14 uniquely identifies it.
+// Junker (§6 p.4): a player who has borne off 14 has exactly one checker left
+// (on the board or on the bar); with 15 checkers total, off===14 identifies it.
+// A junker may not burst (bar overflow or wall); when blocked it stands over.
+// It can never be jan: a single checker never exceeds the entry points.
 function isJunker(gs, color) {
   return gs.off[color] === 14;
 }
