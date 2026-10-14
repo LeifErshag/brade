@@ -6,7 +6,7 @@
 // so they count as AVAILABLE, exactly as in the engine's checkJan. See #35.
 
 import * as expectimax from "./expectimax.js";
-import { pathToIdx, checkWin } from "./engine.js";
+import { pathToIdx, checkWin, legalTurnSequences, getLegalMoves } from "./engine.js";
 
 const { janThreat } = expectimax;
 
@@ -114,5 +114,86 @@ describe.each(["white", "black"])("janThreat for %s", (color) => {
       expect({ i, flagged: janThreat(gs, color, opp) >= JAN_BONUS })
         .toEqual({ i, flagged: engineJan });
     }
+  });
+});
+
+// ── Opponent reply search (#62) ──────────────────────────────────────────────
+// Grandmaster's 2-ply search must find the opponent's BEST reply (the one that
+// minimises our evaluation) among ALL of the opponent's legal turn sequences,
+// not only among the first few in the engine's enumeration order.
+//
+// Contract used here:
+//   evaluate(gs, color)                    → static score from `color`'s view
+//   opponentReplyValue(gs, color, dice)    → min over every opponent legal turn
+//     sequence of evaluate(seq.finalGs, color), where the opponent rolls `dice`
+//     from position gs ({ board, bar, off }); evaluate(gs, color) if none.
+// The fixtures below contain no game-ending opponent replies (those are #68).
+
+const TRUNCATED_PREFIX = 50;   // the old cut-off: MAX_OPP_CANDIDATES * 5
+
+function posGs(board) {
+  return { board: board.slice(), bar: { white: 0, black: 0 }, off: { white: 0, black: 0 } };
+}
+
+// Positions where the opponent's best reply lies far beyond the first 50
+// sequences that legalTurnSequences enumerates.
+const DEEP_BEST_REPLY = [
+  { color: "white", dice: [4, 4, 4, 4],
+    board: [2, 1, 0, 2, 0, -2, 2, 0, -1, 0, -2, -2, 2, -2, 0, -2, 0, 0, 2, 0, 2, -2, -2, 2] },
+  { color: "black", dice: [2, 2, 2, 2],
+    board: [2, 2, 0, 0, 2, 0, 0, 2, -2, 0, -2, -2, -2, -2, 2, -2, -2, -1, 2, 1, 2, 0, 0, 0] },
+];
+
+describe("opponent reply search (#62)", () => {
+  test("evaluate and opponentReplyValue are exported functions", () => {
+    expect(typeof expectimax.evaluate).toBe("function");
+    expect(typeof expectimax.opponentReplyValue).toBe("function");
+  });
+
+  describe.each(DEEP_BEST_REPLY)("$color to move, opponent rolls $dice", ({ color, dice, board }) => {
+    const opp = other(color);
+
+    test("precondition: the best reply is beyond the first 50 enumerated sequences", () => {
+      const { evaluate } = expectimax;
+      const seqs = legalTurnSequences({ ...posGs(board), dice }, opp);
+      expect(seqs.some(s => s.ends)).toBe(false);
+      const vals = seqs.map(s => evaluate(s.finalGs, color));
+      const best = Math.min(...vals);
+      expect(vals.indexOf(best)).toBeGreaterThanOrEqual(TRUNCATED_PREFIX);
+      expect(Math.min(...vals.slice(0, TRUNCATED_PREFIX))).toBeGreaterThan(best);
+    });
+
+    test("opponentReplyValue equals the minimum over ALL legal opponent sequences", () => {
+      const { evaluate, opponentReplyValue } = expectimax;
+      const seqs = legalTurnSequences({ ...posGs(board), dice }, opp);
+      const bruteMin = Math.min(...seqs.map(s => evaluate(s.finalGs, color)));
+      expect(opponentReplyValue(posGs(board), color, dice.slice())).toBe(bruteMin);
+    });
+
+    test("opponentReplyValue does not mutate its inputs", () => {
+      const gs = posGs(board);
+      const before = JSON.stringify(gs);
+      const d = dice.slice();
+      expectimax.opponentReplyValue(gs, color, d);
+      expect(JSON.stringify(gs)).toBe(before);
+      expect(d).toEqual(dice);
+    });
+  });
+
+  test("performance: a wide-open doubles position is searched well within budget", () => {
+    // Many blots and short stacks on both sides, white rolls 2-2: one of the
+    // heaviest positions found (~250 ms on main, ~400 ms evaluating every reply).
+    const board = [2, 2, -2, -2, 0, -2, -2, 0, 1, 2, 0, 1, 0, -2, -2, 1, 1, 2, 1, -2, 0, 0, 2, -1];
+    const gs = { ...emptyGs("white"), board, dice: [2, 2, 2, 2] };
+    const legal = getLegalMoves(gs, "white");
+    expectimax.clearExpectimaxCache("perf-62");
+    const t0 = Date.now();
+    const move = expectimax.getNextExpectimaxMove(gs, "white", legal, "perf-62");
+    const elapsed = Date.now() - t0;
+    expectimax.clearExpectimaxCache("perf-62");
+    expect(legal).toContainEqual(move);
+    // Must finish clearly below the 5 s search timeout (so the search is not
+    // being cut short by it).
+    expect(elapsed).toBeLessThan(2500);
   });
 });
