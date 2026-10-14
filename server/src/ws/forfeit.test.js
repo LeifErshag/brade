@@ -1,37 +1,72 @@
-// The 60 s disconnect forfeit must not resign a player who has reconnected,
-// even when the timer already fired and its resign queued behind the
-// reconnect on the room's lock (issue #59).
+// ── Disconnect forfeit vs. reconnect (issue #59) ─────────────────────────────
+// A player who disconnects mid-game is forfeited after 60 s unless they
+// reconnect. The forfeit's RESIGN runs under the room's lock, so it can queue
+// behind a reconnect of the same player that already holds the lock. By then
+// the timer has fired and cancelDisconnectForfeit cannot stop it; the queued
+// forfeit must see that the player is connected again and leave the game be.
+//
+// Real server.js, handlers.js and roomLock.js; Redis and Postgres are fakes.
 
 import { jest } from "@jest/globals";
 import { EventEmitter } from "events";
 
-let store = new Map();
-const redis = {
-  get:    jest.fn(async (k) => store.get(k) ?? null),
-  set:    jest.fn(async (k, v) => { store.set(k, v); return "OK"; }),
-  expire: jest.fn(async () => 1),
-  ttl:    jest.fn(async () => 86400),
-  del:    jest.fn(async (k) => { store.delete(k); return 1; }),
+const store = new Map();
+// Lets a test hold a connect inside the room lock (at its TTL refresh).
+let expireGate = null;
+const fakeRedis = {
+  get:    async (k) => store.get(k) ?? null,
+  set:    async (k, v) => { store.set(k, v); return "OK"; },
+  expire: async () => { if (expireGate) await expireGate; return 1; },
+  ttl:    async () => 100,
+  del:    async () => 1,
 };
-jest.unstable_mockModule("../db/redis.js", () => ({
-  getRedis: () => redis,
-  connectRedis: jest.fn(),
-  keys: { room: (id) => `room:${id}` },
-  TTL:  { room: 86400 },
-}));
+
 const query = jest.fn(async () => ({ rows: [] }));
-jest.unstable_mockModule("../db/postgres.js", () => ({ query, connectPostgres: jest.fn() }));
+
+jest.unstable_mockModule("../db/postgres.js", () => ({
+  query,
+  connectPostgres: async () => {},
+}));
+jest.unstable_mockModule("../db/redis.js", () => ({
+  getRedis: () => fakeRedis,
+  connectRedis: async () => {},
+  keys: { room: (id) => `room:${id}` },
+  TTL:  { room: 86400, refresh: 604800, invite: 172800 },
+}));
 
 process.env.JWT_ACCESS_SECRET = "test-access-secret";
 
 const { handleConnection, rooms, userConnections, inFlightConnections } = await import("./server.js");
 const { withRoomLock } = await import("./roomLock.js");
+const { initGame } = await import("../game/engine.js");
 const { signAccessToken } = await import("../auth/tokens.js");
 
-const ROOM  = "ABCD1234";
-const OTHER = "WXYZ9876";
-const WHITE = "11111111-1111-1111-1111-111111111111";
-const BLACK = "22222222-2222-2222-2222-222222222222";
+const ROOM_ID    = "FORF1234";
+const OTHER_ID   = "OTHR1234";
+const WHITE_ID   = "11111111-1111-1111-1111-111111111111";
+const BLACK_ID   = "22222222-2222-2222-2222-222222222222";
+const FORFEIT_MS = 60_000;
+
+function playingRoom(roomId) {
+  const gs = initGame();
+  gs.turn  = "white";
+  gs.phase = "rolling";
+  return {
+    roomId,
+    matchLength: 1,
+    createdBy:   WHITE_ID,
+    gameDbId:    "game-uuid",
+    players:     { white: WHITE_ID, black: BLACK_ID },
+    playerInfo:  { white: { display_name: "White" }, black: { display_name: "Black" } },
+    ready:       { white: true, black: true },
+    status:      "playing",
+    score:       { white: 0, black: 0 },
+    gameNum:     1,
+    gameState:   gs,
+  };
+}
+
+const saved = (roomId = ROOM_ID) => JSON.parse(store.get(`room:${roomId}`));
 
 function fakeWs() {
   const ws = new EventEmitter();
@@ -40,79 +75,149 @@ function fakeWs() {
   ws.close = jest.fn();
   return ws;
 }
-const connect = (ws, userId, room = ROOM) =>
-  handleConnection(ws, { url: `/ws?token=${signAccessToken(userId)}&room=${room}` });
-const disconnect = async (ws) => { ws.readyState = 3; ws.emit("close"); await jest.advanceTimersByTimeAsync(0); };
 
-function playingRoom() {
-  return {
-    players: { white: WHITE, black: BLACK },
-    playerInfo: { white: null, black: null },
-    status: "playing",
-    score: { white: 0, black: 0 },
-    gameNum: 1, matchLength: 3,
-    hasGuest: true, guestColor: "black",
-    gameState: { turn: "white", phase: "rolling" },
-  };
+const connect = (ws, userId, roomId = ROOM_ID) =>
+  handleConnection(ws, { url: `/ws?token=${signAccessToken(userId)}&room=${roomId}` });
+
+function disconnect(ws) {
+  ws.readyState = 3;
+  ws.emit("close");
 }
-const roomState = () => JSON.parse(store.get(`room:${ROOM}`));
-const sentTypes = (ws) => ws.send.mock.calls.map(([p]) => JSON.parse(p).type);
-const updates   = () => query.mock.calls.filter(([sql]) => /UPDATE games/.test(sql));
+
+// Let pending promise chains run (without advancing fake time) and wait for
+// everything queued on the room's lock to finish.
+async function settle(roomId = ROOM_ID) {
+  for (let i = 0; i < 5; i++) {
+    await jest.advanceTimersByTimeAsync(0);
+    await withRoomLock(roomId, async () => {});
+  }
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
+const sentTypes = (ws) => ws.send.mock.calls.map(([raw]) => JSON.parse(raw).type);
+const gameRecorded = () =>
+  query.mock.calls.some(([sql]) => /UPDATE\s+games/i.test(sql));
 
 beforeEach(() => {
   jest.useFakeTimers();
-  store = new Map([[`room:${ROOM}`, JSON.stringify(playingRoom())],
-                   [`room:${OTHER}`, JSON.stringify(playingRoom())]]);
+  store.clear();
+  rooms.clear();
+  userConnections.clear();
+  inFlightConnections.clear();
   query.mockClear();
-  rooms.clear(); userConnections.clear(); inFlightConnections.clear();
+  expireGate = null;
+  store.set(`room:${ROOM_ID}`, JSON.stringify(playingRoom(ROOM_ID)));
   jest.spyOn(console, "error").mockImplementation(() => {});
   jest.spyOn(console, "log").mockImplementation(() => {});
 });
-afterEach(() => { jest.useRealTimers(); jest.restoreAllMocks(); });
 
-test("a player still gone after 60 s forfeits the match", async () => {
-  const w = fakeWs(), b = fakeWs();
-  await connect(w, WHITE); await connect(b, BLACK);
-  await disconnect(w);
-  await jest.advanceTimersByTimeAsync(60_000);
-  expect(roomState().status).toBe("finished");
-  expect(roomState().matchResult).toMatchObject({ winner: "black", winType: "resign" });
-  expect(updates()).toHaveLength(1);
-  expect(sentTypes(b)).toContain("MATCH_OVER");
+afterEach(() => {
+  jest.clearAllTimers();
+  jest.useRealTimers();
+  jest.restoreAllMocks();
 });
 
-test("a reconnect queued ahead of a fired forfeit wins; a later disconnect forfeits", async () => {
-  const w = fakeWs(), b = fakeWs();
-  await connect(w, WHITE); await connect(b, BLACK);
-  await disconnect(w);
+// Both players connected, then black's socket drops (scheduling the forfeit).
+async function blackDisconnects() {
+  const whiteWs = fakeWs();
+  const blackWs = fakeWs();
+  await connect(whiteWs, WHITE_ID);
+  await connect(blackWs, BLACK_ID);
+  disconnect(blackWs);
+  await settle();
+  return { whiteWs };
+}
 
-  // Hold the room's lock so the reconnect and then the fired forfeit queue.
-  let release;
-  const held = withRoomLock(ROOM, () => new Promise((r) => { release = r; }));
-  const w2 = fakeWs();
-  const reconnecting = connect(w2, WHITE);
-  await jest.advanceTimersByTimeAsync(60_000); // timer fires, resign queues
-  release(); await held; await reconnecting;
+// Black reconnects while the forfeit timer fires: the connect holds the room
+// lock (stuck at its TTL refresh) when the timer goes off, so the forfeit
+// queues behind it. Resolves once the reconnect has registered and the
+// queued forfeit section has run.
+async function reconnectWhileForfeitFires() {
+  const gate = deferred();
+  expireGate = gate.promise;
+  const ws = fakeWs();
+  const reconnect = connect(ws, BLACK_ID);
   await jest.advanceTimersByTimeAsync(0);
 
-  expect(roomState().status).toBe("playing");
-  expect(roomState().score).toEqual({ white: 0, black: 0 });
-  expect(updates()).toHaveLength(0);
-  expect(sentTypes(b)).not.toContain("MATCH_OVER");
+  await jest.advanceTimersByTimeAsync(FORFEIT_MS);
 
-  await disconnect(w2);
-  await jest.advanceTimersByTimeAsync(59_000);
-  expect(roomState().status).toBe("playing");
-  await jest.advanceTimersByTimeAsync(1_000);
-  expect(roomState().status).toBe("finished");
-  expect(sentTypes(b)).toContain("MATCH_OVER");
-});
+  expireGate = null;
+  gate.resolve();
+  await reconnect;
+  await settle();
+  return ws;
+}
 
-test("being connected to another room does not prevent the forfeit", async () => {
-  const w = fakeWs(), b = fakeWs();
-  await connect(w, WHITE); await connect(b, BLACK);
-  await disconnect(w);
-  await connect(fakeWs(), WHITE, OTHER);
-  await jest.advanceTimersByTimeAsync(60_000);
-  expect(roomState().status).toBe("finished");
+describe("disconnect forfeit", () => {
+  test("forfeits a player who is still disconnected when the forfeit runs", async () => {
+    const { whiteWs } = await blackDisconnects();
+
+    await jest.advanceTimersByTimeAsync(FORFEIT_MS);
+    await settle();
+
+    const room = saved();
+    expect(room.status).toBe("finished");
+    expect(room.matchResult).toMatchObject({ winner: "white", winType: "resign" });
+    expect(gameRecorded()).toBe(true);
+    expect(sentTypes(whiteWs)).toContain("MATCH_OVER");
+  });
+
+  test("a connection of the same player to another room does not prevent the forfeit", async () => {
+    store.set(`room:${OTHER_ID}`, JSON.stringify(playingRoom(OTHER_ID)));
+    await blackDisconnects();
+    await connect(fakeWs(), BLACK_ID, OTHER_ID);
+
+    await jest.advanceTimersByTimeAsync(FORFEIT_MS);
+    await settle();
+
+    expect(saved().status).toBe("finished");
+    expect(saved().matchResult).toMatchObject({ winner: "white", winType: "resign" });
+  });
+
+  test("a reconnect before the timer fires cancels the forfeit", async () => {
+    await blackDisconnects();
+    await jest.advanceTimersByTimeAsync(FORFEIT_MS - 1_000);
+    await connect(fakeWs(), BLACK_ID);
+
+    await jest.advanceTimersByTimeAsync(FORFEIT_MS);
+    await settle();
+
+    expect(saved().status).toBe("playing");
+    expect(saved().matchResult).toBeUndefined();
+    expect(gameRecorded()).toBe(false);
+  });
+
+  test("a forfeit queued behind the same player's reconnect does not resign the game", async () => {
+    const { whiteWs } = await blackDisconnects();
+
+    const blackWs2 = await reconnectWhileForfeitFires();
+
+    expect(rooms.get(ROOM_ID)?.size).toBe(2);
+    const room = saved();
+    expect(room.status).toBe("playing");
+    expect(room.matchResult).toBeUndefined();
+    expect(room.score).toEqual({ white: 0, black: 0 });
+    expect(gameRecorded()).toBe(false);
+    expect(sentTypes(whiteWs)).not.toContain("MATCH_OVER");
+    expect(sentTypes(blackWs2)).not.toContain("MATCH_OVER");
+  });
+
+  test("after a reconnect beat the queued forfeit, a later disconnect forfeits again", async () => {
+    await blackDisconnects();
+    const blackWs2 = await reconnectWhileForfeitFires();
+    expect(saved().status).toBe("playing");
+
+    disconnect(blackWs2);
+    await settle();
+    await jest.advanceTimersByTimeAsync(FORFEIT_MS);
+    await settle();
+
+    expect(saved().status).toBe("finished");
+    expect(saved().matchResult).toMatchObject({ winner: "white", winType: "resign" });
+  });
 });
