@@ -135,8 +135,12 @@ const S = {
   },
   // The board scales with the card width (height follows the aspect ratio)
   // and is capped by the viewport height so the controls below stay visible.
+  // The cap is applied to the width (height cap * 800/500) so the box keeps
+  // the board's aspect ratio and the shadow/rounded corners follow the drawn
+  // board instead of letterboxing it.
   svg: {
-    display: "block", width: "100%", height: "auto", maxWidth: W,
+    display: "block", width: `min(100%, calc(max(200px, 100vh - 290px) * ${W / H}))`,
+    height: "auto", aspectRatio: `${W} / ${H}`, maxWidth: W,
     maxHeight: "max(200px, calc(100vh - 290px))", margin: "0 auto",
     borderRadius: 10, boxShadow: "0 8px 40px #00000099",
   },
@@ -165,8 +169,10 @@ const S = {
     background: "#2a1400", color: "#6b3a10", border: "1px solid #3a1a00",
     borderRadius: 8, padding: "6px 14px", fontSize: 13, cursor: "pointer", fontFamily: "Georgia, serif",
   },
+  // Always rendered (hidden on your own turn) so Resign never moves sideways.
   waiting: { color: "#6b3a10", fontSize: 13, whiteSpace: "nowrap" },
-  junker: { color: "#e8b86d", fontSize: 14, fontWeight: "bold", letterSpacing: 1 },
+  // line-height 1 keeps the bold notice inside the fixed 18px status line.
+  junker: { color: "#e8b86d", fontSize: 13, lineHeight: 1, fontWeight: "bold", letterSpacing: 1 },
 };
 
 // ── Main Board Component ─────────────────────────────────────────────────────
@@ -464,7 +470,8 @@ export default function Board({
       {/* Secondary actions (reserved height) */}
       {!readOnly && (
         <div style={S.controlsSub}>
-          {!isMyTurn && <span style={S.waiting}>Waiting for opponent…</span>}
+          <span style={{ ...S.waiting, visibility: isMyTurn ? "hidden" : "visible" }}
+            aria-hidden={isMyTurn}>Waiting for opponent…</span>
           <button style={S.btnResign}
             onClick={() => { if (window.confirm("Resign this game?")) onResign(); }}>
             Resign
