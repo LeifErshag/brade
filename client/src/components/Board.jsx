@@ -58,7 +58,7 @@ function SvgDie({ value, color, used }) {
   const dot = color === "white" ? "#2a1800" : "#e8b86d";
   const dots = DOT_MAP[value] || [];
   return (
-    <svg width={44} height={44} style={{ opacity: used ? 0.3 : 1 }}>
+    <svg width={44} height={44} viewBox="0 0 44 44" style={{ ...S.die, opacity: used ? 0.3 : 1 }}>
       <rect x={2} y={2} width={40} height={40} rx={7} fill={fill} stroke={stroke} strokeWidth="2" />
       {dots.map(([dx, dy], i) => (
         <circle key={i} cx={dx * 0.4 + 2} cy={dy * 0.4 + 2} r={3.5} fill={dot} />
@@ -127,9 +127,32 @@ const S = {
   scoreItem: { textAlign: "center" },
   scoreName: { color: "#a07840", fontSize: 11, textTransform: "uppercase", letterSpacing: 1 },
   scoreVal: { color: "#e8b86d", fontSize: 22, fontWeight: "bold" },
-  turn: { color: "#7ddb7d", fontSize: 12, textAlign: "center", marginBottom: 6 },
-  diceRow: { display: "flex", gap: 8, justifyContent: "center", marginTop: 8, flexWrap: "wrap", alignItems: "center" },
-  actions: { display: "flex", gap: 10, justifyContent: "center", marginTop: 10, flexWrap: "wrap" },
+  // Fixed-height, single-line status so the board never moves when the text
+  // changes (turn label <-> junker notice).
+  turn: {
+    color: "#7ddb7d", fontSize: 12, textAlign: "center", marginBottom: 6,
+    height: 18, lineHeight: "18px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+  },
+  // The board scales with the card width (height follows the aspect ratio)
+  // and is capped by the viewport height so the controls below stay visible.
+  svg: {
+    display: "block", width: "100%", height: "auto", maxWidth: W,
+    maxHeight: "max(200px, calc(100vh - 290px))", margin: "0 auto",
+    borderRadius: 10, boxShadow: "0 8px 40px #00000099",
+  },
+  // Controls sit directly under the board in two reserved-height rows, so
+  // dice and buttons appearing/disappearing never shift the layout.
+  // Row 1: dice + Roll / Pass. Row 2: waiting text + Resign.
+  controls: {
+    display: "flex", gap: 8, justifyContent: "center", alignItems: "center",
+    flexWrap: "nowrap", height: 52, marginTop: 6,
+  },
+  controlsSub: {
+    display: "flex", gap: 12, justifyContent: "center", alignItems: "center",
+    flexWrap: "nowrap", minHeight: 34,
+  },
+  diceGroup: { display: "flex", gap: 6, alignItems: "center", flexShrink: 0 },
+  die: { width: "clamp(32px, 9vw, 44px)", height: "clamp(32px, 9vw, 44px)", display: "block" },
   btnRoll: {
     background: "#6b3a10", color: "#e8b86d", border: "1px solid #a06030",
     borderRadius: 8, padding: "9px 22px", fontSize: 14, cursor: "pointer", fontFamily: "Georgia, serif",
@@ -140,13 +163,10 @@ const S = {
   },
   btnResign: {
     background: "#2a1400", color: "#6b3a10", border: "1px solid #3a1a00",
-    borderRadius: 8, padding: "9px 14px", fontSize: 13, cursor: "pointer", fontFamily: "Georgia, serif",
+    borderRadius: 8, padding: "6px 14px", fontSize: 13, cursor: "pointer", fontFamily: "Georgia, serif",
   },
-  waiting: { color: "#6b3a10", fontSize: 13, textAlign: "center", marginTop: 8 },
-  junker: {
-    color: "#e8b86d", fontSize: 14, fontWeight: "bold", textAlign: "center",
-    marginTop: 8, letterSpacing: 1,
-  },
+  waiting: { color: "#6b3a10", fontSize: 13, whiteSpace: "nowrap" },
+  junker: { color: "#e8b86d", fontSize: 14, fontWeight: "bold", letterSpacing: 1 },
 };
 
 // ── Main Board Component ─────────────────────────────────────────────────────
@@ -378,12 +398,15 @@ export default function Board({
         </div>
       </div>
 
-      <div style={S.turn}>{turnLabel}</div>
+      {/* Status line: the junker notice temporarily replaces the turn label */}
+      <div style={S.turn}>
+        {junkerNotice
+          ? <span style={S.junker}>{playerInfo?.[junkerNotice]?.display_name ?? junkerNotice} is Junker!</span>
+          : turnLabel}
+      </div>
 
       {/* SVG Board */}
-      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}
-        style={{ maxWidth: "100%", display: "block", borderRadius: 10,
-          boxShadow: "0 8px 40px #00000099" }}>
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={S.svg}>
         {/* Frame & background */}
         <rect x={0} y={0} width={W} height={H} rx={12} fill={FRAME} />
         <rect x={8} y={8} width={W - 16} height={H - 16} rx={8} fill={INNER} />
@@ -427,34 +450,26 @@ export default function Board({
           fill="none" stroke={FRAME} strokeWidth="2.5" />
       </svg>
 
-      {/* Dice */}
-      {diceAll && <div style={S.diceRow}>{diceAll}</div>}
+      {/* Dice + primary action (reserved height) */}
+      <div style={S.controls}>
+        {diceAll && <div style={S.diceGroup}>{diceAll}</div>}
+        {!readOnly && canRoll && (
+          <button style={S.btnRoll} onClick={onRoll}>Roll</button>
+        )}
+        {!readOnly && noMoves && (
+          <button style={S.btnPass} onClick={onPass}>Pass (no moves)</button>
+        )}
+      </div>
 
-      {/* Junker notice */}
-      {junkerNotice && (
-        <div style={S.junker}>
-          {playerInfo?.[junkerNotice]?.display_name ?? junkerNotice} is Junker!
-        </div>
-      )}
-
-      {/* Actions */}
+      {/* Secondary actions (reserved height) */}
       {!readOnly && (
-        <div style={S.actions}>
-          {canRoll && (
-            <button style={S.btnRoll} onClick={onRoll}>Roll</button>
-          )}
-          {noMoves && (
-            <button style={S.btnPass} onClick={onPass}>Pass (no moves)</button>
-          )}
+        <div style={S.controlsSub}>
+          {!isMyTurn && <span style={S.waiting}>Waiting for opponent…</span>}
           <button style={S.btnResign}
             onClick={() => { if (window.confirm("Resign this game?")) onResign(); }}>
             Resign
           </button>
         </div>
-      )}
-
-      {!readOnly && !isMyTurn && (
-        <div style={S.waiting}>Waiting for opponent…</div>
       )}
     </div>
   );

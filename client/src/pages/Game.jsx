@@ -11,18 +11,20 @@ const API = import.meta.env.VITE_API_URL ?? "";
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const S = {
+  // Top-aligned (not vertically centred) so the board doesn't move when the
+  // content above/below it changes height. Gutters shrink on narrow screens.
   page: {
     background: "#2a1400", minHeight: "100vh", display: "flex",
-    alignItems: "center", justifyContent: "center", fontFamily: "Georgia, serif",
-    padding: 16,
+    alignItems: "flex-start", justifyContent: "center", fontFamily: "Georgia, serif",
+    padding: "clamp(6px, 2vw, 16px)", boxSizing: "border-box",
   },
   card: {
-    background: "#3a1a00", borderRadius: 12, padding: "28px 32px",
+    background: "#3a1a00", borderRadius: 12, padding: "clamp(10px, 2.5vw, 20px) clamp(8px, 3vw, 32px)",
     maxWidth: 860, width: "100%", boxSizing: "border-box",
   },
-  header:   { display: "flex", alignItems: "center", gap: 12, marginBottom: 24, flexWrap: "wrap" },
+  header:   { display: "flex", alignItems: "center", gap: "4px 12px", marginBottom: 12, flexWrap: "wrap" },
   back:     { color: "#a07840", textDecoration: "none", fontSize: 13 },
-  title:    { color: "#e8b86d", fontSize: 22, margin: 0, flex: 1 },
+  title:    { color: "#e8b86d", fontSize: "clamp(16px, 4.5vw, 22px)", margin: 0, flex: 1, whiteSpace: "nowrap" },
   matchLen: { color: "#a07840", fontSize: 13 },
   disconnected: { color: "#c0392b", fontSize: 11 },
   reconnecting: { color: "#d68910", fontSize: 11 },
@@ -50,7 +52,8 @@ const S = {
   readyBadge:    { display: "inline-block", marginTop: 6, padding: "2px 8px", borderRadius: 10, background: "#1a5c1a", color: "#7ddb7d", fontSize: 11 },
   notReadyBadge: { display: "inline-block", marginTop: 6, padding: "2px 8px", borderRadius: 10, background: "#4a2800", color: "#a07840", fontSize: 11 },
 
-  spectators: { color: "#6b3a10", fontSize: 12, textAlign: "center", marginBottom: 12 },
+  spectators: { color: "#6b3a10", fontSize: 12, textAlign: "center", margin: "0 0 12px" },
+  coachWrap:  { marginTop: 12 },
 
   actions:        { display: "flex", gap: 10, justifyContent: "center", marginBottom: 20, flexWrap: "wrap" },
   btnReady:       { background: "#1a5c1a", color: "#7ddb7d", border: "none", borderRadius: 8, padding: "10px 24px", fontSize: 14, cursor: "pointer" },
@@ -394,10 +397,6 @@ export default function Game() {
           </button>
         </div>
 
-        {/* Rendered once, outside the playing/finished branches, so the coach
-            keeps its history when the game ends. */}
-        {coach}
-
         {!room ? (
           <p style={S.muted}>Connecting…</p>
         ) : room.status === "finished" ? (
@@ -417,9 +416,6 @@ export default function Game() {
           </>
         ) : room.status === "playing" && room.gameState ? (
           <>
-            {spectatorCount > 0 && (
-              <p style={S.spectators}>{spectatorCount} spectator{spectatorCount !== 1 ? "s" : ""} watching</p>
-            )}
             <Board
               gameState={room.gameState}
               score={room.score}
@@ -435,6 +431,10 @@ export default function Game() {
               highlightLegal={isTutorial}
               onIllegalAttempt={isTutorial ? handleIllegalAttempt : undefined}
             />
+            {/* Below the board so it appearing doesn't push the board down. */}
+            {spectatorCount > 0 && (
+              <p style={S.spectators}>{spectatorCount} spectator{spectatorCount !== 1 ? "s" : ""} watching</p>
+            )}
           </>
         ) : (
           <>
@@ -525,6 +525,11 @@ export default function Game() {
             )}
           </>
         )}
+
+        {/* Rendered once, outside the playing/finished branches, so the coach
+            keeps its history when the game ends. It sits below the board and
+            controls so its changing height never moves the play area. */}
+        {coach && <div style={S.coachWrap}>{coach}</div>}
       </div>
 
       {/* Rules drawer: fixed overlay sibling of the card. Opening/closing only
