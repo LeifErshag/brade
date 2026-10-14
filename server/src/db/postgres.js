@@ -17,8 +17,22 @@ export function handlePoolError(err, logger = console) {
   logger.error("PostgreSQL idle client error:", err);
 }
 
+// Timeouts, so a hung database cannot stall a room forever: START_GAME and
+// handleGameOver run their Postgres calls while holding the per-room lock
+// (see ws/roomLock.js), and every later message for that room queues behind.
+// - connectionTimeoutMillis: give up acquiring/opening a connection (also
+//   bounds the startup connect) instead of waiting indefinitely.
+// - statement_timeout: Postgres cancels any statement running longer. All app
+//   queries are small indexed lookups/updates, so 20 s is far above normal.
+//   Migrations may legitimately run longer and disable it for their own
+//   transaction (see runMigrations).
+export const POOL_TIMEOUTS = Object.freeze({
+  connectionTimeoutMillis: 10_000,
+  statement_timeout:       20_000,
+});
+
 export async function connectPostgres() {
-  pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  pool = new Pool({ connectionString: process.env.DATABASE_URL, ...POOL_TIMEOUTS });
   pool.on("error", (err) => handlePoolError(err));
   await pool.query("SELECT 1"); // verify connection
   console.log("PostgreSQL connected");
@@ -49,6 +63,9 @@ async function runMigrations() {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      // A migration on a large table (e.g. ALTER TABLE moves) can exceed the
+      // pool's statement_timeout; lift it for this transaction only.
+      await client.query("SET LOCAL statement_timeout = 0");
       await client.query(sql);
       await client.query("INSERT INTO _migrations (filename) VALUES ($1)", [filename]);
       await client.query("COMMIT");
