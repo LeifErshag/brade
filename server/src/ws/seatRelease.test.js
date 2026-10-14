@@ -32,6 +32,7 @@ const { handleConnection, rooms, userConnections, inFlightConnections } =
   await import("./server.js");
 const { scheduleDisconnectForfeit } = await import("./handlers.js");
 const { signAccessToken, signGuestToken } = await import("../auth/tokens.js");
+const { withRoomLock } = await import("./roomLock.js");
 
 const USER_ID = "11111111-1111-1111-1111-111111111111";
 const HOST_ID = "33333333-3333-3333-3333-333333333333";
@@ -342,5 +343,88 @@ describe("a registered, still-open connection of the user keeps the seat", () =>
 
     expect(saved().players.black).toBe(USER_ID);
     expect(userConnections.has(USER_ID)).toBe(false);
+  });
+});
+
+describe("the last in-flight connect fails instead of dropping", () => {
+  // Waits until every queued section for the room has run (including any
+  // release an implementation does after a connect has settled), failing
+  // instead of hanging if the room's lock never frees up.
+  async function drainRoom() {
+    for (let i = 0; i < 5; i++) await tick();
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("room lock never drained (deadlock?)")), 2000);
+    });
+    try {
+      await Promise.race([withRoomLock(ROOM_ID, () => {}), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+    for (let i = 0; i < 5; i++) await tick();
+  }
+
+  test("conn1 assigns and drops, queued conn2 throws: seat released once both settle", async () => {
+    const ws1 = fakeWs();
+    const ws2 = fakeWs();
+    let conn2;
+    duringSeatWrite(() => {
+      closeWs(ws1);
+      // A section queued between conn1 and conn2 arms the failure, so the
+      // first Redis read of conn2's own locked section rejects, whatever
+      // reads conn1 still does before its section ends.
+      withRoomLock(ROOM_ID, () => {
+        redisGet.mockImplementationOnce(async () => { await tick(); throw new Error("redis blip"); });
+      });
+      conn2 = handleConnection(ws2, userReq());
+    });
+
+    await handleConnection(ws1, userReq());
+    await expect(conn2).rejects.toThrow("redis blip");
+    await drainRoom();
+
+    expect(ws1.send).not.toHaveBeenCalled();
+    expect(ws2.send).not.toHaveBeenCalled();
+    expectNoUserRegistration();
+    expectSeatReleased();
+    expect(lastHostState().room.players.black).toBeNull();
+    expect(scheduleDisconnectForfeit).not.toHaveBeenCalled();
+    expect(inFlightConnections.size).toBe(0);
+
+    // The room is still usable afterwards: a new connect takes the seat.
+    const ws3 = fakeWs();
+    await handleConnection(ws3, userReq());
+    expect(saved().players.black).toBe(USER_ID);
+    expect(userConnections.get(USER_ID)?.has(ws3)).toBe(true);
+  });
+});
+
+describe("a registered connection that is closing does not keep the seat", () => {
+  test("seat released when the user's only registered connection is CLOSING (readyState 2, no close event yet)", async () => {
+    const OTHER_ID = "44444444-4444-4444-4444-444444444444";
+    // The user first joins as a spectator while black is held by someone else.
+    const taken = lobby();
+    taken.players.black = OTHER_ID;
+    taken.playerInfo.black = { display_name: "Other", avatar_url: null };
+    store.set(`room:${ROOM_ID}`, JSON.stringify(taken));
+    const ws0 = fakeWs();
+    await handleConnection(ws0, userReq());
+    expect([...rooms.get(ROOM_ID)].some((c) => c.ws === ws0)).toBe(true);
+
+    // The other player leaves the seat; the spectator socket starts closing
+    // but its "close" event has not fired yet.
+    store.set(`room:${ROOM_ID}`, JSON.stringify(lobby()));
+    ws0.readyState = 2;
+
+    // A new connect of the user takes the free seat and drops before registering.
+    const ws1 = fakeWs();
+    duringSeatWrite(() => closeWs(ws1));
+    await handleConnection(ws1, userReq());
+    for (let i = 0; i < 5; i++) await tick();
+
+    expect(ws1.send).not.toHaveBeenCalled();
+    expectSeatReleased();
+    expect(lastHostState().room.players.black).toBeNull();
+    expect(inFlightConnections.size).toBe(0);
   });
 });
