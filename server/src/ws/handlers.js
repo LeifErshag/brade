@@ -312,16 +312,32 @@ async function handleRoomMessage({ msg, userId, roomId, ws }) {
 
 // ── AI turn automation ────────────────────────────────────────────────────────
 
-// Guard: prevents duplicate concurrent triggers for the same room
-const aiTurnPending = new Set();
+// Guard: at most one AI turn loop runs per room. A trigger that arrives while
+// a turn is running is not dropped: it sets `rerun`, and the running loop
+// plays another turn once the current one finishes (issue #57). That covers
+// the AI losing a non-final game during its own turn: handleGameOver starts
+// the next game with black to roll and triggers the AI from inside the
+// running turn. Each rerun re-checks the room state (aiRoll), so a redundant
+// trigger only costs one thinking delay and writes nothing. Reruns happen
+// only on explicit triggers, so this cannot loop by itself.
+const aiTurns = new Map(); // roomId → { rerun: boolean, aiDifficulty }
 
 export async function triggerAiTurn(roomId, aiDifficulty) {
-  if (aiTurnPending.has(roomId)) return;
-  aiTurnPending.add(roomId);
+  const running = aiTurns.get(roomId);
+  if (running) {
+    running.rerun        = true;
+    running.aiDifficulty = aiDifficulty;
+    return;
+  }
+  const turn = { rerun: false, aiDifficulty };
+  aiTurns.set(roomId, turn);
   try {
-    return await _triggerAiTurn(roomId, aiDifficulty);
+    do {
+      turn.rerun = false;
+      await _triggerAiTurn(roomId, turn.aiDifficulty);
+    } while (turn.rerun);
   } finally {
-    aiTurnPending.delete(roomId);
+    aiTurns.delete(roomId);
   }
 }
 
