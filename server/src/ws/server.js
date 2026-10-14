@@ -3,6 +3,7 @@ import { verifyAccessToken } from "../auth/tokens.js";
 import { handleMessage, scheduleDisconnectForfeit, cancelDisconnectForfeit, triggerAiTurn } from "./handlers.js";
 import { getRedis, keys, TTL } from "../db/redis.js";
 import { query } from "../db/postgres.js";
+import { withRoomLock } from "./roomLock.js";
 
 // rooms: Map<roomId, Set<{ws, userId}>>
 export const rooms = new Map();
@@ -55,7 +56,11 @@ export async function handleConnection(ws, req) {
   const flightKey = `${roomId}:${userId}`;
   inFlightConnections.set(flightKey, (inFlightConnections.get(flightKey) ?? 0) + 1);
   try {
-    await connectToRoom(ws, roomId, userId, isGuest, guestDisplayName);
+    // The whole connect (seat assignment, release, registration and the
+    // first ROOM_STATE broadcast) runs under the room's lock, so it cannot
+    // lose or be overwritten by a concurrent room update, and the state it
+    // broadcasts is never older than one another writer already sent.
+    await withRoomLock(roomId, () => connectToRoom(ws, roomId, userId, isGuest, guestDisplayName));
   } finally {
     const n = inFlightConnections.get(flightKey) - 1;
     if (n > 0) inFlightConnections.set(flightKey, n);
@@ -63,6 +68,9 @@ export async function handleConnection(ws, req) {
   }
 }
 
+// Runs under the room's lock (see handleConnection). It must not take that
+// lock again: triggerAiTurn below is fire-and-forget, so it only queues, and
+// releaseUnannouncedSeat runs inside this same locked section.
 async function connectToRoom(ws, roomId, userId, isGuest, guestDisplayName) {
   const redis = getRedis();
   const rawRoom = await redis.get(keys.room(roomId));
@@ -174,19 +182,19 @@ async function connectToRoom(ws, roomId, userId, isGuest, guestDisplayName) {
 }
 
 // Undo a black seat auto-assigned to a client that disconnected before it was
-// registered. Re-reads the room so a concurrent change is not overwritten, and
-// keeps the seat if the room has left the lobby, the seat has changed hands,
-// or the same user has another connection in the room that uses it, either
-// registered or still in flight (e.g. a quick reconnect that read the room
-// with this seat already assigned and so will not assign it again).
+// registered. Called from connectToRoom while it holds the room's lock, so it
+// must not take the lock itself. Re-reads the room (defensively, in case a
+// writer outside the lock changed it), and keeps the seat if the room has
+// left the lobby, the seat has changed hands, or the same user has another
+// connection in the room that uses it, either registered or still in flight
+// (e.g. a quick reconnect queued behind this lock, which will then read the
+// room with this seat already assigned and so will not assign it again).
 async function releaseUnannouncedSeat(roomId, userId, isGuest, hadGuest) {
   const redis = getRedis();
   const raw = await redis.get(keys.room(roomId));
   if (!raw) return;
   const room = JSON.parse(raw);
   if (room.status !== "waiting" || room.players.black !== userId) return;
-  // From here to redis.set nothing awaits, and ioredis keeps command order,
-  // so any connect starting after this check reads the released room.
   const registered = [...(rooms.get(roomId) ?? [])].some(c => c.userId === userId);
   // The count includes this (releasing) connection itself.
   const othersInFlight = (inFlightConnections.get(`${roomId}:${userId}`) ?? 0) > 1;
