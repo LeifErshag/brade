@@ -1,0 +1,332 @@
+// ── AI turn retry backoff: timing (issue #87) ───────────────────────────────
+// Redis, Postgres, the WebSocket layer and the move choice are fakes; timers
+// are faked. The AI waits a "thinking" delay of 0.7-1.5 s before each pass,
+// and a failed pass is retried after a backoff of 1, 2, 4, 8 and then 16 s.
+// Every room read is timestamped, so the gap between a failing attempt and
+// the next one shows how long the loop waited in between. Verifies that:
+//   1. the backoff restarts from its shortest delay after a successful pass:
+//      in one trigger's loop, a failure that follows a success (the success
+//      had a rerun pending) is retried after the shortest delay again;
+//   2. a rerun requested while a pass was failing runs at once after that
+//      pass, without waiting out a backoff delay;
+//   3. a trigger that arrives while the loop sleeps in a backoff delay cuts
+//      that sleep short: once Redis is back, the AI resumes within about one
+//      thinking delay of the trigger (e.g. a player's reconnect), not up to
+//      16 s later, and finishes its turn with the dice it already rolled.
+
+import { jest } from "@jest/globals";
+
+// ── Fakes ────────────────────────────────────────────────────────────────────
+
+const store = new Map();
+const saves = [];     // every room state written, in order: { key, room }
+const reads = [];     // every room read attempted: { at, failed }
+// Decides whether the room read being attempted throws. Gets the 1-based
+// index of the read.
+let failRead = () => false;
+
+const fakeRedis = {
+  get: async (k) => {
+    if (k.startsWith("room:")) {
+      const n = reads.length + 1;
+      const failed = failRead(n);
+      reads.push({ at: Date.now(), failed });
+      if (failed) throw new Error("redis read failed");
+    }
+    return store.get(k) ?? null;
+  },
+  set: async (k, v) => {
+    store.set(k, v);
+    saves.push({ key: k, room: JSON.parse(v) });
+    return "OK";
+  },
+  expire: async () => 1,
+  ttl:    async () => 100,
+  del:    async () => 1,
+};
+
+jest.unstable_mockModule("../db/postgres.js", () => ({
+  query: jest.fn(async () => ({ rows: [{ elo: 1200 }] })),
+  connectPostgres: async () => {},
+}));
+
+jest.unstable_mockModule("../db/redis.js", () => ({
+  getRedis: () => fakeRedis,
+  connectRedis: async () => {},
+  keys: { room: (id) => `room:${id}` },
+  TTL:  { room: 86400, refresh: 604800, invite: 172800 },
+}));
+
+jest.unstable_mockModule("./server.js", () => ({
+  rooms:           new Map(),
+  userConnections: new Map(),
+  send:            () => {},
+  sendToUser:      () => {},
+  broadcastToRoom: () => {},
+  broadcastState:  () => {},
+}));
+
+const AI_USER_ID = "00000000-0000-0000-0000-000000000001";
+const pickMove = jest.fn(async (gs, color, legalMoves) => legalMoves[0]);
+jest.unstable_mockModule("../game/ai.js", () => ({
+  AI_USER_ID,
+  AI_DISPLAY:             { display_name: "Computer", avatar_url: null },
+  MASTER_API_TIMEOUT_MS:  8_000,
+  MASTER_API_MAX_RETRIES: 0,
+  pickMove,
+}));
+
+const { triggerAiTurn } = await import("./handlers.js");
+const { pendingRoomLockCount } = await import("./roomLock.js");
+const { initGame } = await import("../game/engine.js");
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+const HUMAN_ID  = "11111111-1111-1111-1111-111111111111";
+const START_SEQ = 10;
+// The thinking delay before each pass is at most this long.
+const MAX_THINK_MS = 1_500;
+// The shortest backoff delay.
+const SHORTEST_BACKOFF_MS = 1_000;
+// Fake time advances in steps of this size, so measured gaps can be off by
+// up to one step.
+const STEP_MS = 100;
+
+function makeRoom(roomId) {
+  const gs = initGame();
+  gs.turn      = "black";
+  gs.phase     = "rolling";
+  gs.firstMove = false;
+  gs.moveSeq   = START_SEQ;
+  return {
+    roomId,
+    matchLength:  3,
+    createdBy:    HUMAN_ID,
+    isAi:         true,
+    aiDifficulty: "beginner",
+    gameDbId:     "game-uuid",
+    players:      { white: HUMAN_ID, black: AI_USER_ID },
+    playerInfo:   { white: { display_name: "Human" }, black: { display_name: "Computer" } },
+    ready:        { white: true, black: true },
+    status:       "playing",
+    score:        { white: 0, black: 0 },
+    gameResults:  [],
+    gameNum:      1,
+    gameState:    gs,
+  };
+}
+
+function putRoom(roomId) {
+  store.set(`room:${roomId}`, JSON.stringify(makeRoom(roomId)));
+}
+
+const getRoom = (roomId) => JSON.parse(store.get(`room:${roomId}`));
+const savesOf = (roomId) =>
+  saves.filter((s) => s.key === `room:${roomId}`).map((s) => s.room);
+
+function checkers(gs, color) {
+  const onBoard = gs.board.reduce(
+    (n, v) => n + (color === "white" ? Math.max(v, 0) : Math.max(-v, 0)), 0);
+  return onBoard + gs.bar[color] + gs.off[color];
+}
+
+function expectTurnFinished(roomId) {
+  const gs = getRoom(roomId).gameState;
+  expect(gs.turn).toBe("white");
+  expect(gs.phase).toBe("rolling");
+  expect(gs.dice).toEqual([]);
+  expect(gs.legalMoves).toEqual([]);
+  expect(gs.moveSeq).toBeGreaterThan(START_SEQ);
+  expect(checkers(gs, "white")).toBe(15);
+  expect(checkers(gs, "black")).toBe(15);
+}
+
+// Every black state saved belongs to a single roll.
+function expectOneRoll(roomId) {
+  const rolls = new Set(savesOf(roomId)
+    .filter((r) => r.gameState.turn === "black")
+    .map((r) => JSON.stringify(r.gameState.rolledDice)));
+  expect(rolls.size).toBe(1);
+}
+
+async function runFor(ms) {
+  for (let t = 0; t < ms; t += STEP_MS) await jest.advanceTimersByTimeAsync(STEP_MS);
+}
+
+async function runUntil(cond, ms) {
+  let t = 0;
+  while (!cond() && t < ms) { await jest.advanceTimersByTimeAsync(STEP_MS); t += STEP_MS; }
+  return t;
+}
+
+function track(promise) {
+  const t = { settled: false };
+  promise.then(() => { t.settled = true; }, () => { t.settled = true; });
+  return t;
+}
+
+// Time from the read at index i (0-based) to the next read.
+const gapAfter = (i) => reads[i + 1].at - reads[i].at;
+
+beforeEach(() => {
+  jest.useFakeTimers();
+  store.clear();
+  saves.length = 0;
+  reads.length = 0;
+  failRead = () => false;
+  pickMove.mockReset();
+  pickMove.mockImplementation(async (gs, color, legalMoves) => legalMoves[0]);
+  jest.spyOn(console, "error").mockImplementation(() => {});
+  jest.spyOn(console, "warn").mockImplementation(() => {});
+});
+
+afterEach(async () => {
+  failRead = () => false;
+  await runFor(120_000);
+  jest.useRealTimers();
+  jest.restoreAllMocks();
+});
+
+// ── 1. The backoff restarts after a successful pass ─────────────────────────
+
+describe("AI retry backoff", () => {
+  test("restarts from the shortest delay after a successful pass (fail, success, fail in one loop)", async () => {
+    const roomId = "BACKOF01";
+    putRoom(roomId);
+    // Read 1 (the first pass's roll) fails. The retry plays the whole turn.
+    // The first read after the turn has been saved as finished (by the rerun
+    // requested during the successful pass) fails too.
+    let turnDoneFailed = false;
+    failRead = (n) => {
+      if (n === 1) return true;
+      if (!turnDoneFailed && getRoom(roomId).gameState.turn === "white") {
+        turnDoneFailed = true;
+        return true;
+      }
+      return false;
+    };
+
+    const turn = track(triggerAiTurn(roomId, "beginner"));
+    // The retry has read the room and saved its roll: the successful pass is
+    // under way. A trigger now asks for a rerun after it.
+    await runUntil(() => savesOf(roomId).length >= 1, 30_000);
+    expect(reads.length).toBeGreaterThanOrEqual(2);
+    expect(reads[0].failed).toBe(true);
+    expect(getRoom(roomId).gameState).toMatchObject({ turn: "black", phase: "moving" });
+    triggerAiTurn(roomId, "beginner");
+
+    await runUntil(() => turn.settled, 60_000);
+    expect(turn.settled).toBe(true);
+    expectTurnFinished(roomId);
+    expectOneRoll(roomId);
+
+    // The rerun's read failed and was retried by the same loop.
+    expect(turnDoneFailed).toBe(true);
+    const second = reads.findIndex((r, i) => i > 0 && r.failed);
+    expect(second).toBeGreaterThan(1);
+    expect(reads.length).toBeGreaterThan(second + 1);
+
+    // Both failures are retried after the shortest backoff (plus a thinking
+    // delay): the success in between reset the count of failures. Without
+    // the reset the second retry waits the next delay (2 s) instead.
+    const bound = SHORTEST_BACKOFF_MS + MAX_THINK_MS + STEP_MS;
+    expect(gapAfter(0)).toBeLessThanOrEqual(bound);
+    expect(gapAfter(second)).toBeLessThanOrEqual(bound);
+    expect(pendingRoomLockCount()).toBe(0);
+  }, 120_000);
+
+  // ── 2. A rerun pending after a failed pass runs at once ──────────────────
+
+  test("a rerun requested during a failing pass runs at once after it, without a backoff delay", async () => {
+    const roomId = "BACKOF02";
+    putRoom(roomId);
+    failRead = (n) => n === 1; // the first pass fails at its roll
+
+    const turn = track(triggerAiTurn(roomId, "beginner"));
+    // A second trigger while the first pass is still thinking: a rerun is
+    // pending when that pass fails.
+    triggerAiTurn(roomId, "beginner");
+
+    await runUntil(() => turn.settled, 60_000);
+    expect(turn.settled).toBe(true);
+    expect(reads[0].failed).toBe(true);
+    expect(reads.length).toBeGreaterThanOrEqual(2);
+    // The rerun starts straight after the failure: only its thinking delay
+    // separates the two reads, no backoff on top of it.
+    expect(gapAfter(0)).toBeLessThanOrEqual(MAX_THINK_MS + STEP_MS);
+    expectTurnFinished(roomId);
+    expectOneRoll(roomId);
+    expect(pendingRoomLockCount()).toBe(0);
+  }, 120_000);
+});
+
+// ── 3. A trigger cuts a backoff sleep short ─────────────────────────────────
+
+describe("a trigger arriving during a backoff sleep", () => {
+  // Resuming within this long of the trigger is "about one thinking delay".
+  const RESUME_MS = 2_000;
+
+  // failingAttempts: how many attempts fail before Redis recovers; the loop
+  // is then sleeping the backoff that follows the last of them (4 s after the
+  // third failure, 16 s after the fifth).
+  test.each([[3], [5]])(
+    "after %i failures: once Redis is back the AI resumes within about a thinking delay of the trigger and finishes its turn",
+    async (failingAttempts) => {
+      const roomId = `WAKEUP0${failingAttempts}`;
+      putRoom(roomId);
+      // The roll (read 1) succeeds; the move steps fail until `recovered`.
+      let recovered = false;
+      failRead = (n) => n >= 2 && !recovered;
+
+      const turn = track(triggerAiTurn(roomId, "beginner"));
+      await runUntil(() => reads.filter((r) => r.failed).length >= failingAttempts, 60_000);
+      expect(reads.filter((r) => r.failed)).toHaveLength(failingAttempts);
+      const readsBefore = reads.length;
+
+      // The loop is now sleeping its backoff. Let a moment pass, then Redis
+      // recovers and the human reconnects (which triggers the AI).
+      await runFor(500);
+      expect(reads.length).toBe(readsBefore); // still sleeping
+      recovered = true;
+      const triggeredAt = Date.now();
+      triggerAiTurn(roomId, "beginner");
+
+      await runUntil(() => reads.length > readsBefore, 30_000);
+      expect(reads.length).toBeGreaterThan(readsBefore);
+      expect(reads[readsBefore].at - triggeredAt).toBeLessThanOrEqual(RESUME_MS);
+
+      // The resumed pass finishes the turn with the dice already rolled.
+      await runUntil(() => getRoom(roomId).gameState.turn === "white", 30_000);
+      expectTurnFinished(roomId);
+      expectOneRoll(roomId);
+      expect(Date.now() - triggeredAt).toBeLessThanOrEqual(RESUME_MS + 4 * 1_000);
+
+      await runUntil(() => turn.settled, 60_000);
+      expect(turn.settled).toBe(true);
+      expect(pendingRoomLockCount()).toBe(0);
+    }, 180_000);
+
+  test("a trigger while Redis is still down does not make the loop spin: attempts stay bounded", async () => {
+    const roomId = "WAKEUP09";
+    putRoom(roomId);
+    failRead = (n) => n >= 2; // every move step fails for good
+
+    const turn = track(triggerAiTurn(roomId, "beginner"));
+    // A trigger every 3 s for a minute, each one possibly cutting a sleep
+    // short; each attempt still costs at least a thinking delay.
+    for (let i = 0; i < 20; i++) {
+      await runFor(3_000);
+      triggerAiTurn(roomId, "beginner");
+    }
+    await runFor(120_000);
+    expect(turn.settled).toBe(true);
+    // At most one attempt per thinking delay (0.7 s) over the minute, plus
+    // the retries after the last trigger.
+    expect(reads.length).toBeLessThanOrEqual(1 + Math.ceil(60_000 / 700) + 10);
+    const readsAtSettle = reads.length;
+    await runFor(600_000);
+    expect(reads.length).toBe(readsAtSettle);
+    expect(getRoom(roomId).gameState).toMatchObject({ turn: "black", phase: "moving" });
+    expect(pendingRoomLockCount()).toBe(0);
+  }, 240_000);
+});
