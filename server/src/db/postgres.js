@@ -100,7 +100,7 @@ async function runMigrations() {
       } catch {
         // The original error is the one worth reporting.
       }
-      throw new Error(`Migration failed (${filename}): ${err.message}`);
+      throw new Error(`Migration failed (${filename}): ${err.message}`, { cause: err });
     } finally {
       client.release(releaseErr);
     }
