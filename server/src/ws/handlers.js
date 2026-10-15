@@ -645,6 +645,17 @@ function resolveMatchWinner(score, gameResults, lastWinner) {
 }
 
 /**
+ * Mark the room's game state as over when the match ends, so the saved and
+ * broadcast state never describes a live turn (#72): phase "over" and no legal
+ * moves. The final position (board, bar, off) is kept as is.
+ */
+function endMatchState(room) {
+  if (!room.gameState) return;
+  room.gameState.phase      = "over";
+  room.gameState.legalMoves = [];
+}
+
+/**
  * handleGameOver — called whenever a game ends (win or resign).
  *
  * Change 2: match ends after `room.matchLength` games (fixed count).
@@ -667,6 +678,7 @@ async function handleGameOver(redis, roomId, room, result, forceMatchOver = fals
   // flag, so a client cannot get a tutorial game recorded.
   if (room.isTutorial) {
     room.status      = "finished";
+    endMatchState(room);
     room.matchResult = { winner, winType, score: room.score, unrated: true };
     await saveRoom(redis, roomId, room);
     broadcastState(roomId, room);
@@ -706,6 +718,7 @@ async function handleGameOver(redis, roomId, room, result, forceMatchOver = fals
          room.score.white, room.score.black]
       );
       room.status      = "finished";
+      endMatchState(room);
       room.matchResult = { winner: matchWinner, winType, score: room.score };
       await saveRoom(redis, roomId, room);
       broadcastState(roomId, room);
@@ -767,6 +780,7 @@ async function handleGameOver(redis, roomId, room, result, forceMatchOver = fals
     }
 
     room.status      = "finished";
+    endMatchState(room);
     room.matchResult = {
       winner:        matchWinner,
       winType,

@@ -124,6 +124,9 @@ export default function Game() {
 
   const [room, setRoom]                     = useState(null);
   const [junkerNotice, setJunkerNotice]     = useState(null);
+  // Result of the game that just ended within a match: { winner, winType }.
+  const [gameResult, setGameResult]         = useState(null);
+  const gameResultTimer                     = useRef(null);
   const [spectatorCount, setSpectatorCount] = useState(0);
   const [wsStatus, setWsStatus]             = useState("connecting");
   const [searchQuery, setSearchQuery]       = useState("");
@@ -163,6 +166,15 @@ export default function Game() {
       case "ROOM_STATE":
         setRoom(msg.room);
         setSpectatorCount(msg.spectatorCount ?? 0);
+        // The server sends the new game's state before GAME_OVER, so any later
+        // state means play has continued: drop the game-result notice.
+        setGameResult(null);
+        break;
+      case "GAME_OVER":
+        // A game within the match ended; the next game has already started.
+        setGameResult({ winner: msg.winner, winType: msg.winType });
+        clearTimeout(gameResultTimer.current);
+        gameResultTimer.current = setTimeout(() => setGameResult(null), 4000);
         break;
       case "NO_MOVES":
         setJunkerNotice(msg.color);
@@ -417,6 +429,7 @@ export default function Game() {
                 myColor={myColor}
                 playerInfo={room.playerInfo}
                 readOnly
+                gameOver
               />
             )}
           </>
@@ -437,6 +450,7 @@ export default function Game() {
               // opponent…" (the server ignores their actions anyway).
               readOnly={!isPlayer}
               junkerNotice={junkerNotice}
+              gameNotice={gameResult && gameResultText(gameResult, room, myColor)}
               highlightLegal={isTutorial}
               onIllegalAttempt={isTutorial ? handleIllegalAttempt : undefined}
             />
@@ -617,6 +631,17 @@ const WIN_LABELS = {
   sprangjan:             "Sprängjan",
   resign:                "Resign",
 };
+
+// Status-line notice for a game that ended within a match. room.gameNum is
+// already the next game's number when GAME_OVER arrives.
+function gameResultText({ winner, winType }, room, myColor) {
+  const n     = room.gameNum - 1;
+  const label = WIN_LABELS[winType] ?? winType ?? "";
+  const who   = winner === myColor
+    ? `You won game ${n}`
+    : `${room.playerInfo?.[winner]?.display_name ?? winner} wins game ${n}`;
+  return label ? `${who} — ${label}` : who;
+}
 
 function MatchResult({ room, myColor }) {
   const r = room.matchResult;

@@ -92,7 +92,7 @@ export function initGame() {
     // Teka: first player of the FIRST game of a match is decided elsewhere.
     // Keep the starting turn random; do not hardcode a winner.
     turn:       Math.random() < 0.5 ? "white" : "black",
-    phase:      "rolling",   // "rolling" | "moving"
+    phase:      "rolling",   // "rolling" | "moving" | "over" (match ended)
     dice:       [],          // remaining dice for this turn
     rolledDice: [],          // original roll (for display)
     legalMoves: [],
