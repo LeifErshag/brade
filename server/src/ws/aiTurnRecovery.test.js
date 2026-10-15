@@ -10,9 +10,12 @@
 //   1. after one transient Redis failure in the move step (a failing read or
 //      a failing write), the AI still finishes its turn within a bounded time
 //      with no further trigger, without re-rolling its dice;
-//   2. when pickMove returns no move (once, or every time), the AI still
-//      finishes its turn with legal moves, and pickMove is called a bounded
-//      number of times;
+//   1b. during a Redis outage of 20 s in the move step the AI keeps retrying
+//      (several attempts, spread over the outage) and finishes its turn with
+//      the same dice once Redis recovers, with no further trigger;
+//   2. when pickMove returns no move (once, or every time), the AI asks it
+//      again (at least twice per move) before falling back to a legal move,
+//      finishes its turn, and calls pickMove a bounded number of times;
 //   3. with Redis failing permanently, the retries are bounded: within a
 //      fixed time the trigger settles and the room is not read again, the room is left as
 //      the last successful write left it, and once Redis recovers a new
@@ -265,6 +268,54 @@ describe("a pass of the AI turn that fails mid-turn with no rerun pending", () =
   }, 60_000);
 });
 
+// ── 1b. A sustained Redis outage ────────────────────────────────────────────
+
+describe("a Redis outage in the move step lasting OUTAGE_MS", () => {
+  // Retries must keep going for at least this long after the first failure
+  // (a retry with no delay, or a short flat delay, gives up within ~10 s).
+  // The exact schedule is not pinned.
+  const OUTAGE_MS = 20_000;
+
+  test("the AI keeps retrying, then finishes its turn with the same dice once Redis recovers, with no other trigger", async () => {
+    const roomId = "OUTAGE01";
+    putRoom(roomId);
+    let firstFailAt = null;
+    const failingAttemptTimes = [];
+    const inOutage = () => firstFailAt !== null && Date.now() - firstFailAt < OUTAGE_MS;
+    // The roll (first read and write) succeeds; from the first move step on,
+    // every room read and write fails until OUTAGE_MS have passed.
+    failRead = (n) => {
+      if (n >= 2 && firstFailAt === null) firstFailAt = Date.now();
+      const fail = inOutage();
+      if (fail) failingAttemptTimes.push(Date.now());
+      return fail;
+    };
+    failWrite = () => inOutage();
+
+    const turn = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
+    await runUntil(() => getRoom(roomId).gameState.turn === "white", GIVE_UP_MS);
+
+    expect(firstFailAt).not.toBeNull();
+    // Retries happened during the outage: several attempts, the last of them
+    // well into it.
+    expect(failingAttemptTimes.length).toBeGreaterThanOrEqual(3);
+    expect(failingAttemptTimes.at(-1) - firstFailAt).toBeGreaterThanOrEqual(8_000);
+
+    // The turn finished after the outage, from the one roll.
+    const history = savesOf(roomId);
+    const rolled = history[0].gameState.rolledDice;
+    expect(history[0].gameState).toMatchObject({ turn: "black", phase: "moving" });
+    for (const s of history.filter((r) => r.gameState.turn === "black")) {
+      expect(s.gameState.rolledDice).toEqual(rolled);
+    }
+    expectTurnFinished(roomId);
+
+    await runFor(RECOVERY_MS);
+    expect(turn.settled).toBe(true);
+    expect(pendingRoomLockCount()).toBe(0);
+  }, 240_000);
+});
+
 // ── 2. pickMove yields no move ───────────────────────────────────────────────
 
 describe("pickMove returning no move", () => {
@@ -278,8 +329,12 @@ describe("pickMove returning no move", () => {
       const turn = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
       await runUntil(() => getRoom(roomId).gameState.turn === "white", RECOVERY_MS);
 
-      expect(pickMove).toHaveBeenCalled(); // the no-move answer was given
-      expectTurnFinished(roomId);
+      const room = expectTurnFinished(roomId);
+      // pickMove was asked again after the no-move answer, rather than the
+      // first legal move being played at once: one call per move played plus
+      // the one that gave no move.
+      const movesPlayed = room.gameState.moveSeq - START_SEQ;
+      expect(pickMove.mock.calls.length).toBeGreaterThanOrEqual(movesPlayed + 1);
 
       await runFor(RECOVERY_MS);
       expect(turn.settled).toBe(true);
@@ -301,6 +356,9 @@ describe("pickMove returning no move", () => {
       expect(movesPlayed).toBeGreaterThan(0);
       // At most a few attempts per move played, never an unbounded loop.
       expect(pickMove.mock.calls.length).toBeLessThanOrEqual(5 * movesPlayed);
+      // ...but pickMove is asked at least twice per move before the AI falls
+      // back to a legal move of its own.
+      expect(pickMove.mock.calls.length).toBeGreaterThanOrEqual(2 * movesPlayed);
 
       await runFor(RECOVERY_MS);
       expect(turn.settled).toBe(true);
