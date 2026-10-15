@@ -201,6 +201,7 @@ describe("disconnect forfeit", () => {
     expect(saved().matchResult).toBeUndefined();
     expect(gameRecorded()).toBe(false);
     expect(pendingForfeitCount()).toBe(0);
+    expect(jest.getTimerCount()).toBe(0); // the cancelled timer was cleared
   });
 
   test("a forfeit queued behind the same player's reconnect does not resign the game", async () => {
@@ -281,8 +282,11 @@ describe("disconnect forfeit", () => {
   //   first forfeit's section has run (as in production, a network round
   //   trip), so only the reconnect's cancel can make that forfeit stale;
   // - "unheld": the fake read resolves at once, so the second close handler
-  //   schedules a new forfeit before the queued one runs, and that newer
-  //   schedule (a fresh per-disconnect token) must make the old one stale.
+  //   schedules a new forfeit before the queued one runs. The reconnect's
+  //   cancel has already removed the first entry, so this does not replace
+  //   it; it checks that the queued forfeit is not revived by the mere
+  //   existence of a newer pending forfeit (e.g. one shared token). The
+  //   replace path is pinned by the two-tab test below.
   test.each([
     ["held", true],
     ["unheld", false],
@@ -354,5 +358,73 @@ describe("disconnect forfeit", () => {
     expect(gameRecorded()).toBe(true);
     expect(sentTypes(whiteWs)).toContain("MATCH_OVER");
     expect(pendingForfeitCount()).toBe(0);
+  });
+
+  // Issue #70, replace path (two tabs, no reconnect in between): black's tab 1
+  // drops (forfeit A scheduled although tab 2 is still registered). A fires
+  // while another connect holds the room lock and queues behind it. Tab 2
+  // then drops, scheduling forfeit B, which replaces A's entry while A is
+  // still queued. A must be a no-op; only B, 60 s after tab 2's close, may
+  // forfeit.
+  test("a newer disconnect's forfeit replaces one that has fired and is still queued", async () => {
+    const whiteWs = fakeWs();
+    const blackTab1 = fakeWs();
+    const blackTab2 = fakeWs();
+    await connect(whiteWs, WHITE_ID);
+    await connect(blackTab1, BLACK_ID);
+    await connect(blackTab2, BLACK_ID);
+    const startAt = Date.now();
+
+    disconnect(blackTab1);
+    await settle();
+    expect(pendingForfeitCount()).toBe(1);
+    expect(jest.getTimerCount()).toBe(1);
+
+    // White opens a second tab; its connect holds the lock at the TTL refresh.
+    const gate = deferred();
+    expireGate = gate.promise;
+    const whiteTab2 = fakeWs();
+    const lockHolder = connect(whiteTab2, WHITE_ID);
+    await jest.advanceTimersByTimeAsync(0);
+
+    // A fires and queues behind the held connect.
+    await jest.advanceTimersByTimeAsync(FORFEIT_MS);
+    expect(jest.getTimerCount()).toBe(0);
+
+    // Tab 2 drops: B is scheduled while A is still queued.
+    disconnect(blackTab2);
+    await jest.advanceTimersByTimeAsync(0);
+    const secondCloseAt = Date.now();
+    expect(secondCloseAt).toBe(startAt + FORFEIT_MS);
+    expect(pendingForfeitCount()).toBe(1);
+    expect(jest.getTimerCount()).toBe(1);
+
+    // Release the lock: the held connect, then A's section, run.
+    expireGate = null;
+    gate.resolve();
+    await lockHolder;
+    await settle();
+    expect(saved().status).toBe("playing");
+    expect(saved().matchResult).toBeUndefined();
+    expect(gameRecorded()).toBe(false);
+    expect(sentTypes(whiteWs)).not.toContain("MATCH_OVER");
+    expect(pendingForfeitCount()).toBe(1);
+
+    // Not forfeited shortly before tab 2's close + 60 s.
+    await jest.advanceTimersByTimeAsync(FORFEIT_MS - 1_000);
+    await settle();
+    expect(saved().status).toBe("playing");
+    expect(gameRecorded()).toBe(false);
+
+    // Forfeited by tab 2's close + 60 s (about 120 s from the start).
+    await jest.advanceTimersByTimeAsync(secondCloseAt + FORFEIT_MS - Date.now());
+    await settle();
+    const room = saved();
+    expect(room.status).toBe("finished");
+    expect(room.matchResult).toMatchObject({ winner: "white", winType: "resign" });
+    expect(gameRecorded()).toBe(true);
+    expect(sentTypes(whiteWs)).toContain("MATCH_OVER");
+    expect(pendingForfeitCount()).toBe(0);
+    expect(jest.getTimerCount()).toBe(0);
   });
 });
