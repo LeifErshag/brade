@@ -12,6 +12,18 @@ export const userConnections = new Map();
 // inFlightConnections: Map<`${roomId}:${userId}`, number> — connects still
 // inside handleConnection (not yet registered in rooms, not yet given up)
 export const inFlightConnections = new Map();
+// pendingSeatReleases: Map<`${roomId}:${userId}`, {isGuest, hadGuest}> — a
+// black seat auto-assigned to this user in this room that no connection of
+// the user has used yet (none has registered since). It is given back once
+// every in-flight connect of the user has settled without registering, and
+// forgotten as soon as one registers. Only ever set while a connect is in
+// flight, so entries never outlive the connects that created them.
+const pendingSeatReleases = new Map();
+
+// Test helper: number of seats still waiting to be released or confirmed.
+export function pendingSeatReleaseCount() {
+  return pendingSeatReleases.size;
+}
 
 export function initWebSocketServer(httpServer) {
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
@@ -65,12 +77,31 @@ export async function handleConnection(ws, req) {
     const n = inFlightConnections.get(flightKey) - 1;
     if (n > 0) inFlightConnections.set(flightKey, n);
     else inFlightConnections.delete(flightKey);
+    // When the user's last in-flight connect to this room has settled and a
+    // seat auto-assigned to them is still pending (no connection of theirs
+    // registered), give it back now. This catches every way a section can
+    // end without handling the pending release itself: it threw (e.g. its
+    // Redis read failed after an earlier same-user connect had deferred the
+    // release to it) or it returned early (e.g. room not found, 4003). It
+    // also makes the in-section release redundant in today's orderings; that
+    // one just releases a little sooner, before other queued sections run.
+    // Re-checks happen inside releasePendingSeat, under the lock, so a new
+    // connect that arrived meanwhile keeps the release deferred to itself.
+    // Taking the lock is safe here (DEADLOCK RULE): this code runs after our
+    // locked section has settled, not inside it.
+    if (n <= 0 && pendingSeatReleases.has(flightKey)) {
+      try {
+        await withRoomLock(roomId, () => releasePendingSeat(roomId, userId, 0));
+      } catch (err) {
+        console.error(`Seat release error [${roomId}]:`, err);
+      }
+    }
   }
 }
 
 // Runs under the room's lock (see handleConnection). It must not take that
 // lock again: triggerAiTurn below is fire-and-forget, so it only queues, and
-// releaseUnannouncedSeat runs inside this same locked section.
+// releasePendingSeat runs inside this same locked section.
 async function connectToRoom(ws, roomId, userId, isGuest, guestDisplayName) {
   const redis = getRedis();
   const rawRoom = await redis.get(keys.room(roomId));
@@ -82,9 +113,8 @@ async function connectToRoom(ws, roomId, userId, isGuest, guestDisplayName) {
 
   // Auto-assign black seat if empty and this is not the white player.
   // Tournament rooms always have both seats pre-assigned — skip for them.
-  let assignedSeat = null; // set when this connection takes the black seat
   if (!room.tournamentId && !room.players.black && room.players.white !== userId) {
-    assignedSeat = { hadGuest: room.hasGuest === true };
+    const hadGuest = room.hasGuest === true;
     let blackInfo;
     if (isGuest) {
       blackInfo = { display_name: guestDisplayName, avatar_url: null };
@@ -103,6 +133,8 @@ async function connectToRoom(ws, roomId, userId, isGuest, guestDisplayName) {
     room.playerInfo.black = blackInfo;
     if (isGuest) room.hasGuest = true;
     await redis.set(keys.room(roomId), JSON.stringify(room), "EX", TTL.room);
+    // Unused until a connection of this user registers (see below).
+    pendingSeatReleases.set(`${roomId}:${userId}`, { isGuest, hadGuest });
   }
 
   // The client may have disconnected while we awaited Redis/Postgres above.
@@ -112,11 +144,17 @@ async function connectToRoom(ws, roomId, userId, isGuest, guestDisplayName) {
   // awaits, so this check suffices.
   // Returning before cancelDisconnectForfeit keeps any pending forfeit.
   if (ws.readyState !== 1 /* OPEN */) {
-    // A black seat assigned above was never announced (no ROOM_STATE went
-    // out), so give it back instead of leaving it held by a gone client.
-    if (assignedSeat) await releaseUnannouncedSeat(roomId, userId, isGuest, assignedSeat.hadGuest);
+    // If a seat auto-assigned to this user (by this connect or an earlier
+    // one of theirs that also dropped) is still unused, give it back instead
+    // of leaving it held by a gone client, unless another connect of theirs
+    // is still in flight; the last of those to settle then releases it.
+    if (pendingSeatReleases.has(`${roomId}:${userId}`)) await releasePendingSeat(roomId, userId, 1);
     return;
   }
+
+  // This connection registers below, so a seat assigned to the user is now in
+  // use: it must not be released later, even when this connection closes.
+  pendingSeatReleases.delete(`${roomId}:${userId}`);
 
   // Cancel any pending disconnect forfeit for this player
   const reconnectColor = room.players.white === userId ? "white"
@@ -181,29 +219,41 @@ async function connectToRoom(ws, roomId, userId, isGuest, guestDisplayName) {
   ws.on("error", (err) => console.error(`WS error [${roomId}]:`, err.message));
 }
 
-// Undo a black seat auto-assigned to a client that disconnected before it was
-// registered. Called from connectToRoom while it holds the room's lock, so it
-// must not take the lock itself. Re-reads the room (defensively, in case a
-// writer outside the lock changed it), and keeps the seat if the room has
-// left the lobby, the seat has changed hands, or the same user has another
-// connection in the room that uses it, either registered or still in flight
-// (e.g. a quick reconnect queued behind this lock, which will then read the
-// room with this seat already assigned and so will not assign it again).
-async function releaseUnannouncedSeat(roomId, userId, isGuest, hadGuest) {
+// Give back a black seat auto-assigned to a user none of whose connections
+// to the room has registered since (see pendingSeatReleases). Runs under the
+// room's lock (called from connectToRoom's section or from handleConnection's
+// own locked call), so it must not take the lock itself.
+//
+// selfInFlight is how many of the user's in-flight connects belong to the
+// caller (1 from inside a connect's section, 0 after it has settled). If more
+// are in flight, the release is deferred to the last of them: e.g. a quick
+// reconnect queued behind this lock reads the room with the seat already
+// assigned, does not assign it again, and would otherwise leave it held if it
+// drops too. If the user has an open registered connection here, the seat is
+// in use and is kept. Re-reads the room (defensively, in case a writer
+// outside the lock changed it), and keeps the seat if the room has left the
+// lobby or the seat has changed hands.
+async function releasePendingSeat(roomId, userId, selfInFlight) {
+  const key = `${roomId}:${userId}`;
+  const pending = pendingSeatReleases.get(key);
+  if (!pending) return;
+  if ((inFlightConnections.get(key) ?? 0) > selfInFlight) return; // deferred
+  pendingSeatReleases.delete(key);
+
+  const registered = [...(rooms.get(roomId) ?? [])]
+    .some(c => c.userId === userId && c.ws.readyState === 1 /* OPEN */);
+  if (registered) return;
+
   const redis = getRedis();
   const raw = await redis.get(keys.room(roomId));
   if (!raw) return;
   const room = JSON.parse(raw);
   if (room.status !== "waiting" || room.players.black !== userId) return;
-  const registered = [...(rooms.get(roomId) ?? [])].some(c => c.userId === userId);
-  // The count includes this (releasing) connection itself.
-  const othersInFlight = (inFlightConnections.get(`${roomId}:${userId}`) ?? 0) > 1;
-  if (registered || othersInFlight) return;
 
   room.players.black = null;
   if (room.playerInfo) room.playerInfo.black = null;
   if (room.ready) room.ready.black = false;
-  if (isGuest && !hadGuest) delete room.hasGuest;
+  if (pending.isGuest && !pending.hadGuest) delete room.hasGuest;
   await redis.set(keys.room(roomId), JSON.stringify(room), "EX", TTL.room);
   broadcastState(roomId, room);
 }
