@@ -390,7 +390,7 @@ export default {
         "Checkers may only be entered on empty points or on points where the opponent has a blot – the opponent’s blot is then hit.",
         "It is not allowed to enter on your own blots or onto your own band on the home point.",
         "It is not allowed to enter on the opponent’s bands, unless he has built so many bands in the first quarter that they form an impassable block.",
-        "If the player does not hit any available point, he must forfeit.",
+        "If none of the dice lets the player enter on an available point, he must forfeit.",
       ],
     },
     blocking: {

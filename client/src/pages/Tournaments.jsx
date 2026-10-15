@@ -60,6 +60,13 @@ const STATUS_STYLE = {
   cancelled:    { background: "#3a0000", color: "#c0392b" },
 };
 
+// Translated tournament status; an unknown status is shown as sent.
+function statusLabel(status, t) {
+  const key = `tournament.status.${status}`;
+  const label = t(key);
+  return label === key ? status : label;
+}
+
 export default function Tournaments() {
   const { user, authFetch } = useAuth();
   const navigate = useNavigate();
@@ -259,7 +266,7 @@ export default function Tournaments() {
               <span style={{ ...S.statusBadge, ...(STATUS_STYLE[tm.status] ?? {}) }}>
                 {tm.status === "active"
                   ? t("tournaments.round", { n: tm.current_round })
-                  : t(`tournament.status.${tm.status}`)}
+                  : statusLabel(tm.status, t)}
               </span>
               {tm.status === "registration" && user ? (
                 <button style={S.btnPrimary} onClick={() => handleJoin(tm.id)}>

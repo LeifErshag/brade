@@ -209,7 +209,7 @@ export default {
   board: {
     yourTurnRoll: "Din tur – slå tärningarna",
     yourTurnMove: "Din tur – flytta en bricka",
-    othersTurn: "Tur: {name}",
+    othersTurn: "{name} står på tur",
     gameOf: "Parti {n} av {total}",
     points: "poäng",
     junker: "{name} är junker!",
@@ -255,7 +255,7 @@ export default {
     type: {
       round_robin:        "Alla mot alla",
       single_elimination: "Utslagsturnering",
-      swiss:              "Schweizer",
+      swiss:              "Schweizersystem",
     },
     status: {
       registration: "Öppen",
@@ -318,7 +318,7 @@ export default {
     you: "du",
     matches: "Matcher",
     round: "Rond {n}",
-    tbd: "Ej klar",
+    tbd: "Ej bestämd",
     byePlayer: "FRIROND",
     wins: "→ {name} vinner",
     play: "Spela →",

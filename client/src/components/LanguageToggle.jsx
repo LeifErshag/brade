@@ -37,7 +37,8 @@ const S = {
   btn: {
     display: "inline-flex", alignItems: "center", justifyContent: "center",
     padding: "4px 6px", borderRadius: 5, cursor: "pointer", lineHeight: 0,
-    background: "transparent", border: "1px solid transparent", opacity: 0.55,
+    // Longhands, so the active style can override borderColor alone.
+    background: "transparent", borderWidth: 1, borderStyle: "solid", borderColor: "transparent", opacity: 0.55,
   },
   active: { background: "#6b3a10", borderColor: "#a06030", opacity: 1 },
   row: {

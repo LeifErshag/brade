@@ -102,6 +102,13 @@ function failure(body, fallbackKey) {
   return body.error ? { server: body.error } : { key: fallbackKey };
 }
 
+// Translated tournament status; an unknown status is shown as sent.
+function statusLabel(status, t) {
+  const key = `tournament.status.${status}`;
+  const label = t(key);
+  return label === key ? status : label;
+}
+
 export default function TournamentDetail() {
   const { id }   = useParams();
   const navigate = useNavigate();
@@ -223,7 +230,7 @@ export default function TournamentDetail() {
           <span style={{ ...S.statusBadge, ...(STATUS_STYLE[tm.status] ?? {}) }}>
             {tm.status === "active"
               ? t("tournamentDetail.roundOf", { n: tm.current_round, total: tm.total_rounds })
-              : t(`tournament.status.${tm.status}`)}
+              : statusLabel(tm.status, t)}
           </span>
         </div>
         <p style={S.meta}>
