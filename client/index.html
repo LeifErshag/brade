@@ -1,9 +1,18 @@
 ﻿<!DOCTYPE html>
-<html lang="sv">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Bräde</title>
+    <script>
+      // Set the page language before first paint (same rule as src/i18n/core.js).
+      (function () {
+        var lang;
+        try { lang = window.localStorage.getItem("brade.lang"); } catch (e) { lang = null; }
+        if (lang !== "sv" && lang !== "en") lang = /^sv\b/i.test(navigator.language || "") ? "sv" : "en";
+        document.documentElement.lang = lang;
+      })();
+    </script>
     <style>html, body { margin: 0; background: #2a1400; }</style>
   </head>
   <body>
