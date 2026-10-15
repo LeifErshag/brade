@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useI18n } from "../i18n/I18nContext.jsx";
 
 // ── SVG Layout Constants ─────────────────────────────────────────────────────
 const W = 800, H = 500, MARGIN = 28, BAR_W = 40;
@@ -208,6 +209,10 @@ export default function Board({
   onIllegalAttempt,
 }) {
   const [selected, setSelected] = useState(null);
+  const { t } = useI18n();
+  // A player's display name, or the translated colour when there is none.
+  const nameOf = (color) => playerInfo?.[color]?.display_name
+    ?? (color === "white" || color === "black" ? t(`common.${color}`) : color);
 
   // A spectator (no colour) never has a turn, so nothing on the board reacts.
   // Neither does anyone once the match is over.
@@ -393,26 +398,26 @@ export default function Board({
     : null;
 
   const turnLabel = gameOver ? null : (isMyTurn
-    ? (canRoll ? "Your turn \u2014 roll the dice" : "Your turn \u2014 move a checker")
-    : `${playerInfo?.[gs.turn]?.display_name ?? gs.turn}'s turn`);
+    ? (canRoll ? t("board.yourTurnRoll") : t("board.yourTurnMove"))
+    : t("board.othersTurn", { name: nameOf(gs.turn) }));
 
   return (
     <div style={S.wrap}>
       {/* Score */}
       <div style={S.score}>
         <div style={S.scoreItem}>
-          <div style={S.scoreName}>{playerInfo?.white?.display_name ?? "White"}</div>
+          <div style={S.scoreName}>{nameOf("white")}</div>
           <div style={S.scoreVal}>{score.white}</div>
         </div>
         <div style={{ textAlign: "center", color: "#4a2800", fontSize: 12, lineHeight: 1.4 }}>
           {gameNum != null && matchLength
-            ? <><span style={{ fontSize: 13, color: "#7a5a30" }}>Game {gameNum} of {matchLength}</span><br /></>
+            ? <><span style={{ fontSize: 13, color: "#7a5a30" }}>{t("board.gameOf", { n: gameNum, total: matchLength })}</span><br /></>
             : null}
-          <span>points</span>
+          <span>{t("board.points")}</span>
         </div>
         <div style={S.scoreItem}>
           <div style={S.scoreVal}>{score.black}</div>
-          <div style={S.scoreName}>{playerInfo?.black?.display_name ?? "Black"}</div>
+          <div style={S.scoreName}>{nameOf("black")}</div>
         </div>
       </div>
 
@@ -420,7 +425,7 @@ export default function Board({
           turn label; it is empty once the match is over. */}
       <div style={S.turn}>
         {junkerNotice
-          ? <span style={S.junker}>{playerInfo?.[junkerNotice]?.display_name ?? junkerNotice} is Junker!</span>
+          ? <span style={S.junker}>{t("board.junker", { name: nameOf(junkerNotice) })}</span>
           : gameNotice
             ? <span style={S.junker}>{gameNotice}</span>
             : turnLabel}
@@ -475,10 +480,10 @@ export default function Board({
       <div style={S.controls}>
         {diceAll && <div style={S.diceGroup}>{diceAll}</div>}
         {!readOnly && canRoll && (
-          <button style={S.btnRoll} onClick={onRoll}>Roll</button>
+          <button style={S.btnRoll} onClick={onRoll}>{t("board.roll")}</button>
         )}
         {!readOnly && noMoves && (
-          <button style={S.btnPass} onClick={onPass}>Pass (no moves)</button>
+          <button style={S.btnPass} onClick={onPass}>{t("board.pass")}</button>
         )}
       </div>
 
@@ -486,10 +491,10 @@ export default function Board({
       {!readOnly && (
         <div style={S.controlsSub}>
           <span style={{ ...S.waiting, visibility: isMyTurn ? "hidden" : "visible" }}
-            aria-hidden={isMyTurn}>Waiting for opponent…</span>
+            aria-hidden={isMyTurn}>{t("board.waiting")}</span>
           <button style={S.btnResign}
-            onClick={() => { if (window.confirm("Resign this game?")) onResign(); }}>
-            Resign
+            onClick={() => { if (window.confirm(t("board.resignConfirm"))) onResign(); }}>
+            {t("board.resign")}
           </button>
         </div>
       )}

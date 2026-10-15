@@ -1,181 +1,51 @@
 import { useEffect, useReducer, useRef } from "react";
-import { RULES_SECTIONS, OFFICIAL_RULES_URL } from "./RulesContent.jsx";
+import { OFFICIAL_RULES_URL } from "./RulesContent.jsx";
+import { useI18n } from "../i18n/I18nContext.jsx";
 
 // ── Tutorial coach ───────────────────────────────────────────────────────────
 // Shown above the board in a tutorial game (room.isTutorial). It watches the
-// room state and, the first time a situation comes up, queues a short Swedish
+// room state and, the first time a situation comes up, queues a short
 // explanation of the rule behind it, linked to the matching section of the
 // in-game rules drawer. The learner is always white (the server seats them
 // there), so point numbers below are white's: home = point 1, huk = point 12,
 // fourth quarter = points 19–24.
 //
 // Rule text follows "Spelregler för bräde" (Vasamuseets Brädspelsvänner, 2003).
+// All text lives in the i18n dictionaries under coach.*; this file keeps only
+// structure (section links, list placement) so a language switch re-renders
+// the current explanation in place without resetting the coach.
 
 // ── Topics (core rules) ──────────────────────────────────────────────────────
 // Order = checklist order and the order simultaneous triggers are queued in.
-// `text` items are paragraphs; an array item is rendered as a bullet list.
+// Text: coach.topic.<name>.title / .text (paragraphs) / .list (bullets,
+// rendered after paragraph `listAt`).
 const TOPICS = {
-  setup: {
-    title: "Uppställning",
-    section: "rules-setup",
-    text: [
-      "Välkommen till bräde! Du spelar med de ljusa brickorna och datorn med de mörka. Alla dina femton brickor står från början på tunga 1 – det är ditt hem. Datorns hem är tunga 13.",
-      "Partiet är en kapplöpning: du ska föra alla brickor ett varv runt brädet och spela ut dem. Du kan också vinna genom att ställa upp brickorna i ett vackert mönster, eller genom att slå så många av motspelarens brickor att han inte kan spela in dem igen.",
-      "I en riktig match tekar man först – båda slår en tärning och den som slår lägst börjar. I det här övningspartiet börjar du.",
-    ],
-  },
-  direction: {
-    title: "Färdriktning och kvarter",
-    section: "rules-movement",
-    text: [
-      "Båda spelarna flyttar åt samma håll längs samma bana. Dina brickor går från tunga 1 (nere till höger) åt vänster till tunga 12, och sedan åt höger längs överkanten till tunga 24. Därefter spelas de ut.",
-      "(Reglerna säger att brickorna går motsols. Det gäller på ett riktigt bräde, där ditt hem ligger på bortre sidan. Här på skärmen ligger ditt hem närmast dig, så samma väg ser ut som medsols.)",
-      "Banan delas i fyra kvarter: tunga 1–6 är ditt första kvarter, 7–12 det andra, 13–18 det tredje och 19–24 det fjärde. Tunga 12 kallas din huk.",
-    ],
-  },
-  dice: {
-    title: "Två tärningar",
-    section: "rules-movement",
-    text: [
-      "Klicka på en bricka och sedan på en grön tunga för att flytta. Varje tärning är ett eget flytt: brickan går exakt så många tungor framåt som tärningen visar.",
-      "Du kan flytta två olika brickor, en för varje tärning, eller samma bricka för båda – att ta fullt med en. Då flyttar du den en tärning i taget: den mellanlandar på vägen, och mellanlandningen måste också vara ett tillåtet drag.",
-    ],
-  },
-  doubles: {
-    title: "Allor",
-    section: "rules-dice",
-    text: [
-      "Båda tärningarna visar samma tal – en alla. Då räknas varje tärning två gånger: du flyttar fyra gånger för tärningens ögon, och kan välja att flytta en, två, tre eller fyra brickor.",
-    ],
-  },
-  fata: {
-    title: "Använd så mycket av slaget som möjligt",
-    section: "rules-dice",
-    text: [
-      "Man måste flytta för båda tärningarna om det går, och använda så många av tärningarnas ögon som möjligt. Kan man flytta för vilken som helst av tärningarna men inte för båda, måste man ta den högre.",
-      "Att ge upp en tärning kallas att fåta. Kan man inte flytta alls fåtar man hela slaget och står över till nästa kast.",
-    ],
-  },
-  bandPlacement: {
-    title: "Blottor, band och huken",
-    section: "rules-band-placement",
-    text: [
-      "En ensam bricka på en tunga är en blotta; två eller fler bildar ett band. Ett band kan inte slås, men en blotta kan det.",
-      "I ditt första och andra kvarter (tunga 2–11) får du inte lägga band – bara på din huk, tunga 12. Därför blir det många blottor i början av partiet. I tredje och fjärde kvarteret (tunga 13–24) får du lägga band var du vill.",
-    ],
-  },
-  hitting: {
-    title: "Slå en blotta",
-    section: "rules-hitting",
-    text: [
-      "En blotta slås när en motståndarbricka landar eller mellanlandar på den. Den slagna brickan läggs på ribban i mitten av brädet.",
-      "Den som har brickor på ribban får inte flytta någon annan bricka förrän de slagna brickorna har spelats in igen.",
-    ],
-  },
-  reentry: {
-    title: "Inspel från ribban",
-    section: "rules-reentry",
-    text: [
-      "Slagna brickor spelas in i ditt första kvarter: en etta spelar in på tunga 1, en tvåa på tunga 2 och så vidare upp till en sexa på tunga 6. (En bricka som tas hemifrån för en trea hamnar däremot på tunga 4 – den inspelade brickan startar utanför brädet.)",
-      "Du får bara spela in på tomma tungor eller på en blotta av motspelaren, som då blir slagen – inte på egna brickor och inte på motspelarens band. Träffar du ingen tillgänglig tunga måste du fåta.",
-    ],
-  },
-  blocking: {
-    title: "Spärrade tungor",
-    section: "rules-blocking",
-    text: [
-      "Datorn har lagt ett band. Du får passera förbi motspelarens band, men du får varken landa eller mellanlanda på en tunga där han har ett band.",
-      "Ett block med fem band i rad kan bara passeras med en sexa från tungan precis bakom. Ett helt ogenomträngligt hinder får sprängas (se Sprängning i checklistan).",
-    ],
-  },
-  bursting: {
-    title: "Sprängning",
-    section: "rules-bursting",
-    text: [
-      "Om det är omöjligt att ta sig förbi motspelarens band får man spränga ett av dem genom att landa, mellanlanda eller spela in på det. Alla brickor i bandet räknas då som slagna.",
-      [
-        "när motspelaren har mer än fem band i rad i din färdväg – du får då spränga vilket som helst av dem, men du behöver inte göra det om du kan flytta på annat sätt, eller",
-        "när du har fler slagna brickor än det finns tillgängliga tungor (tomma eller med motspelarens blotta) i ditt första kvarter.",
-      ],
-      "Undantag: har en spelare spelat hem fjorton brickor och bara en kvar får inga band sprängas. Kan den sista brickan inte flytta står han över – han är junker.",
-    ],
-  },
-  jan: {
-    title: "Jan",
-    section: "rules-jan",
-    text: [
-      "Har en spelare fler brickor på ribban än det finns tungor att spela in på i hans första kvarter – tomma tungor eller tungor med motspelarens blottor eller band – har han blivit jan och förlorar partiet direkt. Jan ger 4 poäng.",
-      "Gör man motspelaren jan genom att spränga ett av hans band i sitt första kvarter kallas det sprängjan. Det ger 6 poäng och är det finaste sättet att vinna.",
-    ],
-  },
-  vackertSpel: {
-    title: "Vackert spel",
-    section: "rules-vackert-spel",
-    text: [
-      "Så länge du inte har spelat hem någon bricka kan du vinna på vackert spel genom att ställa upp alla femton brickor i ett av fyra mönster i fjärde kvarteret:",
-      [
-        "Enkelt kronspel: tre brickor på var och en av tungorna 20–24.",
-        "Dubbelt kronspel: fem brickor på var och en av tungorna 22–24.",
-        "Trappspel: sju brickor på 24, fem på 23 och tre på 22.",
-        "Uppspel: alla femton brickor på tunga 24.",
-      ],
-      "Vackert spel ger 2 poäng. Så fort du har spelat hem en bricka är chansen borta.",
-    ],
-  },
-  bearOff: {
-    title: "Hemspel – spela ut brickorna",
-    section: "rules-bearing-off",
-    text: [
-      "När alla dina brickor är i fjärde kvarteret (tunga 19–24) får du börja spela hem dem till en tänkt tunga 25 utanför brädet. Klicka på brickan och sedan på facket till höger.",
-      "Enligt Vasamuseets regel får du bara spela hem den bricka som ligger sist (eller på delad sista plats). Visar tärningen exakt rätt går brickan jämnt hem; visar den mer får den sista brickan ändå spelas hem – slaget reduceras. Den sammanlagda reduktionen ska hållas så liten som möjligt.",
-      "Blir en bricka slagen under hemspelet får inga fler spelas hem förrän den är tillbaka i fjärde kvarteret.",
-    ],
-  },
-  munk: {
-    title: "Munk",
-    section: "rules-munk",
-    text: [
-      "Avslutar man ett hemspel eller ett vackert spel medan motspelaren har en eller flera brickor på ribban vinner man med munk, och vinsten värderas högre: hemspel med munk ger 2 poäng i stället för 1, vackert spel med munk 3 i stället för 2.",
-    ],
-  },
-  winning: {
-    title: "Vinst och poäng",
-    section: "rules-winning",
-    text: [
-      "Ett parti kan vinnas på tre sätt: hemspel (alla brickor utspelade, 1 poäng), vackert spel (2 poäng) eller jan (4 poäng, sprängjan 6). Hemspel och vackert spel med munk ger en poäng extra.",
-      "Partiet är slut så fort någon har vunnit – man får inte fortsätta flytta, även om en tärning återstår.",
-      "En match spelas i ett udda antal partier, vanligen tre, fem eller sju. Flest poäng vinner; vid lika poäng vinner den som har det högst värderade spelet.",
-    ],
-  },
+  setup:         { section: "rules-setup" },
+  direction:     { section: "rules-movement" },
+  dice:          { section: "rules-movement" },
+  doubles:       { section: "rules-dice" },
+  fata:          { section: "rules-dice" },
+  bandPlacement: { section: "rules-band-placement" },
+  hitting:       { section: "rules-hitting" },
+  reentry:       { section: "rules-reentry" },
+  blocking:      { section: "rules-blocking" },
+  bursting:      { section: "rules-bursting", listAt: 1 },
+  jan:           { section: "rules-jan" },
+  vackertSpel:   { section: "rules-vackert-spel", listAt: 1 },
+  bearOff:       { section: "rules-bearing-off" },
+  munk:          { section: "rules-munk" },
+  winning:       { section: "rules-winning" },
 };
 const TOPIC_ORDER = Object.keys(TOPICS);
 
-// Sub-section anchors that aren't top-level entries in RULES_SECTIONS.
-const SECTION_LABELS = {
-  "rules-reentry":        "Inspel",
-  "rules-band-placement": "Var band får läggas",
-  "rules-bursting":       "Sprängning",
-  "rules-jan":            "Jan",
-  "rules-vackert-spel":   "Vackert spel",
-  "rules-munk":           "Munk",
-};
-function sectionLabel(id) {
-  return SECTION_LABELS[id] ?? RULES_SECTIONS.find(s => s.id === id)?.title ?? "Spelregler";
-}
-
-const WIN_LABELS = {
-  hemspel:               ["hemspel", 1],
-  hemspel_munk:          ["hemspel med munk", 2],
-  kronspel_enkelt:       ["enkelt kronspel", 2],
-  kronspel_enkelt_munk:  ["enkelt kronspel med munk", 3],
-  kronspel_dubbelt:      ["dubbelt kronspel", 2],
-  kronspel_dubbelt_munk: ["dubbelt kronspel med munk", 3],
-  trappspel:             ["trappspel", 2],
-  trappspel_munk:        ["trappspel med munk", 3],
-  uppspel:               ["uppspel", 2],
-  uppspel_munk:          ["uppspel med munk", 3],
-  jan:                   ["jan", 4],
-  sprangjan:             ["sprängjan", 6],
+// Points per win type, for the end-of-game result line.
+const WIN_POINTS = {
+  hemspel: 1, hemspel_munk: 2,
+  kronspel_enkelt: 2, kronspel_enkelt_munk: 3,
+  kronspel_dubbelt: 2, kronspel_dubbelt_munk: 3,
+  trappspel: 2, trappspel_munk: 3,
+  uppspel: 2, uppspel_munk: 3,
+  jan: 4, sprangjan: 6,
 };
 
 // ── Board helpers (path space, same convention as the server engine) ─────────
@@ -242,44 +112,19 @@ function detectTopics(room, me, prev, noMovesColor) {
 }
 
 // ── Why was that move not allowed? ───────────────────────────────────────────
+// Text: coach.illegal.<id>.title / .text.
 const ILLEGAL = {
-  barFirst: {
-    title: "Spela in först", section: "rules-reentry", topic: "reentry",
-    text: ["Du har en bricka på ribban. Så länge du har slagna brickor får du inte flytta någon annan bricka – först måste de spelas in i ditt första kvarter (tunga 1–6)."],
-  },
-  blocked: {
-    title: "Spärrad tunga", section: "rules-blocking", topic: "blocking",
-    text: ["Motspelaren har ett band (två eller fler brickor) där. Du får passera band, men varken landa eller mellanlanda på dem."],
-  },
-  band: {
-    title: "Inget band här", section: "rules-band-placement", topic: "bandPlacement",
-    text: ["Du har redan en bricka på den tungan. På tunga 2–11 får du inte lägga band – bara på din huk, tunga 12, och i ditt tredje och fjärde kvarter."],
-  },
-  bearOffEarly: {
-    title: "Inte dags att spela hem", section: "rules-bearing-off", topic: "bearOff",
-    text: ["Brickorna får inte lämna fjärde kvarteret förrän hemspelet har börjat, och du får börja spela hem först när alla femton brickor är i fjärde kvarteret (tunga 19–24)."],
-  },
-  bearOffRear: {
-    title: "Bara den sista brickan", section: "rules-bearing-off", topic: "bearOff",
-    text: ["Enligt Vasamuseets regel får du bara spela hem den bricka som ligger sist (eller på delad sista plats) i fjärde kvarteret. Visar tärningen för lite för den måste du flytta fram en bricka i stället."],
-  },
-  backwards: {
-    title: "Bara framåt", section: "rules-movement", topic: "direction",
-    text: ["Brickorna flyttas bara framåt: från tunga 1 mot tunga 24."],
-  },
-  notADie: {
-    title: "En tärning i taget", section: "rules-movement", topic: "dice",
-    text: ["En bricka flyttas exakt så många tungor som en tärning visar. Vill du ta fullt med en bricka flyttar du den en tärning i taget – den mellanlandar, och mellanlandningen måste också vara tillåten."],
-  },
-  reentryOwn: {
-    title: "Inte på egna brickor", section: "rules-reentry", topic: "reentry",
-    text: ["Slagna brickor får bara spelas in på tomma tungor eller på en blotta av motspelaren – inte på egna brickor."],
-  },
-  dice: {
-    title: "Tärningsreglerna", section: "rules-dice", topic: "fata",
-    text: ["Det draget är inte tillåtet med det här slaget. Du måste använda så många av tärningarnas ögon som möjligt – ibland tvingar det fram ett visst drag – och kan du bara flytta för en tärning måste du ta den högre. De gröna markeringarna visar vad som går."],
-  },
+  barFirst:     { section: "rules-reentry",        topic: "reentry" },
+  blocked:      { section: "rules-blocking",       topic: "blocking" },
+  band:         { section: "rules-band-placement", topic: "bandPlacement" },
+  bearOffEarly: { section: "rules-bearing-off",    topic: "bearOff" },
+  bearOffRear:  { section: "rules-bearing-off",    topic: "bearOff" },
+  backwards:    { section: "rules-movement",       topic: "direction" },
+  notADie:      { section: "rules-movement",       topic: "dice" },
+  reentryOwn:   { section: "rules-reentry",        topic: "reentry" },
+  dice:         { section: "rules-dice",           topic: "fata" },
 };
+for (const [id, info] of Object.entries(ILLEGAL)) info.id = id;
 
 function landingReason(gs, color, dest) {
   if (dest > 23) return allInQ4(gs, color) ? "bearOffRear" : "bearOffEarly";
@@ -353,7 +198,7 @@ function reducer(state, action) {
       const same = current && current.topic === entry.topic && current.illegal === entry.illegal;
       if (same) return state;
       // Insert right after the entry being viewed, so explanations queued
-      // after `pos` (already marked seen) stay reachable with "Nästa".
+      // after `pos` (already marked seen) stay reachable with "Next".
       const at = pos !== null && pos < history.length - 1 ? pos + 1 : history.length;
       return {
         ...state,
@@ -418,21 +263,21 @@ const S = {
   muted:     { color: "#a07840", fontSize: 12 },
 };
 
-function Paragraphs({ text }) {
-  return text.map((item, i) => Array.isArray(item)
+function Paragraphs({ text, list, listAt }) {
+  const items = list ? [...text.slice(0, listAt), list, ...text.slice(listAt)] : text;
+  return items.map((item, i) => Array.isArray(item)
     ? <ul key={i} style={S.ul}>{item.map(li => <li key={li}>{li}</li>)}</ul>
     : <p key={i} style={S.p}>{item}</p>);
 }
 
-function resultLine(room, me) {
+function resultLine(room, me, t, winType) {
   const r = room.matchResult;
   if (!r) return null;
   if (r.winType === "resign") {
-    return r.winner === me ? "Datorn gav upp partiet." : "Du gav upp övningspartiet.";
+    return r.winner === me ? t("coach.resultAiResigned") : t("coach.resultYouResigned");
   }
-  const [label, pts] = WIN_LABELS[r.winType] ?? [r.winType, r.score?.[r.winner]];
-  const who = r.winner === me ? "Du vann" : "Datorn vann";
-  return `${who} på ${label} – ${pts} poäng.`;
+  const params = { label: winType(r.winType), pts: WIN_POINTS[r.winType] ?? r.score?.[r.winner] };
+  return r.winner === me ? t("coach.resultYouWon", params) : t("coach.resultAiWon", params);
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -446,6 +291,7 @@ function resultLine(room, me) {
  *   onOpenRules    – (sectionId) => void, opens the rules drawer at a section
  */
 export default function TutorialCoach({ room, myColor, noMovesColor, illegalAttempt, onOpenRules }) {
+  const { t, winType } = useI18n();
   const [state, dispatch] = useReducer(reducer, initialState);
   const prevRef = useRef(null);
   const roomRef = useRef(room);
@@ -465,29 +311,33 @@ export default function TutorialCoach({ room, myColor, noMovesColor, illegalAtte
     const gs = roomRef.current?.gameState;
     if (!illegalAttempt || !gs || state.skipped) return;
     const info = explainIllegal(gs, myColor, illegalAttempt.from, illegalAttempt.to);
-    dispatch({ type: "show", entry: { illegal: info, topic: info.topic } });
+    dispatch({ type: "show", entry: { illegal: info.id, topic: info.topic } });
   }, [illegalAttempt]); // only react to new attempts, not every room update
 
   const [showChecklist, toggleChecklist] = useReducer(v => !v, false);
 
   const { history, pos, seen, skipped } = state;
   const finished = room?.status === "finished";
-  const unseen   = TOPIC_ORDER.filter(t => !seen.includes(t));
+  const unseen   = TOPIC_ORDER.filter(topic => !seen.includes(topic));
+  const topicTitle   = (topic) => t(`coach.topic.${topic}.title`);
+  const sectionLabel = (id) => t(`rules.section.${id}`);
 
   const checklist = showChecklist && (
     <div>
-      <div style={S.muted}>Regler i guiden ({TOPIC_ORDER.length - unseen.length}/{TOPIC_ORDER.length} visade) – klicka för att läsa:</div>
+      <div style={S.muted}>
+        {t("coach.checklistIntro", { seen: TOPIC_ORDER.length - unseen.length, total: TOPIC_ORDER.length })}
+      </div>
       <ul style={S.checklist}>
-        {TOPIC_ORDER.map(t => {
-          const done = seen.includes(t);
+        {TOPIC_ORDER.map(topic => {
+          const done = seen.includes(topic);
           return (
-            <li key={t}>
+            <li key={topic}>
               <button
                 type="button"
                 style={{ ...S.check, ...(done ? S.checkDone : null) }}
-                onClick={() => dispatch({ type: "show", entry: { topic: t } })}
+                onClick={() => dispatch({ type: "show", entry: { topic } })}
               >
-                {done ? "✓" : "○"} {TOPICS[t].title}
+                {done ? "✓" : "○"} {topicTitle(topic)}
               </button>
             </li>
           );
@@ -499,8 +349,8 @@ export default function TutorialCoach({ room, myColor, noMovesColor, illegalAtte
   if (skipped) {
     return (
       <div style={S.bar}>
-        <span>Guiden är avstängd.</span>
-        <button type="button" style={S.btn} onClick={() => dispatch({ type: "resume", finished })}>Slå på guiden igen</button>
+        <span>{t("coach.off")}</span>
+        <button type="button" style={S.btn} onClick={() => dispatch({ type: "resume", finished })}>{t("coach.resume")}</button>
       </div>
     );
   }
@@ -509,13 +359,13 @@ export default function TutorialCoach({ room, myColor, noMovesColor, illegalAtte
     return (
       <div style={S.panel}>
         <div style={S.bar}>
-          <span>Övningsparti – reglerna förklaras när de dyker upp.</span>
+          <span>{t("coach.idle")}</span>
           <span style={S.spacer} />
           {history.length > 0 && (
-            <button type="button" style={S.btn} onClick={() => dispatch({ type: "reopen" })}>Visa senaste förklaringen</button>
+            <button type="button" style={S.btn} onClick={() => dispatch({ type: "reopen" })}>{t("coach.showLatest")}</button>
           )}
           <button type="button" style={S.btn} onClick={toggleChecklist} aria-expanded={showChecklist}>
-            Regelchecklista
+            {t("coach.checklist")}
           </button>
         </div>
         {checklist}
@@ -524,32 +374,45 @@ export default function TutorialCoach({ room, myColor, noMovesColor, illegalAtte
   }
 
   const entry   = history[pos];
-  const content = entry.illegal ?? TOPICS[entry.topic];
+  // Resolved at render time from ids, so a language switch re-translates it.
+  const content = entry.illegal
+    ? {
+        section: ILLEGAL[entry.illegal].section,
+        title:   t(`coach.illegal.${entry.illegal}.title`),
+        text:    [t(`coach.illegal.${entry.illegal}.text`)],
+      }
+    : {
+        section: TOPICS[entry.topic].section,
+        title:   topicTitle(entry.topic),
+        text:    t(`coach.topic.${entry.topic}.text`),
+        list:    TOPICS[entry.topic].listAt != null ? t(`coach.topic.${entry.topic}.list`) : null,
+        listAt:  TOPICS[entry.topic].listAt,
+      };
   const isEnd   = entry.end === true;
   const queued  = history.length - 1 - pos;
 
   return (
-    <section style={S.panel} aria-live="polite" aria-label="Guide">
+    <section style={S.panel} aria-live="polite" aria-label={t("coach.label")}>
       <div style={S.kicker}>
-        {entry.illegal ? "Inte tillåtet" : isEnd ? "Partiet är slut" : "Guide"} · {pos + 1}/{history.length}
+        {entry.illegal ? t("coach.kickerIllegal") : isEnd ? t("coach.kickerEnd") : t("coach.kickerGuide")} · {pos + 1}/{history.length}
       </div>
       <h3 style={S.title}>{content.title}</h3>
-      {isEnd && <p style={{ ...S.p, color: "#e8b86d" }}>{resultLine(room, myColor)}</p>}
-      <Paragraphs text={content.text} />
+      {isEnd && <p style={{ ...S.p, color: "#e8b86d" }}>{resultLine(room, myColor, t, winType)}</p>}
+      <Paragraphs text={content.text} list={content.list} listAt={content.listAt} />
       <button type="button" style={S.btnLink} onClick={() => onOpenRules(content.section)}>
-        Läs mer i reglerna: {sectionLabel(content.section)} →
+        {t("coach.readMore", { section: sectionLabel(content.section) })}
       </button>
 
       {isEnd && (
         <>
           {unseen.length > 0 && (
             <p style={{ ...S.p, marginTop: 10 }}>
-              Regler som inte dök upp i det här partiet:{" "}
-              {unseen.map((t, i) => (
-                <span key={t}>
+              {t("coach.unseen")}{" "}
+              {unseen.map((topic, i) => (
+                <span key={topic}>
                   {i > 0 && ", "}
-                  <button type="button" style={S.btnLink} onClick={() => dispatch({ type: "show", entry: { topic: t } })}>
-                    {TOPICS[t].title}
+                  <button type="button" style={S.btnLink} onClick={() => dispatch({ type: "show", entry: { topic } })}>
+                    {topicTitle(topic)}
                   </button>
                 </span>
               ))}
@@ -557,7 +420,7 @@ export default function TutorialCoach({ room, myColor, noMovesColor, illegalAtte
           )}
           <p style={{ ...S.p, marginTop: 10 }}>
             <a href={OFFICIAL_RULES_URL} target="_blank" rel="noopener noreferrer" style={S.official}>
-              Läs de fullständiga officiella reglerna ↗
+              {t("coach.officialRules")}
             </a>
           </p>
         </>
@@ -570,18 +433,18 @@ export default function TutorialCoach({ room, myColor, noMovesColor, illegalAtte
           onClick={() => dispatch({ type: "prev" })}
           disabled={pos === 0}
         >
-          ← Föregående
+          {t("coach.prev")}
         </button>
         <button type="button" style={S.btnPrimary} onClick={() => dispatch({ type: "next" })}>
-          {queued > 0 ? `Nästa (${queued} till) →` : "Uppfattat"}
+          {queued > 0 ? t("coach.next", { n: queued }) : t("coach.gotIt")}
         </button>
         <span style={S.spacer} />
         <button type="button" style={S.btn} onClick={toggleChecklist} aria-expanded={showChecklist}>
-          Regelchecklista
+          {t("coach.checklist")}
         </button>
         {!finished && (
           <button type="button" style={S.btn} onClick={() => dispatch({ type: "skip" })}>
-            Hoppa över guiden
+            {t("coach.skip")}
           </button>
         )}
       </div>

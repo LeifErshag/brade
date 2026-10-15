@@ -6,6 +6,8 @@ import Board from "../components/Board.jsx";
 import RulesDrawer from "../components/RulesDrawer.jsx";
 import TutorialCoach from "../components/TutorialCoach.jsx";
 import { OFFICIAL_RULES_URL } from "../components/RulesContent.jsx";
+import LanguageToggle, { LanguageBar } from "../components/LanguageToggle.jsx";
+import { useI18n } from "../i18n/I18nContext.jsx";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -112,6 +114,7 @@ const S = {
 export default function Game() {
   const { roomId } = useParams();
   const { user, loading, token, authFetch } = useAuth();
+  const { t, winType } = useI18n();
 
   // Guest session — persisted in sessionStorage so refresh doesn't kick them out
   const [guestToken, setGuestToken] = useState(
@@ -151,6 +154,7 @@ export default function Game() {
   const wsToken = token || guestToken;
   const myId    = user?.id || guestId;
 
+  // `message` is a descriptor ({ key } or { server }), translated when shown.
   const pushToast = useCallback((message, kind = "error") => {
     const id = Date.now() + Math.random();
     setToasts(prev => [...prev, { id, message, kind }]);
@@ -181,7 +185,7 @@ export default function Game() {
         setTimeout(() => setJunkerNotice(null), 2500);
         break;
       case "ERROR":
-        pushToast(msg.message ?? "Something went wrong");
+        pushToast({ server: msg.message });
         break;
     }
   }, [pushToast]);
@@ -338,7 +342,7 @@ export default function Game() {
   // send() returns false when the socket isn't open, so the action never left
   // the browser — surface that instead of letting it silently disappear.
   function gameSend(msg) {
-    if (!send(msg)) pushToast("Not connected — action wasn’t sent. Reconnecting…");
+    if (!send(msg)) pushToast({ key: "game.notConnected" });
   }
   function handleRoll()   { gameSend({ type: "ROLL" }); }
   function handlePass()   { gameSend({ type: "PASS" }); }
@@ -353,21 +357,21 @@ export default function Game() {
   if (!wsToken) return (
     <FullPage>
       <div style={S.guestBox}>
-        <h2 style={S.guestTitle}>You&rsquo;re invited!</h2>
-        <p style={S.guestSub}>Join this game as a guest, or log in to keep your stats.</p>
+        <h2 style={S.guestTitle}>{t("game.invitedTitle")}</h2>
+        <p style={S.guestSub}>{t("game.invitedSub")}</p>
         <button
           style={S.btnGuest}
           onClick={handleJoinAsGuest}
           disabled={guestJoining}
         >
-          {guestJoining ? "Joining…" : "Play as Guest"}
+          {guestJoining ? t("common.joining") : t("game.playAsGuest")}
         </button>
-        <p style={S.orDivider}>— or sign in —</p>
+        <p style={S.orDivider}>{t("game.orSignIn")}</p>
         <div style={S.loginRow}>
           <a href={`${API}/auth/google`} style={S.btnLogin}>Google</a>
           <a href={`${API}/auth/github`} style={S.btnLogin}>GitHub</a>
         </div>
-        <Link to="/" style={{ display: "block", marginTop: 20, color: "#6b3a10", fontSize: 12 }}>← Back to Home</Link>
+        <Link to="/" style={{ display: "block", marginTop: 20, color: "#6b3a10", fontSize: 12 }}>{t("common.backToHome")}</Link>
       </div>
     </FullPage>
   );
@@ -375,8 +379,8 @@ export default function Game() {
   if (wsStatus === "disconnected" && !room) return (
     <FullPage>
       <div style={{ textAlign: "center" }}>
-        <p style={S.errorMsg}>Could not connect — room may not exist.</p>
-        <Link to="/" style={{ color: "#a07840", fontSize: 13 }}>← Home</Link>
+        <p style={S.errorMsg}>{t("game.couldNotConnect")}</p>
+        <Link to="/" style={{ color: "#a07840", fontSize: 13 }}>{t("common.backHome")}</Link>
       </div>
     </FullPage>
   );
@@ -388,22 +392,26 @@ export default function Game() {
         {/* Header */}
         <div style={S.header}>
           {room?.tournamentId
-            ? <Link to={`/tournaments/${room.tournamentId}`} style={S.back}>← Tournament</Link>
-            : <Link to="/" style={S.back}>← Home</Link>
+            ? <Link to={`/tournaments/${room.tournamentId}`} style={S.back}>{t("game.backTournament")}</Link>
+            : <Link to="/" style={S.back}>{t("common.backHome")}</Link>
           }
           {isTutorial ? (
             <>
-              <h2 style={S.title}>Övningsparti</h2>
-              <span style={S.matchLen}>Räknas inte i statistiken</span>
+              <h2 style={S.title}>{t("game.tutorialTitle")}</h2>
+              <span style={S.matchLen}>{t("game.notRated")}</span>
             </>
           ) : (
             <>
-              <h2 style={S.title}>Room {roomId}</h2>
-              {room && <span style={S.matchLen}>{room.matchLength}-game match</span>}
+              <h2 style={S.title}>{t("game.roomTitle", { id: roomId })}</h2>
+              {room && (
+                <span style={S.matchLen}>
+                  {room.matchLength === 1 ? t("game.matchLengthOne") : t("game.matchLength", { n: room.matchLength })}
+                </span>
+              )}
             </>
           )}
-          {wsStatus === "disconnected" && <span style={S.disconnected}>Disconnected</span>}
-          {wsStatus === "reconnecting" && <span style={S.reconnecting}>Reconnecting…</span>}
+          {wsStatus === "disconnected" && <span style={S.disconnected}>{t("game.disconnected")}</span>}
+          {wsStatus === "reconnecting" && <span style={S.reconnecting}>{t("game.reconnecting")}</span>}
           <button
             type="button"
             style={S.btnRules}
@@ -411,12 +419,13 @@ export default function Game() {
             aria-haspopup="dialog"
             aria-expanded={rulesOpen}
           >
-            Regler
+            {t("game.rules")}
           </button>
+          <LanguageToggle />
         </div>
 
         {!room ? (
-          <p style={S.muted}>Connecting…</p>
+          <p style={S.muted}>{t("game.connecting")}</p>
         ) : room.status === "finished" ? (
           <>
             <MatchResult room={room} myColor={myColor} />
@@ -450,13 +459,13 @@ export default function Game() {
               // opponent…" (the server ignores their actions anyway).
               readOnly={!isPlayer}
               junkerNotice={junkerNotice}
-              gameNotice={gameResult && gameResultText(gameResult, room, myColor)}
+              gameNotice={gameResult && gameResultText(gameResult, room, myColor, t, winType)}
               highlightLegal={isTutorial}
               onIllegalAttempt={isTutorial ? handleIllegalAttempt : undefined}
             />
             {/* Below the board so it appearing doesn't push the board down. */}
             {spectatorCount > 0 && (
-              <p style={S.spectatorsPlaying}>{spectatorCount} spectator{spectatorCount !== 1 ? "s" : ""} watching</p>
+              <p style={S.spectatorsPlaying}>{spectatorText(spectatorCount, t)}</p>
             )}
           </>
         ) : (
@@ -464,14 +473,14 @@ export default function Game() {
             {/* Players */}
             <div style={S.players}>
               <PlayerCard
-                label="White"
+                label={t("common.white")}
                 info={room.playerInfo?.white}
                 ready={room.ready?.white}
                 isYou={myColor === "white"}
               />
-              <div style={S.vsLabel}>vs</div>
+              <div style={S.vsLabel}>{t("common.vs")}</div>
               <PlayerCard
-                label="Black"
+                label={t("common.black")}
                 info={room.playerInfo?.black}
                 ready={room.ready?.black}
                 isYou={myColor === "black"}
@@ -480,7 +489,7 @@ export default function Game() {
 
             {spectatorCount > 0 && (
               <p style={S.spectators}>
-                {spectatorCount} spectator{spectatorCount !== 1 ? "s" : ""} watching
+                {spectatorText(spectatorCount, t)}
               </p>
             )}
 
@@ -491,7 +500,7 @@ export default function Game() {
                   onClick={() => send({ type: "PLAYER_READY" })}
                   style={room.ready[myColor] ? S.btnUnready : S.btnReady}
                 >
-                  {room.ready[myColor] ? "Unready" : "Ready"}
+                  {room.ready[myColor] ? t("game.unready") : t("game.ready")}
                 </button>
                 {isHost && (
                   <button
@@ -499,7 +508,7 @@ export default function Game() {
                     disabled={!bothIn || !bothReady}
                     style={bothIn && bothReady ? S.btnStart : S.btnStartDis}
                   >
-                    Start Game
+                    {t("game.startGame")}
                   </button>
                 )}
               </div>
@@ -508,16 +517,16 @@ export default function Game() {
             {/* Invite — only show to the host, and only if no guest has joined yet */}
             {isHost && !room.hasGuest && (
               <div style={S.inviteSection}>
-                <h3 style={S.sectionTitle}>Invite a player</h3>
+                <h3 style={S.sectionTitle}>{t("game.inviteTitle")}</h3>
                 <div style={S.inviteRow}>
                   <input value={inviteUrl} readOnly style={S.inviteInput} />
                   <button onClick={handleCopyInvite} style={S.btnCopy}>
-                    {copyFeedback ? "Copied!" : "Copy link"}
+                    {copyFeedback ? t("game.copied") : t("game.copyLink")}
                   </button>
                 </div>
                 <input
                   style={S.searchInput}
-                  placeholder="Search player by name…"
+                  placeholder={t("game.searchPlaceholder")}
                   maxLength={50}
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
@@ -538,7 +547,7 @@ export default function Game() {
                           disabled={invitedIds.has(u.id)}
                           style={invitedIds.has(u.id) ? S.btnInvited : S.btnInvite}
                         >
-                          {invitedIds.has(u.id) ? "Invited ✓" : "Invite"}
+                          {invitedIds.has(u.id) ? t("game.invited") : t("game.invite")}
                         </button>
                       </li>
                     ))}
@@ -567,17 +576,18 @@ export default function Game() {
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function Toasts({ toasts, onDismiss }) {
+  const { t, msg } = useI18n();
   if (toasts.length === 0) return null;
   return (
     <div style={S.toastWrap}>
-      {toasts.map(t => (
+      {toasts.map(toast => (
         <div
-          key={t.id}
-          style={{ ...S.toast, ...(t.kind === "error" ? S.toastError : S.toastInfo) }}
-          onClick={() => onDismiss(t.id)}
-          title="Dismiss"
+          key={toast.id}
+          style={{ ...S.toast, ...(toast.kind === "error" ? S.toastError : S.toastInfo) }}
+          onClick={() => onDismiss(toast.id)}
+          title={t("game.dismiss")}
         >
-          {t.message}
+          {msg(toast.message)}
         </div>
       ))}
     </div>
@@ -587,13 +597,17 @@ function Toasts({ toasts, onDismiss }) {
 function FullPage({ children }) {
   return (
     <div style={{ background: "#2a1400", minHeight: "100vh", display: "flex",
-      alignItems: "center", justifyContent: "center", fontFamily: "Georgia, serif" }}>
-      {children}
+      flexDirection: "column", fontFamily: "Georgia, serif" }}>
+      <LanguageBar />
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 16px 48px" }}>
+        {children}
+      </div>
     </div>
   );
 }
 
 function PlayerCard({ label, info, ready, isYou }) {
+  const { t } = useI18n();
   return (
     <div style={S.pCard}>
       <div style={S.pLabel}>{label}</div>
@@ -604,51 +618,47 @@ function PlayerCard({ label, info, ready, isYou }) {
             : <div style={S.avatarPh}>{info.display_name?.[0]?.toUpperCase()}</div>
           }
           <div style={S.pName}>{info.display_name}</div>
-          {isYou && <div style={S.you}>(you)</div>}
+          {isYou && <div style={S.you}>{t("game.you")}</div>}
           <div style={ready ? S.readyBadge : S.notReadyBadge}>
-            {ready ? "Ready" : "Not ready"}
+            {ready ? t("game.ready") : t("game.notReady")}
           </div>
         </>
       ) : (
-        <div style={S.waiting}>Waiting for opponent…</div>
+        <div style={S.waiting}>{t("game.waitingForOpponent")}</div>
       )}
     </div>
   );
 }
 
-const WIN_LABELS = {
-  hemspel:               "Hemspel",
-  hemspel_munk:          "Hemspel med munk",
-  kronspel_enkelt:       "Enkelt kronspel",
-  kronspel_enkelt_munk:  "Enkelt kronspel med munk",
-  kronspel_dubbelt:      "Dubbelt kronspel",
-  kronspel_dubbelt_munk: "Dubbelt kronspel med munk",
-  trappspel:             "Trappspel",
-  trappspel_munk:        "Trappspel med munk",
-  uppspel:               "Uppspel",
-  uppspel_munk:          "Uppspel med munk",
-  jan:                   "Jan",
-  sprangjan:             "Sprängjan",
-  resign:                "Resign",
-};
+function spectatorText(n, t) {
+  return n === 1 ? t("game.spectatorsOne") : t("game.spectators", { n });
+}
+
+// A player's display name, or the translated colour when there is none.
+function playerName(room, color, t) {
+  const name = room.playerInfo?.[color]?.display_name;
+  if (name) return name;
+  return color === "white" || color === "black" ? t(`common.${color}`) : color;
+}
 
 // Status-line notice for a game that ended within a match. room.gameNum is
 // already the next game's number when GAME_OVER arrives.
-function gameResultText({ winner, winType }, room, myColor) {
+function gameResultText({ winner, winType: type }, room, myColor, t, winType) {
   const n     = room.gameNum - 1;
-  const label = WIN_LABELS[winType] ?? winType ?? "";
+  const label = type ? winType(type) : "";
   const who   = winner === myColor
-    ? `You won game ${n}`
-    : `${room.playerInfo?.[winner]?.display_name ?? winner} wins game ${n}`;
-  return label ? `${who} — ${label}` : who;
+    ? t("game.noticeYouWon", { n })
+    : t("game.noticeOtherWon", { name: playerName(room, winner, t), n });
+  return label ? t("game.noticeWithType", { who, label }) : who;
 }
 
 function MatchResult({ room, myColor }) {
+  const { t, winType } = useI18n();
   const r = room.matchResult;
   if (!r) return null;
   const iWon       = r.winner === myColor;
-  const winnerName = room.playerInfo?.[r.winner]?.display_name ?? r.winner;
-  const winLabel   = WIN_LABELS[r.winType] ?? r.winType ?? "";
+  const winnerName = playerName(room, r.winner, t);
+  const winLabel   = r.winType ? winType(r.winType) : "";
 
   const myEloAfter = myColor === "white" ? r.whiteEloAfter : r.blackEloAfter;
 
@@ -656,16 +666,16 @@ function MatchResult({ room, myColor }) {
     return (
       <div style={S.resultBanner}>
         <div style={{ ...S.resultTitle, color: iWon ? "#7ddb7d" : "#c0392b" }}>
-          {iWon ? "Du vann övningspartiet!" : "Datorn vann övningspartiet"}
+          {iWon ? t("result.tutorialWon") : t("result.tutorialLost")}
         </div>
         {winLabel && <div style={S.resultWinType}>{winLabel}</div>}
-        <div style={S.resultElo}>Övningspartier räknas inte i statistiken.</div>
+        <div style={S.resultElo}>{t("result.tutorialNotRated")}</div>
         <p style={{ margin: "0 0 12px" }}>
           <a href={OFFICIAL_RULES_URL} target="_blank" rel="noopener noreferrer" style={{ color: "#e8b86d", fontSize: 14 }}>
-            Läs de fullständiga officiella reglerna ↗
+            {t("result.officialRules")}
           </a>
         </p>
-        <Link to="/" style={{ color: "#a07840", fontSize: 14 }}>← Tillbaka till startsidan</Link>
+        <Link to="/" style={{ color: "#a07840", fontSize: 14 }}>{t("common.backToHome")}</Link>
       </div>
     );
   }
@@ -673,16 +683,16 @@ function MatchResult({ room, myColor }) {
   return (
     <div style={S.resultBanner}>
       <div style={{ ...S.resultTitle, color: iWon ? "#7ddb7d" : "#c0392b" }}>
-        {iWon ? "You won!" : `${winnerName} wins`}
+        {iWon ? t("result.youWon") : t("result.otherWon", { name: winnerName })}
       </div>
       {winLabel && <div style={S.resultWinType}>{winLabel}</div>}
       <div style={S.resultScore}>
         {room.playerInfo?.white?.display_name} {r.score.white} – {r.score.black} {room.playerInfo?.black?.display_name}
       </div>
       {myEloAfter && (
-        <div style={S.resultElo}>Your ELO: {myEloAfter}</div>
+        <div style={S.resultElo}>{t("result.yourElo", { elo: myEloAfter })}</div>
       )}
-      <Link to="/" style={{ color: "#a07840", fontSize: 14 }}>← Back to Home</Link>
+      <Link to="/" style={{ color: "#a07840", fontSize: 14 }}>{t("common.backToHome")}</Link>
     </div>
   );
 }
