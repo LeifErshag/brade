@@ -11,12 +11,22 @@ import {
   Q1_LO, Q1_HI,
   pipsToBearOff,
   canBearOff,
+  checkWin,
+  applyMove,
+  winPoints,
 } from "./engine.js";
+import { winRank } from "./scoring.js";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const MAX_OWN_CANDIDATES = 20;   // top-N pruning on our turn sequences
 const SEARCH_TIMEOUT_MS  = 5000;
+
+// Value of a finished game per win point (#68). Far outside the heuristic
+// range of evaluate() (a few hundred either way), so any win beats any
+// continuing position, any loss is worse than one, and more points dominate.
+// Wins with equal points are ordered by their §14 rank (winRank, at most 7).
+const WIN_VALUE = 100000;
 
 // All 21 distinct dice outcomes with probabilities
 const DICE_OUTCOMES = [];
@@ -90,7 +100,7 @@ export function getNextExpectimaxMove(gs, color, legalMoves, roomId) {
 //   5. Prime bonus (consecutive bands ≥ 3)
 //   6. Blot exposure (weighted by zone)
 //   7. Bear-off readiness
-//   8. Jan threat
+//   8. Jan threat (ours against the opponent, minus theirs against us)
 
 export function evaluate(gs, color) {
   const opp = color === "white" ? "black" : "white";
@@ -124,8 +134,9 @@ export function evaluate(gs, color) {
   // 7. Bear-off readiness
   if (canBearOff(gs, color)) score += 30;
 
-  // 8. Jan threat
+  // 8. Jan threat: ours against the opponent, minus theirs against us (#68)
   score += janThreat(gs, color, opp);
+  score -= janThreat(gs, opp, color);
 
   return score;
 }
@@ -270,12 +281,17 @@ export function janThreat(gs, color, opp) {
 // evaluate(finalGs, color) over EVERY legal opponent sequence (#62). No
 // truncation, so the result does not depend on the engine's enumeration order.
 // If the opponent cannot move, the position stands as it is.
+// A reply that ends the game (checkWin with the opponent as mover) is a loss
+// worth -WIN_VALUE per point (#68), sprängjan included (see winValue). If `gs` itself already ends the game in
+// `color`'s favour it is terminal: its win value is returned, no reply search.
 // Only gs.board/bar/off are read; neither gs nor dice is mutated.
-// `evalCache` (optional) maps a position key to its evaluation for this one
-// `color` (never share it across colours), so positions
-// reached by several sequences, candidates or rolls are evaluated once.
+// `evalCache` (optional) maps a colour + position key to its value, so
+// positions reached by several sequences, candidates or rolls are valued once.
+// Keys include the colour, so one cache may be shared across both colours.
 export function opponentReplyValue(gs, color, dice, evalCache = new Map()) {
   const opp = color === "white" ? "black" : "white";
+  const won = winValue(gs, color);
+  if (won !== null) return won;
   const oppGs = {
     board:   gs.board.slice(),
     bar:     { white: gs.bar.white, black: gs.bar.black },
@@ -290,13 +306,17 @@ export function opponentReplyValue(gs, color, dice, evalCache = new Map()) {
   }
 
   let worst = Infinity;
-  for (const { finalGs } of oppSequences) {
-    const key = positionKey(finalGs);
+  for (const { finalGs, moves } of oppSequences) {
+    const key = color + "|" + positionKey(finalGs);
     let s = evalCache.get(key);
     if (s === undefined) {
-      s = evaluate(finalGs, color);
+      const lost = winValue(finalGs, opp);
+      s = lost !== null ? -lost : evaluate(finalGs, color);
       evalCache.set(key, s);
     }
+    // Whether a jan is a sprängjan depends on the sequence, not just the
+    // final position, so it is not cached: replay this reply (rare).
+    if (s === -JAN_VALUE) s = -winValue(finalGs, opp, oppGs, moves);
     if (s < worst) worst = s;
   }
   return worst;
@@ -306,6 +326,35 @@ function positionKey(gs) {
   return gs.board.join(",") + "|" + gs.bar.white + "," + gs.bar.black +
          "|" + gs.off.white + "," + gs.off.black;
 }
+
+// WIN_VALUE * points + §14 rank if the position {board, bar, off} has ended
+// the game with `mover` as the winner (hemspel, vackert spel, jan; with munk),
+// else null. A position alone cannot tell jan from sprängjan (§11: the move
+// that made the opponent jan burst a band in the mover's first quarter). When
+// the sequence that led here is given (`startGs` + `moves`) and it ended in
+// jan, it is replayed with applyMove and the last move's burstFirstQuarter
+// flag is passed to checkWin, as the game handlers do.
+function winValue(gs, mover, startGs = null, moves = null) {
+  let win = checkWin({ board: gs.board, bar: gs.bar, off: gs.off, turn: mover });
+  if (!win) return null;
+  if (win.winType === "jan" && moves && moves.length > 0) {
+    let cur = {
+      board: startGs.board.slice(),
+      bar:   { ...startGs.bar },
+      off:   { ...startGs.off },
+      dice:  (startGs.dice ?? []).slice(),
+    };
+    let last = null;
+    for (const m of moves) {
+      last = applyMove(cur, mover, m.from, m.to, m.die);
+      cur = last.gs;
+    }
+    win = checkWin({ ...cur, turn: mover }, last.burstFirstQuarter);
+  }
+  return WIN_VALUE * win.points + winRank(win.winType);
+}
+
+const JAN_VALUE = WIN_VALUE * winPoints("jan") + winRank("jan");
 
 // ── Core search ─────────────────────────────────────────────────────────────
 // Uses legalTurnSequences() from the engine for correct, cheap enumeration.
@@ -320,6 +369,19 @@ function computeBestTurnSequence(gs, color) {
 
   if (mySequences.length === 0) return null;
   if (mySequences.length === 1) return mySequences[0].moves;
+
+  // Game-ending sequences are terminal (#68): take the one worth the most
+  // points (ties by §14 rank), without searching any opponent reply.
+  let bestWin = null;
+  let bestWinValue = -Infinity;
+  for (const seq of mySequences) {
+    const v = winValue(seq.finalGs, color, gs, seq.moves);
+    if (v !== null && v > bestWinValue) {
+      bestWinValue = v;
+      bestWin = seq;
+    }
+  }
+  if (bestWin) return bestWin.moves;
 
   // 1-ply fast evaluation for top-N pruning
   for (const seq of mySequences) {
