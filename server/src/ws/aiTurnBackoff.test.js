@@ -12,7 +12,15 @@
 //   3. a trigger that arrives while the loop sleeps in a backoff delay cuts
 //      that sleep short: once Redis is back, the AI resumes within about one
 //      thinking delay of the trigger (e.g. a player's reconnect), not up to
-//      16 s later, and finishes its turn with the dice it already rolled.
+//      16 s later, and finishes its turn with the dice it already rolled;
+//      the trigger itself returns at once (it joins the running loop), also
+//      when the dice were rolled before the loop started;
+//   4. a second trigger still wakes a later backoff sleep: after one trigger
+//      woke the loop and the next pass failed, the timer of the sleep it cut
+//      short must not clear the wake of the longer sleep that follows;
+//   5. triggers while Redis stays down do not make the loop spin, whether
+//      they come every 3 s or every 100 ms: every attempt costs at least one
+//      thinking delay, and the loop settles once the triggers stop.
 
 import { jest } from "@jest/globals";
 
@@ -78,7 +86,7 @@ jest.unstable_mockModule("../game/ai.js", () => ({
 
 const { triggerAiTurn } = await import("./handlers.js");
 const { pendingRoomLockCount } = await import("./roomLock.js");
-const { initGame } = await import("../game/engine.js");
+const { initGame, rollDice, getLegalMoves } = await import("../game/engine.js");
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -92,12 +100,20 @@ const SHORTEST_BACKOFF_MS = 1_000;
 // up to one step.
 const STEP_MS = 100;
 
-function makeRoom(roomId) {
+// moving: the AI has already rolled (the dice are in the saved state).
+function makeRoom(roomId, { moving = false } = {}) {
   const gs = initGame();
   gs.turn      = "black";
   gs.phase     = "rolling";
   gs.firstMove = false;
   gs.moveSeq   = START_SEQ;
+  if (moving) {
+    const dice    = rollDice();
+    gs.dice       = dice.slice();
+    gs.rolledDice = dice.slice();
+    gs.phase      = "moving";
+    gs.legalMoves = getLegalMoves(gs, "black");
+  }
   return {
     roomId,
     matchLength:  3,
@@ -116,8 +132,10 @@ function makeRoom(roomId) {
   };
 }
 
-function putRoom(roomId) {
-  store.set(`room:${roomId}`, JSON.stringify(makeRoom(roomId)));
+function putRoom(roomId, opts) {
+  const room = makeRoom(roomId, opts);
+  store.set(`room:${roomId}`, JSON.stringify(room));
+  return room;
 }
 
 const getRoom = (roomId) => JSON.parse(store.get(`room:${roomId}`));
@@ -289,7 +307,9 @@ describe("a trigger arriving during a backoff sleep", () => {
       expect(reads.length).toBe(readsBefore); // still sleeping
       recovered = true;
       const triggeredAt = Date.now();
-      triggerAiTurn(roomId, "beginner");
+      const again = track(triggerAiTurn(roomId, "beginner"));
+      await jest.advanceTimersByTimeAsync(0);
+      expect(again.settled).toBe(true); // joined the running loop
 
       await runUntil(() => reads.length > readsBefore, 30_000);
       expect(reads.length).toBeGreaterThan(readsBefore);
@@ -305,6 +325,83 @@ describe("a trigger arriving during a backoff sleep", () => {
       expect(turn.settled).toBe(true);
       expect(pendingRoomLockCount()).toBe(0);
     }, 180_000);
+
+  test("with dice rolled before the loop started: a trigger during a backoff sleep resumes the turn without re-rolling", async () => {
+    const roomId = "WAKEUP04";
+    const room = putRoom(roomId, { moving: true });
+    let recovered = false;
+    failRead = () => !recovered; // every read fails until Redis is back
+
+    const turn = track(triggerAiTurn(roomId, "beginner"));
+    // After the fourth failure the loop sleeps 8 s.
+    await runUntil(() => reads.filter((r) => r.failed).length >= 4, 60_000);
+    expect(reads.filter((r) => r.failed)).toHaveLength(4);
+    const readsBefore = reads.length;
+
+    recovered = true;
+    const triggeredAt = Date.now();
+    const again = track(triggerAiTurn(roomId, "beginner"));
+    await jest.advanceTimersByTimeAsync(0);
+    expect(again.settled).toBe(true); // joined the running loop
+    await runUntil(() => reads.length > readsBefore, 30_000);
+    expect(reads[readsBefore].at - triggeredAt).toBeLessThanOrEqual(RESUME_MS);
+
+    await runUntil(() => turn.settled, 60_000);
+    expect(turn.settled).toBe(true);
+    expectTurnFinished(roomId);
+    expectOneRoll(roomId);
+    expect(savesOf(roomId)[0].gameState.rolledDice).toEqual(room.gameState.rolledDice);
+    expect(pendingRoomLockCount()).toBe(0);
+  }, 180_000);
+
+  // ── 4. Two wakes in a row during an outage ──────────────────────────────
+
+  test("a second trigger still wakes the loop after an earlier trigger woke it and the next pass failed", async () => {
+    const roomId = "WAKEUP10";
+    putRoom(roomId);
+    // The roll (read 1) succeeds; the move steps fail until `recovered`.
+    let recovered = false;
+    failRead = (n) => n >= 2 && !recovered;
+    const failedReads = () => reads.filter((r) => r.failed);
+
+    const turn = track(triggerAiTurn(roomId, "beginner"));
+    // After the third failure the loop sleeps 4 s.
+    await runUntil(() => failedReads().length >= 3, 60_000);
+    expect(failedReads()).toHaveLength(3);
+    const thirdFailAt = failedReads()[2].at;
+
+    // A first trigger wakes that sleep while Redis is still down: the pass
+    // it starts fails, and the loop enters the 8 s sleep.
+    await runFor(500);
+    triggerAiTurn(roomId, "beginner");
+    await runUntil(() => failedReads().length >= 4, 30_000);
+    expect(failedReads()).toHaveLength(4);
+    const fourthFailAt = failedReads()[3].at;
+    expect(fourthFailAt - thirdFailAt).toBeLessThanOrEqual(500 + MAX_THINK_MS + STEP_MS);
+
+    // Let the 4 s timer of the sleep that was cut short come due. The loop
+    // is still in its 8 s sleep.
+    await runUntil(() => Date.now() - thirdFailAt >= 4_000 + 2 * STEP_MS, 10_000);
+    const readsBefore = reads.length;
+    expect(Date.now() - fourthFailAt).toBeLessThan(8_000 - RESUME_MS);
+
+    // Redis recovers and a second trigger arrives: it must wake the 8 s
+    // sleep, not wait it out.
+    recovered = true;
+    const triggeredAt = Date.now();
+    triggerAiTurn(roomId, "beginner");
+    await runUntil(() => reads.length > readsBefore, 30_000);
+    expect(reads.length).toBeGreaterThan(readsBefore);
+    expect(reads[readsBefore].at - triggeredAt).toBeLessThanOrEqual(RESUME_MS);
+
+    await runUntil(() => turn.settled, 60_000);
+    expect(turn.settled).toBe(true);
+    expectTurnFinished(roomId);
+    expectOneRoll(roomId);
+    expect(pendingRoomLockCount()).toBe(0);
+  }, 180_000);
+
+  // ── 5. No spin under triggers during an outage ──────────────────────────
 
   test("a trigger while Redis is still down does not make the loop spin: attempts stay bounded", async () => {
     const roomId = "WAKEUP09";
@@ -328,5 +425,28 @@ describe("a trigger arriving during a backoff sleep", () => {
     expect(reads.length).toBe(readsAtSettle);
     expect(getRoom(roomId).gameState).toMatchObject({ turn: "black", phase: "moving" });
     expect(pendingRoomLockCount()).toBe(0);
+  }, 240_000);
+
+  test("a trigger every 100 ms while Redis is down does not make the loop spin, and it settles without writing", async () => {
+    const roomId = "WAKEUP11";
+    putRoom(roomId);
+    failRead = () => true; // every read fails, the roll included
+
+    const turn = track(triggerAiTurn(roomId, "beginner"));
+    for (let i = 0; i < 100; i++) {
+      triggerAiTurn(roomId, "beginner");
+      await jest.advanceTimersByTimeAsync(100);
+    }
+    // 10 s of triggers: at most one read per 0.7 s thinking delay.
+    expect(reads.length).toBeGreaterThanOrEqual(1);
+    expect(reads.length).toBeLessThanOrEqual(15);
+
+    await runFor(120_000);
+    expect(turn.settled).toBe(true);
+    expect(pendingRoomLockCount()).toBe(0);
+    const readsAtSettle = reads.length;
+    await runFor(120_000);
+    expect(reads.length).toBe(readsAtSettle);
+    expect(savesOf(roomId)).toHaveLength(0);
   }, 240_000);
 });
