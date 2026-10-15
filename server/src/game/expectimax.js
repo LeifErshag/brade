@@ -12,6 +12,7 @@ import {
   pipsToBearOff,
   canBearOff,
   checkWin,
+  checkJanOnPass,
   applyMove,
   winPoints,
 } from "./engine.js";
@@ -280,7 +281,10 @@ export function janThreat(gs, color, opp) {
 // rolls `dice` and plays the reply that is worst for us: the minimum of
 // evaluate(finalGs, color) over EVERY legal opponent sequence (#62). No
 // truncation, so the result does not depend on the engine's enumeration order.
-// If the opponent cannot move, the position stands as it is.
+// If the opponent cannot move, the position stands as it is, unless `color`
+// is jan in it (#88): on the bar with more checkers than entry points. The
+// game handlers run checkJanOnPass on the mover when the turn passes, so that
+// is a plain jan loss (never sprängjan: a pass bursts nothing), -JAN_VALUE.
 // A reply that ends the game (checkWin with the opponent as mover) is a loss
 // worth -WIN_VALUE per point (#68), sprängjan included (see winValue). If `gs` itself already ends the game in
 // `color`'s favour it is terminal: its win value is returned, no reply search.
@@ -302,7 +306,9 @@ export function opponentReplyValue(gs, color, dice, evalCache = new Map()) {
 
   const oppSequences = legalTurnSequences(oppGs, opp);
   if (oppSequences.length === 0) {
-    return evaluate({ board: gs.board, bar: gs.bar, off: gs.off }, color);
+    const stand = { board: gs.board, bar: gs.bar, off: gs.off };
+    if (checkJanOnPass({ ...stand, turn: color })) return -JAN_VALUE;
+    return evaluate(stand, color);
   }
 
   let worst = Infinity;
