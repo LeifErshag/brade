@@ -192,7 +192,11 @@ describe("disconnect forfeit", () => {
   test("a reconnect before the timer fires cancels the forfeit", async () => {
     await blackDisconnects();
     await jest.advanceTimersByTimeAsync(FORFEIT_MS - 1_000);
+    expect(jest.getTimerCount()).toBe(1);
     await connect(fakeWs(), BLACK_ID);
+    // Checked before time moves on: the cancel cleared the pending timer.
+    expect(pendingForfeitCount()).toBe(0);
+    expect(jest.getTimerCount()).toBe(0);
 
     await jest.advanceTimersByTimeAsync(FORFEIT_MS);
     await settle();
@@ -201,7 +205,7 @@ describe("disconnect forfeit", () => {
     expect(saved().matchResult).toBeUndefined();
     expect(gameRecorded()).toBe(false);
     expect(pendingForfeitCount()).toBe(0);
-    expect(jest.getTimerCount()).toBe(0); // the cancelled timer was cleared
+    expect(jest.getTimerCount()).toBe(0);
   });
 
   test("a forfeit queued behind the same player's reconnect does not resign the game", async () => {
@@ -424,6 +428,43 @@ describe("disconnect forfeit", () => {
     expect(room.matchResult).toMatchObject({ winner: "white", winType: "resign" });
     expect(gameRecorded()).toBe(true);
     expect(sentTypes(whiteWs)).toContain("MATCH_OVER");
+    expect(pendingForfeitCount()).toBe(0);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  // Two black tabs drop back to back while the first forfeit timer is still
+  // pending: the second schedule replaces (and clears) the first timer, and a
+  // single forfeit happens 60 s after the second drop.
+  test("a second drop within 60 s reschedules the pending forfeit", async () => {
+    const whiteWs = fakeWs();
+    const blackTab1 = fakeWs();
+    const blackTab2 = fakeWs();
+    await connect(whiteWs, WHITE_ID);
+    await connect(blackTab1, BLACK_ID);
+    await connect(blackTab2, BLACK_ID);
+
+    disconnect(blackTab1);
+    await settle();
+    await jest.advanceTimersByTimeAsync(10_000);
+    disconnect(blackTab2);
+    await settle();
+    const secondDropAt = Date.now();
+    expect(pendingForfeitCount()).toBe(1);
+    expect(jest.getTimerCount()).toBe(1);
+
+    // The first drop's 60 s pass without a forfeit.
+    await jest.advanceTimersByTimeAsync(FORFEIT_MS - 1_000);
+    await settle();
+    expect(saved().status).toBe("playing");
+    expect(gameRecorded()).toBe(false);
+
+    // Forfeited once, 60 s after the second drop.
+    await jest.advanceTimersByTimeAsync(secondDropAt + FORFEIT_MS - Date.now());
+    await settle();
+    expect(saved().status).toBe("finished");
+    expect(saved().matchResult).toMatchObject({ winner: "white", winType: "resign" });
+    expect(sentTypes(whiteWs).filter(t => t === "MATCH_OVER")).toHaveLength(1);
+    expect(query.mock.calls.filter(([sql]) => /UPDATE\s+games/i.test(sql))).toHaveLength(1);
     expect(pendingForfeitCount()).toBe(0);
     expect(jest.getTimerCount()).toBe(0);
   });
