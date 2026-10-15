@@ -1,6 +1,7 @@
 // ── Grandmaster opponent-reply tests (#62) ───────────────────────────────────
 // The 2-ply search must take the opponent's best reply over EVERY legal
 // sequence, not a prefix in the engine's enumeration order.
+// The "is exported" and timing checks live in expectimax.test.js.
 
 import { jest } from "@jest/globals";
 
@@ -55,11 +56,6 @@ function bruteForce(gs, color, dice) {
 }
 
 afterEach(() => { reverseFor = null; });
-
-test("evaluate and opponentReplyValue are exported", () => {
-  expect(typeof evaluate).toBe("function");
-  expect(typeof opponentReplyValue).toBe("function");
-});
 
 test("opponentReplyValue equals the brute-force minimum for every roll", () => {
   const gs = midgame();
@@ -120,16 +116,4 @@ test("Grandmaster's choice does not depend on the opponent's sequence order", ()
   clearExpectimaxCache("reply-b");
 
   expect(reversed).toEqual(forward);
-});
-
-test("Grandmaster finishes the wide-open doubles midgame within 2500 ms", () => {
-  const gs = midgame();
-  const legal = getLegalMoves(gs, "white");
-  clearExpectimaxCache("reply-time");
-  const t0 = Date.now();
-  const move = getNextExpectimaxMove(gs, "white", legal, "reply-time");
-  const ms = Date.now() - t0;
-  clearExpectimaxCache("reply-time");
-  expect(ms).toBeLessThan(2500);
-  expect(legal).toContainEqual(move);
 });
