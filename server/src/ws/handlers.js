@@ -356,10 +356,14 @@ async function handleRoomMessage({ msg, userId, roomId, ws }) {
 // after a backoff delay, a bounded number of times (issue #79), so the AI does
 // not abandon its turn half-played and stall the game. A retry never re-rolls:
 // aiRoll resumes a moving phase that is already saved. After the last retry
-// fails the loop gives up; the next trigger (e.g. a reconnect) starts afresh.
+// fails the loop gives up. Then only a player's reconnect re-triggers the AI
+// (connectToRoom in server.js triggers when black is to roll or is mid-turn);
+// the triggers after a human ROLL, MOVE or PASS and after a game's end fire
+// only when black is to roll, which is all those writers can leave behind.
 const aiTurns = new Map(); // roomId -> { rerun: boolean, aiDifficulty }
 
 // Delay before each retry of a failed pass; its length bounds the retries.
+// The count of consecutive failures is reset by every successful pass.
 const AI_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000];
 // How many times one move is asked of pickMove before the first legal move
 // is played instead (pickMove returned nothing or threw).
