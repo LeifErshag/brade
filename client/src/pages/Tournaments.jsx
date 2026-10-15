@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router";
 import { useAuth } from "../AuthContext.jsx";
 import { LanguageBar } from "../components/LanguageToggle.jsx";
 import { useI18n } from "../i18n/I18nContext.jsx";
+import { statusLabel } from "../i18n/tournamentStatus.js";
 
 const S = {
   page: {
@@ -59,13 +60,6 @@ const STATUS_STYLE = {
   finished:     { background: "#2a1400", color: "#6b3a10" },
   cancelled:    { background: "#3a0000", color: "#c0392b" },
 };
-
-// Translated tournament status; an unknown status is shown as sent.
-function statusLabel(status, t) {
-  const key = `tournament.status.${status}`;
-  const label = t(key);
-  return label === key ? status : label;
-}
 
 export default function Tournaments() {
   const { user, authFetch } = useAuth();

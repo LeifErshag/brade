@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate } from "react-router";
 import { useAuth } from "../AuthContext.jsx";
 import { LanguageBar } from "../components/LanguageToggle.jsx";
 import { useI18n } from "../i18n/I18nContext.jsx";
+import { statusLabel } from "../i18n/tournamentStatus.js";
 
 const S = {
   page: {
@@ -100,13 +101,6 @@ const MATCH_STATUS_STYLE = {
 // A failed action's message: the server's text when it sent one.
 function failure(body, fallbackKey) {
   return body.error ? { server: body.error } : { key: fallbackKey };
-}
-
-// Translated tournament status; an unknown status is shown as sent.
-function statusLabel(status, t) {
-  const key = `tournament.status.${status}`;
-  const label = t(key);
-  return label === key ? status : label;
 }
 
 export default function TournamentDetail() {
