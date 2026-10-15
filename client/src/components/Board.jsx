@@ -138,10 +138,13 @@ const S = {
   // The cap is applied to the width (height cap * 800/500) so the box keeps
   // the board's aspect ratio and the shadow/rounded corners follow the drawn
   // board instead of letterboxing it.
+  // The 300px budget covers the page/card chrome, the score and status lines,
+  // both control rows and the one-line spectator count Game.jsx shows under
+  // the board, so that line never makes a capped page scroll.
   svg: {
-    display: "block", width: `min(100%, calc(max(200px, 100vh - 290px) * ${W / H}))`,
+    display: "block", width: `min(100%, calc(max(200px, 100vh - 300px) * ${W / H}))`,
     height: "auto", aspectRatio: `${W} / ${H}`, maxWidth: W,
-    maxHeight: "max(200px, calc(100vh - 290px))", margin: "0 auto",
+    maxHeight: "max(200px, calc(100vh - 300px))", margin: "0 auto",
     borderRadius: 10, boxShadow: "0 8px 40px #00000099",
   },
   // Controls sit directly under the board in two reserved-height rows, so
@@ -199,7 +202,8 @@ export default function Board({
 }) {
   const [selected, setSelected] = useState(null);
 
-  const isMyTurn = gs.turn === myColor;
+  // A spectator (no colour) never has a turn, so nothing on the board reacts.
+  const isMyTurn = myColor != null && gs.turn === myColor;
   const canRoll = isMyTurn && gs.phase === "rolling";
   const canMove = isMyTurn && gs.phase === "moving";
   const noMoves = canMove && gs.legalMoves.length === 0;
