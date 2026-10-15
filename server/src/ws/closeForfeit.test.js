@@ -56,6 +56,8 @@ const FORFEIT_MS = 60_000;
 // Allowed slack between a drop and the start of its 60 s (one Redis round
 // trip in the close handler).
 const SLACK_MS   = 1_000;
+// How long a test holds a close handler's Redis read (well over SLACK_MS).
+const HELD_READ_MS = 5_000;
 
 function playingRoom(roomId) {
   const gs = initGame();
@@ -212,7 +214,9 @@ describe("close handler forfeit scheduling", () => {
   // player then drops again just before T1 fires and T1 fires while the
   // second close handler is still in its Redis read, T1 forfeits at once.
   // The decision must see the registered reconnect and schedule nothing, so
-  // only the last drop's forfeit runs, 60 s after that drop.
+  // only the last drop's forfeit runs, 60 s after that drop. The 60 s count
+  // from the drop (the close event), not from the end of the close handler's
+  // Redis read, which is held here for HELD_READ_MS.
   test("a reconnect that registers during the close handler's read prevents a stale forfeit; the forfeit comes 60 s after the last drop", async () => {
     const whiteWs = fakeWs();
     const blackWs = fakeWs();
@@ -256,7 +260,17 @@ describe("close handler forfeit scheduling", () => {
     expect(gameRecorded()).toBe(false);
     expect(sentTypes(whiteWs)).not.toContain("MATCH_OVER");
 
+    // Keep the second close handler's read pending for well over SLACK_MS,
+    // so a forfeit timed from the end of the read (read end + 60 s) would
+    // land clearly later than one timed from the drop (drop + 60 s).
+    await jest.advanceTimersByTimeAsync(lastDropAt + HELD_READ_MS - Date.now());
+    await settle();
+    expect(saved().status).toBe("playing");
+    expect(gameRecorded()).toBe(false);
+
     // The second close handler resumes and schedules the one forfeit.
+    const readEndAt = Date.now();
+    expect(readEndAt - lastDropAt).toBeGreaterThanOrEqual(HELD_READ_MS);
     gate2.resolve();
     await settle();
     expect(pendingForfeitCount()).toBe(1);
@@ -267,8 +281,10 @@ describe("close handler forfeit scheduling", () => {
     expect(saved().status).toBe("playing");
     expect(gameRecorded()).toBe(false);
 
-    // Forfeited by the last drop + 60 s (plus slack for the held read).
+    // Forfeited by the last drop + 60 s (within the slack), i.e. well before
+    // the end of the held read + 60 s.
     await jest.advanceTimersByTimeAsync(lastDropAt + FORFEIT_MS + SLACK_MS - Date.now());
+    expect(Date.now()).toBeLessThan(readEndAt + FORFEIT_MS - SLACK_MS);
     await settle();
     const room = saved();
     expect(room.status).toBe("finished");
