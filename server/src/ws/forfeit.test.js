@@ -43,6 +43,9 @@ process.env.JWT_ACCESS_SECRET = "test-access-secret";
 
 const { handleConnection, rooms, userConnections, inFlightConnections } = await import("./server.js");
 const { withRoomLock } = await import("./roomLock.js");
+// Test-only export: number of pending (scheduled or fired but not yet run)
+// disconnect-forfeit entries.
+const { pendingForfeitCount } = await import("./handlers.js");
 const { initGame } = await import("../game/engine.js");
 const { signAccessToken } = await import("../auth/tokens.js");
 
@@ -171,6 +174,7 @@ describe("disconnect forfeit", () => {
     expect(room.matchResult).toMatchObject({ winner: "white", winType: "resign" });
     expect(gameRecorded()).toBe(true);
     expect(sentTypes(whiteWs)).toContain("MATCH_OVER");
+    expect(pendingForfeitCount()).toBe(0);
   });
 
   test("a connection of the same player to another room does not prevent the forfeit", async () => {
@@ -196,6 +200,7 @@ describe("disconnect forfeit", () => {
     expect(saved().status).toBe("playing");
     expect(saved().matchResult).toBeUndefined();
     expect(gameRecorded()).toBe(false);
+    expect(pendingForfeitCount()).toBe(0);
   });
 
   test("a forfeit queued behind the same player's reconnect does not resign the game", async () => {
@@ -211,6 +216,7 @@ describe("disconnect forfeit", () => {
     expect(gameRecorded()).toBe(false);
     expect(sentTypes(whiteWs)).not.toContain("MATCH_OVER");
     expect(sentTypes(blackWs2)).not.toContain("MATCH_OVER");
+    expect(pendingForfeitCount()).toBe(0);
   });
 
   test("after a reconnect beat the queued forfeit, a later disconnect forfeits again", async () => {
@@ -262,13 +268,25 @@ describe("disconnect forfeit", () => {
     expect(gameRecorded()).toBe(false);
     expect(sentTypes(whiteWs)).not.toContain("MATCH_OVER");
     expect(sentTypes(blackWs2)).not.toContain("MATCH_OVER");
+    expect(pendingForfeitCount()).toBe(0);
   });
 
   // Issue #70: black reconnects ahead of a queued forfeit (the first
   // disconnect's timer has fired and waits for the lock) and drops again
   // before that forfeit's locked section runs. The first disconnect's forfeit
   // must not resign the game; only the second disconnect's 60 s may.
-  test("a queued forfeit from an earlier disconnect does not fire for a later disconnect", async () => {
+  //
+  // Two orderings of the second close handler versus the queued forfeit:
+  // - "held": the second close handler's Redis read is held until the queued
+  //   first forfeit's section has run (as in production, a network round
+  //   trip), so only the reconnect's cancel can make that forfeit stale;
+  // - "unheld": the fake read resolves at once, so the second close handler
+  //   schedules a new forfeit before the queued one runs, and that newer
+  //   schedule (a fresh per-disconnect token) must make the old one stale.
+  test.each([
+    ["held", true],
+    ["unheld", false],
+  ])("a queued forfeit from an earlier disconnect does not fire for a later disconnect (%s close read)", async (_label, holdCloseRead) => {
     const { whiteWs } = await blackDisconnects();
     const firstDisconnectAt = Date.now();
 
@@ -279,17 +297,13 @@ describe("disconnect forfeit", () => {
     // socket again in a microtask, i.e. right after connectToRoom's
     // synchronous registration, before the queued forfeit gets the lock.
     // (A promise job, not queueMicrotask, which the fake timers replace.)
-    // The second close handler's Redis read is held until the queued first
-    // forfeit's section has run, as it would be in production (a network
-    // round trip), so that only the reconnect's cancel, not a newer schedule,
-    // can make the first forfeit stale.
     const closeGate = deferred();
     let dropped = false;
     blackWs2.send.mockImplementation(() => {
       if (dropped) return;
       dropped = true;
       Promise.resolve().then(() => {
-        nextGetGate = closeGate.promise;
+        if (holdCloseRead) nextGetGate = closeGate.promise;
         disconnect(blackWs2);
       });
     });
@@ -304,15 +318,16 @@ describe("disconnect forfeit", () => {
     await settle();
     expect(dropped).toBe(true);
     const secondDisconnectAt = Date.now();
-    // The close handler is still held: its read consumed the one-shot gate.
+    // When held, the close handler's read consumed the one-shot gate.
     expect(nextGetGate).toBeNull();
     // Drain the lock so the queued first forfeit's section has run.
     await settle();
     expect(saved().status).toBe("playing");
     expect(gameRecorded()).toBe(false);
-    // Now let the second close handler schedule its forfeit.
+    // Now let the (held) second close handler schedule its forfeit.
     closeGate.resolve();
     await settle();
+    expect(pendingForfeitCount()).toBe(1);
     expect(secondDisconnectAt).toBeGreaterThanOrEqual(firstDisconnectAt + FORFEIT_MS);
 
     // First disconnect + 60 s + epsilon: not forfeited.
@@ -338,5 +353,6 @@ describe("disconnect forfeit", () => {
     expect(room.matchResult).toMatchObject({ winner: "white", winType: "resign" });
     expect(gameRecorded()).toBe(true);
     expect(sentTypes(whiteWs)).toContain("MATCH_OVER");
+    expect(pendingForfeitCount()).toBe(0);
   });
 });
