@@ -20,6 +20,9 @@ export const inFlightConnections = new Map();
 // flight, so entries never outlive the connects that created them.
 const pendingSeatReleases = new Map();
 
+// Must match the default delay of scheduleDisconnectForfeit in handlers.js.
+const DISCONNECT_FORFEIT_MS = 60_000;
+
 // Test helper: number of seats still waiting to be released or confirmed.
 export function pendingSeatReleaseCount() {
   return pendingSeatReleases.size;
@@ -204,16 +207,31 @@ async function connectToRoom(ws, roomId, userId, isGuest, guestDisplayName) {
 
     broadcastToRoom(roomId, { type: "PLAYER_DISCONNECTED", userId });
 
-    // Schedule forfeit if a player disconnects mid-game
+    // Schedule a forfeit if a player disconnects mid-game, unless the same
+    // user still has another open connection registered in this room (issue
+    // #79). The check is made after the Redis read, right before scheduling,
+    // with no await in between. A reconnect registers and cancels the forfeit
+    // in one synchronous step too (connectToRoom), so whichever runs first,
+    // no stale forfeit is left behind: a reconnect that registered during
+    // our read makes us skip scheduling, and one that comes later cancels
+    // what we scheduled. The forfeit delay counts from the drop, not from
+    // when the read finished.
+    const droppedAt = Date.now();
     const freshRaw = await getRedis().get(keys.room(roomId)).catch(() => null);
-    if (freshRaw) {
-      const freshRoom = JSON.parse(freshRaw);
-      if (freshRoom.status === "playing") {
-        const dc = freshRoom.players.white === userId ? "white"
-                 : freshRoom.players.black === userId ? "black" : null;
-        if (dc) scheduleDisconnectForfeit(roomId, dc, userId);
-      }
-    }
+    if (!freshRaw) return;
+    const freshRoom = JSON.parse(freshRaw);
+    if (freshRoom.status !== "playing") return;
+    const dc = freshRoom.players.white === userId ? "white"
+             : freshRoom.players.black === userId ? "black" : null;
+    if (!dc) return;
+    const stillConnected = [...(rooms.get(roomId) ?? [])]
+      .some(c => c.userId === userId && c.ws.readyState === 1 /* OPEN */);
+    if (stillConnected) return;
+    // Usually no time has passed since the drop and the default delay
+    // applies; otherwise only what is left of it.
+    const elapsed = Date.now() - droppedAt;
+    if (elapsed > 0) scheduleDisconnectForfeit(roomId, dc, userId, DISCONNECT_FORFEIT_MS - elapsed);
+    else scheduleDisconnectForfeit(roomId, dc, userId);
   });
 
   ws.on("error", (err) => console.error(`WS error [${roomId}]:`, err.message));
