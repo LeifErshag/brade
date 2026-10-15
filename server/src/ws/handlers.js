@@ -360,7 +360,13 @@ async function handleRoomMessage({ msg, userId, roomId, ws }) {
 // (connectToRoom in server.js triggers when black is to roll or is mid-turn);
 // the triggers after a human ROLL, MOVE or PASS and after a game's end fire
 // only when black is to roll, which is all those writers can leave behind.
-const aiTurns = new Map(); // roomId -> { rerun: boolean, aiDifficulty }
+//
+// A trigger that arrives while the loop sleeps a backoff delay ends that
+// sleep at once (issue #87), so after Redis recovers, e.g. a human's
+// reconnect resumes the AI within one thinking delay instead of waiting out
+// up to 16 s. This cannot spin: every pass starts with a thinking delay, and
+// a woken pass that fails still counts towards the bounded failure count.
+const aiTurns = new Map(); // roomId -> { rerun: boolean, aiDifficulty, wake: (() => void) | null }
 
 // Delay before each retry of a failed pass; its length bounds the retries.
 // The count of consecutive failures is reset by every successful pass.
@@ -374,9 +380,10 @@ export async function triggerAiTurn(roomId, aiDifficulty) {
   if (running) {
     running.rerun        = true;
     running.aiDifficulty = aiDifficulty;
+    running.wake?.();
     return;
   }
-  const turn = { rerun: false, aiDifficulty };
+  const turn = { rerun: false, aiDifficulty, wake: null };
   aiTurns.set(roomId, turn);
   try {
     let failures = 0; // consecutive failed passes
@@ -398,7 +405,7 @@ export async function triggerAiTurn(roomId, aiDifficulty) {
         console.error(`AI turn in room ${roomId} failed ${failures} times; giving up until the next trigger`);
         break;
       }
-      await sleep(AI_RETRY_DELAYS_MS[failures - 1]);
+      await wakeableSleep(turn, AI_RETRY_DELAYS_MS[failures - 1]);
     }
   } finally {
     aiTurns.delete(roomId);
@@ -575,6 +582,19 @@ async function aiMove(redis, roomId, expected, chosen) {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Sleep that ends early when turn.wake() is called (by a trigger).
+function wakeableSleep(turn, ms) {
+  return new Promise(resolve => {
+    const done = () => {
+      clearTimeout(timer);
+      turn.wake = null;
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    turn.wake = done;
+  });
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -1,6 +1,8 @@
 import { WebSocketServer } from "ws";
 import { verifyAccessToken } from "../auth/tokens.js";
-import { handleMessage, scheduleDisconnectForfeit, cancelDisconnectForfeit, triggerAiTurn } from "./handlers.js";
+import {
+  handleMessage, scheduleDisconnectForfeit, cancelDisconnectForfeit, triggerAiTurn, DISCONNECT_FORFEIT_MS,
+} from "./handlers.js";
 import { getRedis, keys, TTL } from "../db/redis.js";
 import { query } from "../db/postgres.js";
 import { withRoomLock } from "./roomLock.js";
@@ -19,12 +21,6 @@ export const inFlightConnections = new Map();
 // forgotten as soon as one registers. Only ever set while a connect is in
 // flight, so entries never outlive the connects that created them.
 const pendingSeatReleases = new Map();
-
-// Must match DISCONNECT_FORFEIT_MS in handlers.js (the default delay of
-// scheduleDisconnectForfeit). Not imported: connection.test.js and
-// seatRelease.test.js mock handlers.js without that export, and an ES module
-// import of a missing name fails at link time, so no `??` fallback helps.
-const DISCONNECT_FORFEIT_MS = 60_000;
 
 // Test helper: number of seats still waiting to be released or confirmed.
 export function pendingSeatReleaseCount() {
@@ -236,13 +232,8 @@ async function connectToRoom(ws, roomId, userId, isGuest, guestDisplayName) {
     const stillConnected = [...(rooms.get(roomId) ?? [])]
       .some(c => c.userId === userId && c.ws.readyState === 1 /* OPEN */);
     if (stillConnected) return;
-    // Usually no time has passed since the drop and the default delay
-    // applies; otherwise only what is left of it. The default case keeps the
-    // plain three-argument call so tests that mock scheduleDisconnectForfeit
-    // and check its arguments still match.
-    const elapsed = Date.now() - droppedAt;
-    if (elapsed > 0) scheduleDisconnectForfeit(roomId, dc, userId, DISCONNECT_FORFEIT_MS - elapsed);
-    else scheduleDisconnectForfeit(roomId, dc, userId);
+    // Only what is left of the forfeit delay since the drop.
+    scheduleDisconnectForfeit(roomId, dc, userId, DISCONNECT_FORFEIT_MS - (Date.now() - droppedAt));
   });
 
   ws.on("error", (err) => console.error(`WS error [${roomId}]:`, err.message));
