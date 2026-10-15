@@ -10,7 +10,7 @@
 //   1. after one transient Redis failure in the move step (a failing read or
 //      a failing write), the AI still finishes its turn within a bounded time
 //      with no further trigger, without re-rolling its dice;
-//   1b. during a Redis outage of 20 s in the move step the AI keeps retrying
+//   1b. during a Redis outage of 25 s in the move step the AI keeps retrying
 //      (several attempts, spread over the outage) and finishes its turn with
 //      the same dice once Redis recovers, with no further trigger;
 //   2. when pickMove returns no move (once, or every time), the AI asks it
@@ -273,8 +273,13 @@ describe("a pass of the AI turn that fails mid-turn with no rerun pending", () =
 describe("a Redis outage in the move step lasting OUTAGE_MS", () => {
   // Retries must keep going for at least this long after the first failure
   // (a retry with no delay, or a short flat delay, gives up within ~10 s).
-  // The exact schedule is not pinned.
-  const OUTAGE_MS = 20_000;
+  // The exact schedule is not pinned. With retries after 1, 2, 4, 8 and 16 s
+  // plus a 0.7-1.5 s thinking delay before each attempt, the fifth failing
+  // attempt comes at most 21 s after the first failure and the sixth at least
+  // 34.5 s after it, so a 25 s outage ends between them whatever the thinking
+  // delays are: a schedule one retry shorter (giving up after the fifth
+  // failure) is caught every time (issue #87).
+  const OUTAGE_MS = 25_000;
 
   test("the AI keeps retrying, then finishes its turn with the same dice once Redis recovers, with no other trigger", async () => {
     const roomId = "OUTAGE01";

@@ -20,6 +20,7 @@ jest.unstable_mockModule("../db/postgres.js", () => ({
   query: jest.fn(async () => ({ rows: [{ display_name: "Bob", avatar_url: null }] })),
 }));
 jest.unstable_mockModule("./handlers.js", () => ({
+  DISCONNECT_FORFEIT_MS:     60_000,
   handleMessage:             jest.fn(),
   scheduleDisconnectForfeit: jest.fn(),
   cancelDisconnectForfeit:   jest.fn(),
