@@ -37,8 +37,11 @@ const ROOM_ID     = "DELAY123";
 const USER_ID     = "11111111-1111-1111-1111-111111111111";
 const OPPONENT_ID = "22222222-2222-2222-2222-222222222222";
 
-const playing = () => JSON.stringify({
-  players:    { white: OPPONENT_ID, black: USER_ID },
+// seat: the dropping user's colour.
+const playing = (seat = "black") => JSON.stringify({
+  players:    seat === "black"
+    ? { white: OPPONENT_ID, black: USER_ID }
+    : { white: USER_ID, black: OPPONENT_ID },
   playerInfo: { white: { display_name: "Eve" }, black: { display_name: "Bob" } },
   ready:      { white: true, black: true },
   status:     "playing",
@@ -70,24 +73,24 @@ afterEach(() => {
 
 // Connects USER_ID (black), then drops the socket; the close handler's Redis
 // read takes readMs of fake time.
-async function connectAndDrop(readMs) {
-  redisGet.mockImplementation(async () => playing());
+async function connectAndDrop(readMs, seat = "black") {
+  redisGet.mockImplementation(async () => playing(seat));
   const ws = fakeWs();
   await handleConnection(ws, { url: `/ws?token=${signAccessToken(USER_ID)}&room=${ROOM_ID}` });
   expect(rooms.get(ROOM_ID)?.size).toBe(1);
 
   redisGet.mockImplementation(() => (readMs === 0
-    ? Promise.resolve(playing())
-    : new Promise((resolve) => { setTimeout(() => resolve(playing()), readMs); })));
+    ? Promise.resolve(playing(seat))
+    : new Promise((resolve) => { setTimeout(() => resolve(playing(seat)), readMs); })));
   ws.readyState = 3;
   ws.emit("close");
   await jest.advanceTimersByTimeAsync(readMs + 1);
 }
 
-test.each([[0], [1], [3_000]])(
-  "after a %i ms read, the delay is handlers.js's DISCONNECT_FORFEIT_MS minus the time since the drop",
-  async (readMs) => {
-    await connectAndDrop(readMs);
+test.each([[0, "black"], [1, "black"], [3_000, "black"], [5_000, "white"]])(
+  "after a %i ms read, the %s player's delay is handlers.js's DISCONNECT_FORFEIT_MS minus the time since the drop",
+  async (readMs, seat) => {
+    await connectAndDrop(readMs, seat);
     expect(scheduleDisconnectForfeit).toHaveBeenCalledTimes(1);
-    expect(scheduleDisconnectForfeit).toHaveBeenCalledWith(ROOM_ID, "black", USER_ID, FORFEIT_MS - readMs);
+    expect(scheduleDisconnectForfeit).toHaveBeenCalledWith(ROOM_ID, seat, USER_ID, FORFEIT_MS - readMs);
   });
