@@ -139,8 +139,8 @@ function pickMoveHeuristic(gs, color, legalMoves) {
 // turn hanging for minutes on a slow API. The move is chosen outside the room
 // lock, but the human still waits for it, so keep the call short and fall
 // back to the heuristic on timeout (issue #60).
-export const MASTER_API_TIMEOUT_MS  = 15_000;
-export const MASTER_API_MAX_RETRIES = 1;
+export const MASTER_API_TIMEOUT_MS  = 8_000;
+export const MASTER_API_MAX_RETRIES = 0;
 const MASTER_REQUEST_OPTIONS = {
   timeout:    MASTER_API_TIMEOUT_MS,
   maxRetries: MASTER_API_MAX_RETRIES,

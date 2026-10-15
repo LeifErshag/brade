@@ -393,6 +393,7 @@ function aiPositionKey(room) {
   return JSON.stringify([
     room.status, room.gameNum, room.gameDbId ?? null,
     gs.turn, gs.phase, gs.moveSeq, gs.dice, gs.rolledDice,
+    gs.board, gs.bar, gs.off,
   ]);
 }
 
@@ -450,14 +451,20 @@ async function aiRoll(redis, roomId) {
 // Returns the saved room when the AI has more to play, else null. If the room
 // has changed since the move was chosen, nothing is written; the current room
 // is returned if it is still the AI's move, so the caller chooses again.
-async function aiMove(redis, roomId, expected, move) {
+async function aiMove(redis, roomId, expected, chosen) {
   const room = aiToMove(await loadRoom(redis, roomId));
   if (!room) return null;
+  if (aiPositionKey(room) !== expected) return room;
 
+  // Same position, so the chosen move should be legal. If it is not (a bug in
+  // the move choice), play the first legal move instead of choosing again,
+  // which could repeat forever.
   const gs = room.gameState;
-  const stillLegal = gs.legalMoves.some(m =>
-    m.from === move.from && m.to === move.to && m.die === move.die);
-  if (aiPositionKey(room) !== expected || !stillLegal) return room;
+  let move = chosen;
+  if (!gs.legalMoves.some(m => m.from === move.from && m.to === move.to && m.die === move.die)) {
+    console.error(`AI chose an illegal move in room ${roomId}; playing the first legal move`, move);
+    move = gs.legalMoves[0];
+  }
 
   // Capture whether the move burst a band in the mover's first quarter.
   const { gs: newGs, burstFirstQuarter } = applyMove(gs, "black", move.from, move.to, move.die);
