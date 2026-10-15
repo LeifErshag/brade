@@ -236,7 +236,7 @@ const S = {
   },
   kicker: { color: "#a07840", fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 },
   title:  { color: "#e8b86d", fontSize: 18, margin: "0 0 8px", fontWeight: "normal" },
-  p:      { margin: "0 0 8px" },
+  p:      { marginTop: 0, marginRight: 0, marginBottom: 8, marginLeft: 0 },
   ul:     { margin: "0 0 8px", paddingLeft: 20 },
   row:    { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 10 },
   spacer: { flex: 1 },
@@ -255,7 +255,8 @@ const S = {
   },
   checklist: { listStyle: "none", padding: 0, margin: "8px 0 0", display: "flex", flexWrap: "wrap", gap: 6 },
   check: {
-    background: "#3a1a00", color: "#a07840", border: "1px solid #4a2800", borderRadius: 6,
+    background: "#3a1a00", color: "#a07840",
+    borderWidth: 1, borderStyle: "solid", borderColor: "#4a2800", borderRadius: 6,
     padding: "4px 10px", fontSize: 12, cursor: "pointer", fontFamily: "Georgia, serif",
   },
   checkDone: { color: "#7ddb7d", borderColor: "#1a5c1a" },
