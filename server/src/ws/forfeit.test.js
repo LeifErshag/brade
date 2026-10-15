@@ -279,11 +279,19 @@ describe("disconnect forfeit", () => {
     // socket again in a microtask, i.e. right after connectToRoom's
     // synchronous registration, before the queued forfeit gets the lock.
     // (A promise job, not queueMicrotask, which the fake timers replace.)
+    // The second close handler's Redis read is held until the queued first
+    // forfeit's section has run, as it would be in production (a network
+    // round trip), so that only the reconnect's cancel, not a newer schedule,
+    // can make the first forfeit stale.
+    const closeGate = deferred();
     let dropped = false;
     blackWs2.send.mockImplementation(() => {
       if (dropped) return;
       dropped = true;
-      Promise.resolve().then(() => disconnect(blackWs2));
+      Promise.resolve().then(() => {
+        nextGetGate = closeGate.promise;
+        disconnect(blackWs2);
+      });
     });
     const reconnect = connect(blackWs2, BLACK_ID);
     await jest.advanceTimersByTimeAsync(0);
@@ -296,6 +304,15 @@ describe("disconnect forfeit", () => {
     await settle();
     expect(dropped).toBe(true);
     const secondDisconnectAt = Date.now();
+    // The close handler is still held: its read consumed the one-shot gate.
+    expect(nextGetGate).toBeNull();
+    // Drain the lock so the queued first forfeit's section has run.
+    await settle();
+    expect(saved().status).toBe("playing");
+    expect(gameRecorded()).toBe(false);
+    // Now let the second close handler schedule its forfeit.
+    closeGate.resolve();
+    await settle();
     expect(secondDisconnectAt).toBeGreaterThanOrEqual(firstDisconnectAt + FORFEIT_MS);
 
     // First disconnect + 60 s + epsilon: not forfeited.
