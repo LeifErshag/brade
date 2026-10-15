@@ -8,8 +8,10 @@
 //   1. a human RESIGN completes and is persisted, and a reconnect is served a
 //      ROOM_STATE, without waiting for the API call;
 //   2. when the call finally returns after the room changed (match finished,
-//      turn changed, or dice and move sequence changed), the AI applies no
-//      stale move and does not overwrite the newer state;
+//      turn changed, move sequence, dice or game changed), the AI applies no
+//      stale move and does not overwrite the newer state; if it is still the
+//      AI's move, it chooses again for the newer position and finishes its
+//      turn;
 //   3. when nothing changed, the AI applies the move it was given.
 
 import { jest } from "@jest/globals";
@@ -49,18 +51,24 @@ jest.unstable_mockModule("../db/redis.js", () => ({
 
 // Fake Anthropic SDK. In "hold" mode each messages.create call returns a
 // promise that settles only when the test calls release(); otherwise it
-// answers "0" (the first legal move) at once.
-const createCalls = []; // { params, reqOpts, ctorOpts, settled, release(text) }
+// answers at once with the next entry of `answers`, or "0" (the first legal
+// move) when there is none. Each call records how many room saves had been
+// made when it was issued.
+const createCalls = []; // { params, reqOpts, ctorOpts, savesAt, settled, release(text) }
+const answers = [];
 let holdCreate = true;
 class FakeAnthropic {
   constructor(opts = {}) {
     this.opts = opts;
     this.messages = {
       create: (params, reqOpts) => {
-        const call = { params, reqOpts, ctorOpts: this.opts, settled: false };
+        const call = { params, reqOpts, ctorOpts: this.opts, savesAt: saves.length, settled: false };
         createCalls.push(call);
         const reply = (text) => ({ content: [{ type: "text", text }] });
-        if (!holdCreate) { call.settled = true; return Promise.resolve(reply("0")); }
+        if (!holdCreate) {
+          call.settled = true;
+          return Promise.resolve(reply(answers.shift() ?? "0"));
+        }
         return new Promise((resolve) => {
           call.release = (text = "0") => { call.settled = true; resolve(reply(text)); };
         });
@@ -139,6 +147,31 @@ function moveLogs() {
   return query.mock.calls.filter(([sql]) => /INSERT INTO moves/.test(sql));
 }
 
+function sameMove(a, b) {
+  return a.from === b.from && a.to === b.to && a.die === b.die;
+}
+
+// The params of the move log row for `move` (points are 1-based).
+function logParams(gameDbId, seq, move) {
+  return [
+    gameDbId, seq, "black",
+    move.from === "bar" ? "bar" : String(move.from + 1),
+    move.to   === "off" ? "off" : String(move.to + 1),
+    move.die,
+  ];
+}
+
+// A non-double roll that contains `die` but differs from `rolled`.
+function otherDice(rolled, die) {
+  const old = rolled.slice().sort().join(",");
+  for (let x = 1; x <= 6; x++) {
+    if (x === die) continue;
+    const dice = [die, x];
+    if (dice.slice().sort().join(",") !== old) return dice;
+  }
+  throw new Error("no other roll found");
+}
+
 // Advance fake time in small steps, letting promises settle between timers.
 async function runFor(ms) {
   for (let t = 0; t < ms; t += 100) await jest.advanceTimersByTimeAsync(100);
@@ -176,6 +209,7 @@ beforeEach(() => {
   store.clear();
   saves.length = 0;
   createCalls.length = 0;
+  answers.length = 0;
   holdCreate = true;
   query.mockClear();
   rooms.clear();
@@ -288,42 +322,80 @@ describe("when the API answers after the room changed", () => {
     expect(moveLogs()).toHaveLength(logsBefore);
   }, 40_000);
 
-  test("a move chosen for other dice and an older move sequence is not applied", async () => {
-    const roomId = "SLOWST03";
-    const { room } = await startAiWaitingForApi(roomId);
+  // Each case keeps it the AI's move but changes one part of what the pending
+  // move was chosen for. The stale move (the first legal move of the old
+  // position) stays legal in the newer position, so only a check of the
+  // position itself (not mere legality) can reject it. The AI must then choose
+  // again for the newer position (a second API call, made before anything is
+  // written) and finish its turn on it.
+  describe.each([
+    ["only the move sequence changed", "SLOWSQ01", (r) => {
+      r.gameState.moveSeq += 5;
+    }],
+    ["only the dice changed", "SLOWDC01", (r, stale) => {
+      r.gameState.dice       = otherDice(r.gameState.rolledDice, stale.die);
+      r.gameState.rolledDice = r.gameState.dice.slice();
+    }],
+    ["the dice and the move sequence changed", "SLOWST03", (r, stale) => {
+      r.gameState.dice       = otherDice(r.gameState.rolledDice, stale.die);
+      r.gameState.rolledDice = r.gameState.dice.slice();
+      r.gameState.moveSeq   += 5;
+    }],
+    ["the room moved on to the next game", "SLOWGN01", (r) => {
+      r.gameNum  = 2;
+      r.gameDbId = "game-uuid-2";
+    }],
+  ])("%s", (_label, roomId, change) => {
+    test("the stale move is not applied and the AI plays its turn on the newer position", async () => {
+      const { room } = await startAiWaitingForApi(roomId);
+      const stale = room.gameState.legalMoves[0];
 
-    // Still the AI's moving phase, but with other dice and a later move
-    // sequence (e.g. the room was replaced while the AI was thinking).
-    const old = room.gameState.rolledDice.slice().sort().join(",");
-    const dice = old === "1,2" ? [3, 4] : [1, 2];
-    const newer = JSON.parse(JSON.stringify(room));
-    newer.gameState.dice       = dice.slice();
-    newer.gameState.rolledDice = dice.slice();
-    newer.gameState.moveSeq    = room.gameState.moveSeq + 5;
-    newer.gameState.legalMoves = getLegalMoves(newer.gameState, "black");
-    expect(newer.gameState.legalMoves.length).toBeGreaterThan(0);
-    await fakeRedis.set(`room:${roomId}`, JSON.stringify(newer));
-    const savesBefore = savesOf(roomId).length;
+      const newer = JSON.parse(JSON.stringify(room));
+      change(newer, stale);
+      newer.gameState.legalMoves = getLegalMoves(newer.gameState, "black");
+      expect(newer.gameState.legalMoves).toContainEqual(stale);
+      await fakeRedis.set(`room:${roomId}`, JSON.stringify(newer));
+      const savesBefore = saves.length;
+      const logsBefore  = moveLogs().length;
 
-    // Any later API call (for the newer state) answers at once.
-    holdCreate = false;
-    createCalls[0].release("0");
-    await runFor(20_000);
+      // The next API call answers with a move other than the stale one when
+      // the newer position has one; any calls after that answer "0".
+      const legal = newer.gameState.legalMoves;
+      const k = Math.max(0, legal.findIndex((m) => !sameMove(m, stale)));
+      answers.push(String(k));
+      holdCreate = false;
+      createCalls[0].release("0");
+      await runFor(20_000);
 
-    // Nothing written afterwards may derive from the state the stale move was
-    // chosen for: every later save carries the newer roll and move sequence.
-    const after = savesOf(roomId).slice(savesBefore);
-    for (const r of after) {
-      expect(r.gameState.rolledDice).toEqual(dice);
-      expect(r.gameState.moveSeq).toBeGreaterThanOrEqual(newer.gameState.moveSeq);
-    }
-    const final = await getRoom(roomId);
-    expect(final.gameState.rolledDice).toEqual(dice);
-    expect(final.gameState.moveSeq).toBeGreaterThanOrEqual(newer.gameState.moveSeq);
-    // No move was logged with the old sequence number.
-    const staleSeq = room.gameState.moveSeq + 1;
-    expect(moveLogs().some(([, params]) => params[1] === staleSeq)).toBe(false);
-  }, 40_000);
+      // The AI chose again for the newer position before writing anything.
+      expect(createCalls.length).toBeGreaterThanOrEqual(2);
+      expect(createCalls[1].savesAt).toBe(savesBefore);
+
+      // Nothing written afterwards derives from the old position.
+      for (const s of saves.slice(savesBefore)) {
+        expect(s.room.gameNum).toBe(newer.gameNum);
+        expect(s.room.gameState.rolledDice).toEqual(newer.gameState.rolledDice);
+        expect(s.room.gameState.moveSeq).toBeGreaterThan(newer.gameState.moveSeq);
+      }
+
+      // The first move applied is the one chosen for the newer position,
+      // logged at the newer sequence + 1 against the newer game.
+      const logs = moveLogs().slice(logsBefore);
+      expect(logs.length).toBeGreaterThan(0);
+      const [, params] = logs[0];
+      expect(params).toEqual(logParams(newer.gameDbId, newer.gameState.moveSeq + 1, legal[k]));
+      expect(newer.gameState.rolledDice).toContain(params[5]);
+
+      // ... and the AI finished its turn on the newer roll.
+      const final = await getRoom(roomId);
+      expect(final.status).toBe("playing");
+      expect(final.gameNum).toBe(newer.gameNum);
+      expect(final.gameState.rolledDice).toEqual(newer.gameState.rolledDice);
+      expect(final.gameState.moveSeq).toBeGreaterThan(newer.gameState.moveSeq);
+      expect(final.gameState.turn).toBe("white");
+      expect(final.gameState.phase).toBe("rolling");
+    }, 40_000);
+  });
 });
 
 // ── Unchanged room: the slow answer is used ──────────────────────────────────

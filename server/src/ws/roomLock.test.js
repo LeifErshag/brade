@@ -120,7 +120,9 @@ describe("withRoomLock", () => {
 
   test("forgets a room once its queue has drained", async () => {
     await withRoomLock("R1", async () => {});
-    await tick();
+    // The entry is removed a few microtasks after the section settles; drain
+    // with a bounded number of ticks rather than relying on exactly one.
+    for (let i = 0; i < 10 && pendingRoomLockCount() > 0; i++) await tick();
     expect(pendingRoomLockCount()).toBe(0);
   });
 });
