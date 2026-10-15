@@ -135,9 +135,20 @@ function pickMoveHeuristic(gs, color, legalMoves) {
 
 // ── Master: Claude Haiku API ──────────────────────────────────────────────────
 
+// The SDK defaults (a 10-minute timeout with retries) would leave the AI's
+// turn hanging for minutes on a slow API. The move is chosen outside the room
+// lock, but the human still waits for it, so keep the call short and fall
+// back to the heuristic on timeout (issue #60).
+export const MASTER_API_TIMEOUT_MS  = 8_000;
+export const MASTER_API_MAX_RETRIES = 0;
+const MASTER_REQUEST_OPTIONS = {
+  timeout:    MASTER_API_TIMEOUT_MS,
+  maxRetries: MASTER_API_MAX_RETRIES,
+};
+
 function getAnthropicClient() {
   if (!process.env.ANTHROPIC_API_KEY) return null;
-  return new Anthropic();
+  return new Anthropic({ ...MASTER_REQUEST_OPTIONS });
 }
 
 async function pickMoveMaster(gs, color, legalMoves, roomId) {
@@ -195,7 +206,7 @@ async function pickMoveMaster(gs, color, legalMoves, roomId) {
       model:      "claude-haiku-4-5-20251001",
       max_tokens: 8,
       messages:   [{ role: "user", content: prompt }],
-    });
+    }, { ...MASTER_REQUEST_OPTIONS });
 
     const text = response.content[0]?.text?.trim() ?? "";
     const idx  = parseInt(text, 10);

@@ -360,7 +360,13 @@ export async function triggerAiTurn(roomId, aiDifficulty) {
   try {
     do {
       turn.rerun = false;
-      await _triggerAiTurn(roomId, turn.aiDifficulty);
+      // A failing pass (e.g. a Redis error) is logged and does not drop a
+      // rerun that was requested meanwhile.
+      try {
+        await _triggerAiTurn(roomId, turn.aiDifficulty);
+      } catch (err) {
+        console.error("AI turn error:", err);
+      }
     } while (turn.rerun);
   } finally {
     aiTurns.delete(roomId);
@@ -368,33 +374,61 @@ export async function triggerAiTurn(roomId, aiDifficulty) {
 }
 
 // The AI turn is split into short locked sections (the roll, then one section
-// per move) so the "thinking" delays run without holding the room's lock.
-// Each section re-reads the room and checks it is still the AI's turn in the
-// expected phase, because other writers (e.g. a human RESIGN) may have run
-// during a delay.
+// per move) so the "thinking" delays and the move choice run without holding
+// the room's lock. Choosing a move can be slow (the master AI calls the
+// Anthropic API), so it works on a snapshot taken by the previous section.
+// The section that applies the move re-reads the room and applies it only if
+// the position is unchanged (same game, turn, phase, dice and move sequence),
+// because other writers (e.g. a human RESIGN or a reconnect) may have run in
+// the meantime (issue #60).
 async function _triggerAiTurn(roomId, aiDifficulty) {
   // Brief "thinking" delay
   await sleep(700 + Math.random() * 800);
 
-  const redis  = getRedis();
-  const rolled = await withRoomLock(roomId, () => aiRoll(redis, roomId));
-  if (!rolled) return;
+  const redis = getRedis();
+  // `snap` is the room as the last locked section left it, while the AI still
+  // has a move to play; null when the AI's turn is over.
+  let snap = await withRoomLock(roomId, () => aiRoll(redis, roomId));
 
   // Play moves one at a time with a small visual delay between each
-  for (;;) {
+  while (snap) {
     await sleep(500);
-    const more = await withRoomLock(roomId, () => aiMove(redis, roomId, aiDifficulty));
-    if (!more) return;
+    const gs   = snap.gameState;
+    const move = await pickMove(gs, "black", gs.legalMoves, aiDifficulty, roomId);
+    if (!move) return;
+    const expected = aiPositionKey(snap);
+    snap = await withRoomLock(roomId, () => aiMove(redis, roomId, expected, move));
   }
 }
 
-// Locked section: roll for the AI. Returns true when the AI has moves to play.
+// What a chosen move depends on. If any of this changed since the move was
+// chosen, the move is stale and must not be applied.
+function aiPositionKey(room) {
+  const gs = room.gameState;
+  return JSON.stringify([
+    room.status, room.gameNum, room.gameDbId ?? null,
+    gs.turn, gs.phase, gs.moveSeq, gs.dice, gs.rolledDice,
+    gs.board, gs.bar, gs.off,
+  ]);
+}
+
+// The room when it is the AI's turn to move, else null.
+function aiToMove(room) {
+  if (!room || room.status !== "playing") return null;
+  const gs = room.gameState;
+  if (gs.turn !== "black" || gs.phase !== "moving") return null;
+  if (gs.legalMoves.length === 0 || gs.dice.length === 0) return null;
+  return room;
+}
+
+// Locked section: roll for the AI. Returns the saved room when the AI has
+// moves to play, else null.
 async function aiRoll(redis, roomId) {
   const room = await loadRoom(redis, roomId);
-  if (!room || room.status !== "playing") return false;
+  if (!room || room.status !== "playing") return null;
 
   const gs = room.gameState;
-  if (gs.turn !== "black" || gs.phase !== "rolling") return false; // sanity check
+  if (gs.turn !== "black" || gs.phase !== "rolling") return null; // sanity check
 
   // Roll dice
   const dice    = rollDice();
@@ -409,7 +443,7 @@ async function aiRoll(redis, roomId) {
     if (janResult) {
       room.gameState = gs;
       await handleGameOver(redis, roomId, room, janResult);
-      return false;
+      return null;
     }
     // Otherwise pass.
     gs.phase      = "rolling";
@@ -419,26 +453,33 @@ async function aiRoll(redis, roomId) {
     room.gameState = gs;
     await saveRoom(redis, roomId, room);
     broadcastState(roomId, room);
-    return false;
+    return null;
   }
 
   room.gameState = gs;
   await saveRoom(redis, roomId, room);
   broadcastState(roomId, room);
-  return true;
+  return room;
 }
 
-// Locked section: play one AI move. Returns true when the AI has more to play.
-async function aiMove(redis, roomId, aiDifficulty) {
-  const room = await loadRoom(redis, roomId);
-  if (!room || room.status !== "playing") return false;
+// Locked section: play one AI move, chosen for the position `expected`.
+// Returns the saved room when the AI has more to play, else null. If the room
+// has changed since the move was chosen, nothing is written; the current room
+// is returned if it is still the AI's move, so the caller chooses again.
+async function aiMove(redis, roomId, expected, chosen) {
+  const room = aiToMove(await loadRoom(redis, roomId));
+  if (!room) return null;
+  if (aiPositionKey(room) !== expected) return room;
 
+  // Same position, so the chosen move should be legal. If it is not (a bug in
+  // the move choice), play the first legal move instead of choosing again,
+  // which could repeat forever.
   const gs = room.gameState;
-  if (gs.turn !== "black" || gs.phase !== "moving") return false;
-  if (gs.legalMoves.length === 0 || gs.dice.length === 0) return false;
-
-  const move = await pickMove(gs, "black", gs.legalMoves, aiDifficulty, roomId);
-  if (!move) return false;
+  let move = chosen;
+  if (!gs.legalMoves.some(m => m.from === move.from && m.to === move.to && m.die === move.die)) {
+    console.error(`AI chose an illegal move in room ${roomId}; playing the first legal move`, move);
+    move = gs.legalMoves[0];
+  }
 
   // Capture whether the move burst a band in the mover's first quarter.
   const { gs: newGs, burstFirstQuarter } = applyMove(gs, "black", move.from, move.to, move.die);
@@ -450,7 +491,7 @@ async function aiMove(redis, roomId, aiDifficulty) {
   if (result) {
     room.gameState = newGs;
     await handleGameOver(redis, roomId, room, result);
-    return false;
+    return null;
   }
 
   let passing = false;
@@ -467,7 +508,7 @@ async function aiMove(redis, roomId, aiDifficulty) {
     if (janResult) {
       room.gameState = newGs;
       await handleGameOver(redis, roomId, room, janResult);
-      return false;
+      return null;
     }
     newGs.phase      = "rolling";
     newGs.turn       = "white";
@@ -478,7 +519,7 @@ async function aiMove(redis, roomId, aiDifficulty) {
   room.gameState = newGs;
   await saveRoom(redis, roomId, room);
   broadcastState(roomId, room);
-  return !passing;
+  return passing ? null : room;
 }
 
 function sleep(ms) {
