@@ -17,7 +17,12 @@ import { withRoomLock } from "./roomLock.js";
 // that has already fired and is queued for the room's lock.
 const forfeitTimers = new Map();
 
-export function scheduleDisconnectForfeit(roomId, color, userId) {
+// How long a player may stay disconnected mid-game before forfeiting.
+export const DISCONNECT_FORFEIT_MS = 60_000;
+
+// delayMs lets the close handler count the forfeit delay from the moment the
+// socket dropped rather than from when its Redis read finished.
+export function scheduleDisconnectForfeit(roomId, color, userId, delayMs = DISCONNECT_FORFEIT_MS) {
   const key = `${roomId}:${color}`;
   clearTimeout(forfeitTimers.get(key)?.timer);
   const token = {};
@@ -28,7 +33,7 @@ export function scheduleDisconnectForfeit(roomId, color, userId) {
     } catch (err) {
       console.error(`Disconnect forfeit error [${roomId}]:`, err);
     }
-  }, 60_000);
+  }, Math.max(0, delayMs));
   forfeitTimers.set(key, { timer, token });
 }
 
@@ -346,7 +351,23 @@ async function handleRoomMessage({ msg, userId, roomId, ws }) {
 // running turn. Each rerun re-checks the room state (aiRoll), so a redundant
 // trigger only costs one thinking delay and writes nothing. Reruns happen
 // only on explicit triggers, so this cannot loop by itself.
-const aiTurns = new Map(); // roomId → { rerun: boolean, aiDifficulty }
+//
+// A pass that throws (e.g. a Redis error) with no rerun pending is retried
+// after a backoff delay, a bounded number of times (issue #79), so the AI does
+// not abandon its turn half-played and stall the game. A retry never re-rolls:
+// aiRoll resumes a moving phase that is already saved. After the last retry
+// fails the loop gives up. Then only a player's reconnect re-triggers the AI
+// (connectToRoom in server.js triggers when black is to roll or is mid-turn);
+// the triggers after a human ROLL, MOVE or PASS and after a game's end fire
+// only when black is to roll, which is all those writers can leave behind.
+const aiTurns = new Map(); // roomId -> { rerun: boolean, aiDifficulty }
+
+// Delay before each retry of a failed pass; its length bounds the retries.
+// The count of consecutive failures is reset by every successful pass.
+const AI_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000];
+// How many times one move is asked of pickMove before the first legal move
+// is played instead (pickMove returned nothing or threw).
+const AI_PICK_ATTEMPTS = 3;
 
 export async function triggerAiTurn(roomId, aiDifficulty) {
   const running = aiTurns.get(roomId);
@@ -358,16 +379,27 @@ export async function triggerAiTurn(roomId, aiDifficulty) {
   const turn = { rerun: false, aiDifficulty };
   aiTurns.set(roomId, turn);
   try {
-    do {
+    let failures = 0; // consecutive failed passes
+    for (;;) {
       turn.rerun = false;
-      // A failing pass (e.g. a Redis error) is logged and does not drop a
-      // rerun that was requested meanwhile.
+      let failed = false;
       try {
         await _triggerAiTurn(roomId, turn.aiDifficulty);
+        failures = 0;
       } catch (err) {
         console.error("AI turn error:", err);
+        failed = true;
+        failures++;
       }
-    } while (turn.rerun);
+      // A failing pass does not drop a rerun that was requested meanwhile.
+      if (turn.rerun) continue;
+      if (!failed) break;
+      if (failures > AI_RETRY_DELAYS_MS.length) {
+        console.error(`AI turn in room ${roomId} failed ${failures} times; giving up until the next trigger`);
+        break;
+      }
+      await sleep(AI_RETRY_DELAYS_MS[failures - 1]);
+    }
   } finally {
     aiTurns.delete(roomId);
   }
@@ -393,12 +425,28 @@ async function _triggerAiTurn(roomId, aiDifficulty) {
   // Play moves one at a time with a small visual delay between each
   while (snap) {
     await sleep(500);
-    const gs   = snap.gameState;
-    const move = await pickMove(gs, "black", gs.legalMoves, aiDifficulty, roomId);
-    if (!move) return;
+    const gs       = snap.gameState;
+    const move     = await chooseAiMove(gs, aiDifficulty, roomId);
     const expected = aiPositionKey(snap);
     snap = await withRoomLock(roomId, () => aiMove(redis, roomId, expected, move));
   }
+}
+
+// Ask pickMove for a move a few times; if it returns nothing (or throws)
+// every time, play the first legal move so the turn always completes
+// (issue #82). gs.legalMoves is non-empty here (see aiToMove).
+async function chooseAiMove(gs, aiDifficulty, roomId) {
+  for (let attempt = 1; attempt <= AI_PICK_ATTEMPTS; attempt++) {
+    try {
+      const move = await pickMove(gs, "black", gs.legalMoves, aiDifficulty, roomId);
+      if (move) return move;
+      console.error(`AI pickMove returned no move in room ${roomId} (attempt ${attempt})`);
+    } catch (err) {
+      console.error(`AI pickMove error in room ${roomId} (attempt ${attempt}):`, err);
+    }
+  }
+  console.error(`AI playing the first legal move in room ${roomId}`);
+  return gs.legalMoves[0];
 }
 
 // What a chosen move depends on. If any of this changed since the move was
@@ -422,12 +470,15 @@ function aiToMove(room) {
 }
 
 // Locked section: roll for the AI. Returns the saved room when the AI has
-// moves to play, else null.
+// moves to play, else null. If the AI has already rolled and still has moves
+// left (a retry after a failed pass, or a trigger mid-turn), the saved moving
+// phase is resumed as is, with the same dice: the AI never re-rolls.
 async function aiRoll(redis, roomId) {
   const room = await loadRoom(redis, roomId);
   if (!room || room.status !== "playing") return null;
 
   const gs = room.gameState;
+  if (gs.turn === "black" && gs.phase === "moving") return aiToMove(room);
   if (gs.turn !== "black" || gs.phase !== "rolling") return null; // sanity check
 
   // Roll dice
