@@ -32,7 +32,9 @@ const S = {
   label: { color: "#a07840", fontSize: 12, textAlign: "left", marginBottom: 4, display: "block" },
   input: {
     width: "100%", boxSizing: "border-box", padding: "8px 12px",
-    background: "#2a1400", border: "1px solid #6b3a10", borderRadius: 6,
+    background: "#2a1400", borderRadius: 6,
+    // Longhands only, so the error style can swap just the colour.
+    borderWidth: 1, borderStyle: "solid", borderColor: "#6b3a10",
     color: "#e8b86d", fontSize: 14, fontFamily: "Georgia, serif",
   },
   inputError: { borderColor: "#c0392b" },
