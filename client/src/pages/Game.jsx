@@ -130,6 +130,7 @@ export default function Game() {
   // Result of the game that just ended within a match: { winner, winType }.
   const [gameResult, setGameResult]         = useState(null);
   const gameResultTimer                     = useRef(null);
+  const junkerTimer                         = useRef(null);
   const [spectatorCount, setSpectatorCount] = useState(0);
   const [wsStatus, setWsStatus]             = useState("connecting");
   const [searchQuery, setSearchQuery]       = useState("");
@@ -170,9 +171,8 @@ export default function Game() {
       case "ROOM_STATE":
         setRoom(msg.room);
         setSpectatorCount(msg.spectatorCount ?? 0);
-        // The server sends the new game's state before GAME_OVER, so any later
-        // state means play has continued: drop the game-result notice.
-        setGameResult(null);
+        // Deliberately keeps the game-result notice: in AI rooms the AI may
+        // open the next game within a second, which would otherwise hide it.
         break;
       case "GAME_OVER":
         // A game within the match ended; the next game has already started.
@@ -182,13 +182,20 @@ export default function Game() {
         break;
       case "NO_MOVES":
         setJunkerNotice(msg.color);
-        setTimeout(() => setJunkerNotice(null), 2500);
+        clearTimeout(junkerTimer.current);
+        junkerTimer.current = setTimeout(() => setJunkerNotice(null), 2500);
         break;
       case "ERROR":
         pushToast({ server: msg.message });
         break;
     }
   }, [pushToast]);
+
+  // Neither notice timer may fire after leaving the page.
+  useEffect(() => () => {
+    clearTimeout(gameResultTimer.current);
+    clearTimeout(junkerTimer.current);
+  }, []);
 
   const { send } = useSocket({
     roomId: (wsToken && !loading) ? roomId : null,
@@ -342,7 +349,10 @@ export default function Game() {
   // send() returns false when the socket isn't open, so the action never left
   // the browser — surface that instead of letting it silently disappear.
   function gameSend(msg) {
-    if (!send(msg)) pushToast({ key: "game.notConnected" });
+    if (!send(msg)) { pushToast({ key: "game.notConnected" }); return; }
+    // The viewer's own action ends the game-result notice early.
+    clearTimeout(gameResultTimer.current);
+    setGameResult(null);
   }
   function handleRoll()   { gameSend({ type: "ROLL" }); }
   function handlePass()   { gameSend({ type: "PASS" }); }
@@ -668,10 +678,14 @@ function MatchResult({ room, myColor }) {
   const myEloAfter = myColor === "white" ? r.whiteEloAfter : r.blackEloAfter;
 
   if (room.isTutorial) {
+    // A spectator sees who actually won; black is always the computer.
+    const title = iWon ? t("result.tutorialWon")
+      : myColor || r.winner !== "white" ? t("result.tutorialLost")
+      : t("result.otherWon", { name: winnerName });
     return (
       <div style={S.resultBanner}>
         <div style={{ ...S.resultTitle, color: iWon ? "#7ddb7d" : "#c0392b" }}>
-          {iWon ? t("result.tutorialWon") : t("result.tutorialLost")}
+          {title}
         </div>
         {winLabel && <div style={S.resultWinType}>{winLabel}</div>}
         <div style={S.resultElo}>{t("result.tutorialNotRated")}</div>
