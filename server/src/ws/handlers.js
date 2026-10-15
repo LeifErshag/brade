@@ -10,31 +10,41 @@ import { compareMatch } from "../game/scoring.js";
 import { withRoomLock } from "./roomLock.js";
 
 // ── Disconnect forfeit timers ─────────────────────────────────────────────────
-const forfeitTimers = new Map(); // key: `${roomId}:${color}`
+// key: `${roomId}:${color}` → { timer, token }. Each schedule gets a fresh
+// token object. The entry stays in the map after the timer fires, until its
+// locked section has run, so that a reconnect's cancel (which deletes the
+// entry) or a newer schedule (which replaces it) still invalidates a forfeit
+// that has already fired and is queued for the room's lock.
+const forfeitTimers = new Map();
 
 export function scheduleDisconnectForfeit(roomId, color, userId) {
   const key = `${roomId}:${color}`;
-  clearTimeout(forfeitTimers.get(key));
+  clearTimeout(forfeitTimers.get(key)?.timer);
+  const token = {};
   const timer = setTimeout(async () => {
-    forfeitTimers.delete(key);
     // Caught here: an unhandled rejection from a timer would kill the process.
     try {
-      await withRoomLock(roomId, () => forfeitIfStillDisconnected(roomId, userId));
+      await withRoomLock(roomId, () => forfeitIfStillDisconnected(roomId, userId, key, token));
     } catch (err) {
       console.error(`Disconnect forfeit error [${roomId}]:`, err);
     }
   }, 60_000);
-  forfeitTimers.set(key, timer);
+  forfeitTimers.set(key, { timer, token });
 }
 
-// Runs under the room's lock. Once the timer has fired, cancelDisconnectForfeit
-// can no longer stop it, and this section may have queued behind a reconnect
-// (or the close handler may have scheduled the timer after a quick reconnect
-// had already registered). So the decision is made here, atomically with the
-// resign: if the player has a registered connection in this room now, they are
-// back and nothing is forfeited. Calls handleRoomMessage directly, not
+// Runs under the room's lock. Once the timer has fired, clearTimeout can no
+// longer stop it, and this section may have queued behind a reconnect (or the
+// close handler may have scheduled the timer after a quick reconnect had
+// already registered). So the decision is made here, atomically with the
+// resign:
+// - if this disconnect's token is no longer current, a reconnect cancelled it
+//   or a later disconnect superseded it (that one forfeits on its own timer);
+// - if the player has a registered connection in this room now, they are back.
+// In either case nothing is forfeited. Calls handleRoomMessage directly, not
 // handleMessage, because this section already holds the lock (DEADLOCK RULE).
-async function forfeitIfStillDisconnected(roomId, userId) {
+async function forfeitIfStillDisconnected(roomId, userId, key, token) {
+  if (forfeitTimers.get(key)?.token !== token) return;
+  forfeitTimers.delete(key);
   const reconnected = [...(rooms.get(roomId) ?? [])].some(c => c.userId === userId);
   if (reconnected) return;
   const raw = await getRedis().get(keys.room(roomId));
@@ -46,8 +56,13 @@ async function forfeitIfStillDisconnected(roomId, userId) {
 
 export function cancelDisconnectForfeit(roomId, color) {
   const key = `${roomId}:${color}`;
-  clearTimeout(forfeitTimers.get(key));
+  clearTimeout(forfeitTimers.get(key)?.timer);
   forfeitTimers.delete(key);
+}
+
+// Test helper: number of pending (scheduled or fired but not yet run) forfeits.
+export function pendingForfeitCount() {
+  return forfeitTimers.size;
 }
 
 // ── Main message handler ──────────────────────────────────────────────────────
