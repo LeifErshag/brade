@@ -72,4 +72,15 @@ describe("pool configuration", () => {
     expect(statement_timeout).toBeGreaterThanOrEqual(1_000);
     expect(statement_timeout).toBeLessThanOrEqual(120_000);
   });
+
+  // Issue #69: a network hang after a query was sent is not covered by the
+  // server-side statement_timeout, so the client needs its own bound. It must
+  // sit above statement_timeout so Postgres normally cancels first.
+  test("sets a finite client-side query timeout above the statement timeout", async () => {
+    const { query_timeout, statement_timeout } = await poolOptions();
+    expect(typeof query_timeout).toBe("number");
+    expect(Number.isFinite(query_timeout)).toBe(true);
+    expect(query_timeout).toBeGreaterThan(statement_timeout);
+    expect(query_timeout).toBeLessThanOrEqual(120_000);
+  });
 });
