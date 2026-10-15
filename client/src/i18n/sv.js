@@ -148,6 +148,7 @@ export default {
     findMatch: "Hitta en motspelare",
     findMatchButton: "Hitta match",
     searching: "Söker…",
+    waited: " · {n} s",
     inQueue: "({n} i kön)",
     joinWithCode: "Gå med via kod",
     roomCodePlaceholder: "RUMSKOD",

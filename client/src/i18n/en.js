@@ -148,6 +148,7 @@ export default {
     findMatch: "Find a match",
     findMatchButton: "Find Match",
     searching: "Searching…",
+    waited: " · {n} s",
     inQueue: "({n} in queue)",
     joinWithCode: "Join with code",
     roomCodePlaceholder: "ROOM CODE",

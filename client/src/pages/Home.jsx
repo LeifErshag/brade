@@ -338,7 +338,7 @@ export default function Home() {
                   <div style={S.playRow}>
                     <span style={{ color: "#a07840", fontSize: 13 }}>
                       {t("home.searching")} {mmQueueSize > 1 ? t("home.inQueue", { n: mmQueueSize }) : ""}
-                      {mmWaitSecs > 0 && ` · ${mmWaitSecs}s`}
+                      {mmWaitSecs > 0 && t("home.waited", { n: mmWaitSecs })}
                     </span>
                     <button onClick={handleCancelMatch} style={S.btnSecondary}>{t("common.cancel")}</button>
                   </div>
