@@ -324,3 +324,53 @@ describe.each(["white", "black"])("opponentReplyValue on a position %s has alrea
       .toBeGreaterThan(opponentReplyValue(wonPos(UPPSPEL), color, [3, 1]));
   });
 });
+
+// ── Sprängjan is decided by the LAST move's burst (#68) ──────────────────────
+// As in the engine and the game handlers, a jan is a sprängjan only when the
+// move that completes it burst a band in the mover's first quarter
+// (applyMove().burstFirstQuarter of the last move), not when some earlier move
+// of the turn did. White to move has 2 on the bar and its own checkers on
+// idx 0-3; black has a band on idx 4, a blot on idx 5, its own checkers on
+// idx 12-15 (2 entry points left) and nobody on the bar. Neither the burst
+// (black 2 on the bar) nor the hit (1) makes jan alone; together they do (3).
+//   6 then 5: bar→5 hits, then bar→4 bursts and completes the jan: sprängjan.
+//   5 then 6: bar→4 bursts, then bar→5 hits and completes the jan: plain jan.
+// Grandmaster must play the 6-then-5 order. Mirrored for black.
+const LAST_BURST_BOARD = [3, 3, 3, 4, -2, -1, 0, 0, 0, 0, 0, 0, -2, -2, -2, -2, 0, 0, 0, 0, -4, 0, 0, 0];
+
+function lastBurstPos(mover) {
+  const pos = { board: LAST_BURST_BOARD, bar: { white: 2, black: 0 }, off: { white: 0, black: 0 } };
+  return mover === "white" ? pos : swapColours(pos);
+}
+
+describe.each(["white", "black"])("sprängjan needs the last move's burst, %s to move (#68)", (color) => {
+  const opp = other(color);
+
+  test.each([[[5, 6]], [[6, 5]]])("precondition with dice %j: one order is sprängjan, the other plain jan", (dice) => {
+    const p = lastBurstPos(color);
+    const gs = makeGs(p.board, dice, color, p.bar, p.off);
+    expect(checkWin({ ...gs, turn: color })).toBeNull();
+    expect(checkWin({ ...gs, turn: opp })).toBeNull();
+    const seqs = legalTurnSequences(gs, color);
+    expect(seqs).toHaveLength(2);
+    for (const s of seqs) {
+      expect(s.moves).toHaveLength(2);
+      // The first move alone does not end the game.
+      const first = applyMove(gs, color, s.moves[0].from, s.moves[0].to, s.moves[0].die);
+      expect(checkWin({ ...first.gs, turn: color }, first.burstFirstQuarter)).toBeNull();
+    }
+    const byLastDie = Object.fromEntries(seqs.map(s => [s.moves[1].die, replayWin(gs, color, s.moves)?.winType]));
+    expect(byLastDie).toEqual({ 5: "sprangjan", 6: "jan" });
+  });
+
+  test.each([
+    [[5, 6], false], [[6, 5], false], [[5, 6], true], [[6, 5], true],
+  ])("with dice %j (our sequences reversed: %s) Grandmaster bursts last and makes sprängjan", (dice, reversed) => {
+    control.reverseFor = reversed ? color : null;
+    const p = lastBurstPos(color);
+    const gs = makeGs(p.board, dice, color, p.bar, p.off);
+    const win = playTurn(gs, color, `last-burst-${color}`);
+    expect(win?.winner).toBe(color);
+    expect(win?.winType).toBe("sprangjan");
+  });
+});
