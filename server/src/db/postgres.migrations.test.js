@@ -22,6 +22,8 @@ const ONE_HOUR = 60 * 60 * 1000;
 const pools = [];
 const clients = [];
 const queryLog = []; // { via, owner, text, effectiveTimeout }
+// Optional hook: (text) => Error | null. A returned Error makes that query reject.
+let failQuery = null;
 
 function normalize(config, values) {
   if (typeof config === "string") return { text: config, values, perQuery: undefined };
@@ -43,11 +45,14 @@ class FakeClient extends EventEmitter {
     this.connectionParameters = { query_timeout: opts.query_timeout ?? false };
     this.released = false;
     this.releasedWithTimeout = undefined;
+    this.releaseArgs = undefined; // arguments of the release() call
+    this.ended = false;
     clients.push(this);
   }
   async connect() {}
-  async end() { this.released = true; }
-  release() {
+  async end() { this.released = true; this.ended = true; }
+  release(...args) {
+    this.releaseArgs = args;
     this.released = true;
     this.releasedWithTimeout = this.connectionParameters.query_timeout;
   }
@@ -57,6 +62,8 @@ class FakeClient extends EventEmitter {
       via: "client", owner: this, text: q.text,
       effectiveTimeout: q.perQuery || this.connectionParameters.query_timeout,
     });
+    const err = failQuery?.(q.text);
+    if (err) throw err;
     return respond(q.text);
   }
 }
@@ -74,6 +81,8 @@ class FakePool extends EventEmitter {
       via: "pool", owner: this, text: q.text,
       effectiveTimeout: q.perQuery || this.opts.query_timeout,
     });
+    const err = failQuery?.(q.text);
+    if (err) throw err;
     return respond(q.text);
   }
   async end() {}
@@ -105,6 +114,7 @@ beforeEach(async () => {
   pools.length = 0;
   clients.length = 0;
   queryLog.length = 0;
+  failQuery = null;
   jest.spyOn(console, "log").mockImplementation(() => {});
   jest.spyOn(console, "error").mockImplementation(() => {});
   await connectPostgres();
@@ -182,5 +192,44 @@ test("connections returned to the app pool keep its client-side query_timeout", 
   // handed back to the app with the timeout still disabled.
   for (const c of clients.filter((c) => c.pool === pool && c.released)) {
     expect(c.releasedWithTimeout).toBe(appTimeout);
+  }
+});
+
+test("a failing migration rejects with its filename and original error, and discards the connection", async () => {
+  const [first] = await migrationFiles();
+  pools.length = 0;
+  clients.length = 0;
+  queryLog.length = 0;
+  // The migration SQL times out client-side, and the connection is then too
+  // broken for ROLLBACK to succeed either.
+  failQuery = (text) => {
+    if (squash(text) === first.sql) return new Error("Query read timeout");
+    if (/^rollback\b/i.test(squash(text))) return new Error("Connection terminated unexpectedly");
+    return null;
+  };
+
+  const outcome = await connectPostgres().then(
+    () => ({ rejected: false, message: "" }),
+    (err) => ({ rejected: true, message: String(err?.message ?? err) }),
+  );
+  expect(outcome.rejected).toBe(true);
+  expect(outcome.message).toContain(first.name);
+  expect(outcome.message).toContain("Query read timeout");
+  // The ROLLBACK failure must not replace the original error.
+  expect(outcome.message).not.toContain("Connection terminated unexpectedly");
+
+  // The connection that ran the failing SQL is not handed back as healthy:
+  // a pooled client is released with a truthy error (so pg destroys it); a
+  // standalone client is ended.
+  const m = findMigration(first.sql);
+  expect(m).not.toBeNull();
+  const conn = m.entry.owner;
+  expect(conn).toBeInstanceOf(FakeClient);
+  expect(conn.released).toBe(true);
+  if (conn.pool) {
+    expect(conn.releaseArgs).toBeDefined();
+    expect(conn.releaseArgs[0]).toBeTruthy();
+  } else {
+    expect(conn.ended || Boolean(conn.releaseArgs?.[0])).toBe(true);
   }
 });
