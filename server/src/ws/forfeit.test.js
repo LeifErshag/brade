@@ -13,8 +13,13 @@ import { EventEmitter } from "events";
 const store = new Map();
 // Lets a test hold a connect inside the room lock (at its TTL refresh).
 let expireGate = null;
+// Lets a test hold the next Redis GET (one-shot), e.g. the close handler's.
+let nextGetGate = null;
 const fakeRedis = {
-  get:    async (k) => store.get(k) ?? null,
+  get:    async (k) => {
+    if (nextGetGate) { const g = nextGetGate; nextGetGate = null; await g; }
+    return store.get(k) ?? null;
+  },
   set:    async (k, v) => { store.set(k, v); return "OK"; },
   expire: async () => { if (expireGate) await expireGate; return 1; },
   ttl:    async () => 100,
@@ -38,6 +43,9 @@ process.env.JWT_ACCESS_SECRET = "test-access-secret";
 
 const { handleConnection, rooms, userConnections, inFlightConnections } = await import("./server.js");
 const { withRoomLock } = await import("./roomLock.js");
+// Test-only export: number of pending (scheduled or fired but not yet run)
+// disconnect-forfeit entries.
+const { pendingForfeitCount } = await import("./handlers.js");
 const { initGame } = await import("../game/engine.js");
 const { signAccessToken } = await import("../auth/tokens.js");
 
@@ -111,6 +119,7 @@ beforeEach(() => {
   inFlightConnections.clear();
   query.mockClear();
   expireGate = null;
+  nextGetGate = null;
   store.set(`room:${ROOM_ID}`, JSON.stringify(playingRoom(ROOM_ID)));
   jest.spyOn(console, "error").mockImplementation(() => {});
   jest.spyOn(console, "log").mockImplementation(() => {});
@@ -165,6 +174,7 @@ describe("disconnect forfeit", () => {
     expect(room.matchResult).toMatchObject({ winner: "white", winType: "resign" });
     expect(gameRecorded()).toBe(true);
     expect(sentTypes(whiteWs)).toContain("MATCH_OVER");
+    expect(pendingForfeitCount()).toBe(0);
   });
 
   test("a connection of the same player to another room does not prevent the forfeit", async () => {
@@ -182,7 +192,11 @@ describe("disconnect forfeit", () => {
   test("a reconnect before the timer fires cancels the forfeit", async () => {
     await blackDisconnects();
     await jest.advanceTimersByTimeAsync(FORFEIT_MS - 1_000);
+    expect(jest.getTimerCount()).toBe(1);
     await connect(fakeWs(), BLACK_ID);
+    // Checked before time moves on: the cancel cleared the pending timer.
+    expect(pendingForfeitCount()).toBe(0);
+    expect(jest.getTimerCount()).toBe(0);
 
     await jest.advanceTimersByTimeAsync(FORFEIT_MS);
     await settle();
@@ -190,6 +204,8 @@ describe("disconnect forfeit", () => {
     expect(saved().status).toBe("playing");
     expect(saved().matchResult).toBeUndefined();
     expect(gameRecorded()).toBe(false);
+    expect(pendingForfeitCount()).toBe(0);
+    expect(jest.getTimerCount()).toBe(0);
   });
 
   test("a forfeit queued behind the same player's reconnect does not resign the game", async () => {
@@ -205,6 +221,7 @@ describe("disconnect forfeit", () => {
     expect(gameRecorded()).toBe(false);
     expect(sentTypes(whiteWs)).not.toContain("MATCH_OVER");
     expect(sentTypes(blackWs2)).not.toContain("MATCH_OVER");
+    expect(pendingForfeitCount()).toBe(0);
   });
 
   test("after a reconnect beat the queued forfeit, a later disconnect forfeits again", async () => {
@@ -219,5 +236,236 @@ describe("disconnect forfeit", () => {
 
     expect(saved().status).toBe("finished");
     expect(saved().matchResult).toMatchObject({ winner: "white", winType: "resign" });
+  });
+
+  // Issue #70: the close handler awaits Redis outside the room lock before it
+  // schedules the forfeit, so a quick reconnect can register first. The timer
+  // scheduled afterwards is stale and must do nothing when it fires.
+  test("a forfeit scheduled by the close handler after a quick reconnect registered is a no-op", async () => {
+    const whiteWs = fakeWs();
+    const blackWs = fakeWs();
+    await connect(whiteWs, WHITE_ID);
+    await connect(blackWs, BLACK_ID);
+
+    // Hold the close handler at its Redis read.
+    const gate = deferred();
+    nextGetGate = gate.promise;
+    disconnect(blackWs);
+    await jest.advanceTimersByTimeAsync(0);
+
+    // Black reconnects and registers while the close handler is still waiting.
+    const blackWs2 = fakeWs();
+    await connect(blackWs2, BLACK_ID);
+    expect(rooms.get(ROOM_ID)?.size).toBe(2);
+
+    // Now the close handler resumes and schedules the (stale) forfeit.
+    gate.resolve();
+    await settle();
+
+    await jest.advanceTimersByTimeAsync(FORFEIT_MS + 1_000);
+    await settle();
+
+    expect(rooms.get(ROOM_ID)?.size).toBe(2);
+    const room = saved();
+    expect(room.status).toBe("playing");
+    expect(room.matchResult).toBeUndefined();
+    expect(room.score).toEqual({ white: 0, black: 0 });
+    expect(gameRecorded()).toBe(false);
+    expect(sentTypes(whiteWs)).not.toContain("MATCH_OVER");
+    expect(sentTypes(blackWs2)).not.toContain("MATCH_OVER");
+    expect(pendingForfeitCount()).toBe(0);
+  });
+
+  // Issue #70: black reconnects ahead of a queued forfeit (the first
+  // disconnect's timer has fired and waits for the lock) and drops again
+  // before that forfeit's locked section runs. The first disconnect's forfeit
+  // must not resign the game; only the second disconnect's 60 s may.
+  //
+  // Two orderings of the second close handler versus the queued forfeit:
+  // - "held": the second close handler's Redis read is held until the queued
+  //   first forfeit's section has run (as in production, a network round
+  //   trip), so only the reconnect's cancel can make that forfeit stale;
+  // - "unheld": the fake read resolves at once, so the second close handler
+  //   schedules a new forfeit before the queued one runs. The reconnect's
+  //   cancel has already removed the first entry, so this does not replace
+  //   it; it checks that the queued forfeit is not revived by the mere
+  //   existence of a newer pending forfeit (e.g. one shared token). The
+  //   replace path is pinned by the two-tab test below.
+  test.each([
+    ["held", true],
+    ["unheld", false],
+  ])("a queued forfeit from an earlier disconnect does not fire for a later disconnect (%s close read)", async (_label, holdCloseRead) => {
+    const { whiteWs } = await blackDisconnects();
+    const firstDisconnectAt = Date.now();
+
+    const gate = deferred();
+    expireGate = gate.promise;
+    const blackWs2 = fakeWs();
+    // When the reconnect registers (its first ROOM_STATE goes out), drop the
+    // socket again in a microtask, i.e. right after connectToRoom's
+    // synchronous registration, before the queued forfeit gets the lock.
+    // (A promise job, not queueMicrotask, which the fake timers replace.)
+    const closeGate = deferred();
+    let dropped = false;
+    blackWs2.send.mockImplementation(() => {
+      if (dropped) return;
+      dropped = true;
+      Promise.resolve().then(() => {
+        if (holdCloseRead) nextGetGate = closeGate.promise;
+        disconnect(blackWs2);
+      });
+    });
+    const reconnect = connect(blackWs2, BLACK_ID);
+    await jest.advanceTimersByTimeAsync(0);
+
+    // The first disconnect's timer fires while the reconnect holds the lock.
+    await jest.advanceTimersByTimeAsync(FORFEIT_MS);
+    expireGate = null;
+    gate.resolve();
+    await reconnect;
+    await settle();
+    expect(dropped).toBe(true);
+    const secondDisconnectAt = Date.now();
+    // When held, the close handler's read consumed the one-shot gate.
+    expect(nextGetGate).toBeNull();
+    // Drain the lock so the queued first forfeit's section has run.
+    await settle();
+    expect(saved().status).toBe("playing");
+    expect(gameRecorded()).toBe(false);
+    // Now let the (held) second close handler schedule its forfeit.
+    closeGate.resolve();
+    await settle();
+    expect(pendingForfeitCount()).toBe(1);
+    expect(secondDisconnectAt).toBeGreaterThanOrEqual(firstDisconnectAt + FORFEIT_MS);
+
+    // First disconnect + 60 s + epsilon: not forfeited.
+    await jest.advanceTimersByTimeAsync(1);
+    await settle();
+    expect(Date.now()).toBeGreaterThan(firstDisconnectAt + FORFEIT_MS);
+    expect(saved().status).toBe("playing");
+    expect(saved().matchResult).toBeUndefined();
+    expect(gameRecorded()).toBe(false);
+    expect(sentTypes(whiteWs)).not.toContain("MATCH_OVER");
+
+    // Still not forfeited shortly before second disconnect + 60 s.
+    await jest.advanceTimersByTimeAsync(secondDisconnectAt + FORFEIT_MS - 1_000 - Date.now());
+    await settle();
+    expect(saved().status).toBe("playing");
+    expect(gameRecorded()).toBe(false);
+
+    // Forfeited by second disconnect + 60 s.
+    await jest.advanceTimersByTimeAsync(secondDisconnectAt + FORFEIT_MS - Date.now());
+    await settle();
+    const room = saved();
+    expect(room.status).toBe("finished");
+    expect(room.matchResult).toMatchObject({ winner: "white", winType: "resign" });
+    expect(gameRecorded()).toBe(true);
+    expect(sentTypes(whiteWs)).toContain("MATCH_OVER");
+    expect(pendingForfeitCount()).toBe(0);
+  });
+
+  // Issue #70, replace path (two tabs, no reconnect in between): black's tab 1
+  // drops (forfeit A scheduled although tab 2 is still registered). A fires
+  // while another connect holds the room lock and queues behind it. Tab 2
+  // then drops, scheduling forfeit B, which replaces A's entry while A is
+  // still queued. A must be a no-op; only B, 60 s after tab 2's close, may
+  // forfeit.
+  test("a newer disconnect's forfeit replaces one that has fired and is still queued", async () => {
+    const whiteWs = fakeWs();
+    const blackTab1 = fakeWs();
+    const blackTab2 = fakeWs();
+    await connect(whiteWs, WHITE_ID);
+    await connect(blackTab1, BLACK_ID);
+    await connect(blackTab2, BLACK_ID);
+    const startAt = Date.now();
+
+    disconnect(blackTab1);
+    await settle();
+    expect(pendingForfeitCount()).toBe(1);
+    expect(jest.getTimerCount()).toBe(1);
+
+    // White opens a second tab; its connect holds the lock at the TTL refresh.
+    const gate = deferred();
+    expireGate = gate.promise;
+    const whiteTab2 = fakeWs();
+    const lockHolder = connect(whiteTab2, WHITE_ID);
+    await jest.advanceTimersByTimeAsync(0);
+
+    // A fires and queues behind the held connect.
+    await jest.advanceTimersByTimeAsync(FORFEIT_MS);
+    expect(jest.getTimerCount()).toBe(0);
+
+    // Tab 2 drops: B is scheduled while A is still queued.
+    disconnect(blackTab2);
+    await jest.advanceTimersByTimeAsync(0);
+    const secondCloseAt = Date.now();
+    expect(secondCloseAt).toBe(startAt + FORFEIT_MS);
+    expect(pendingForfeitCount()).toBe(1);
+    expect(jest.getTimerCount()).toBe(1);
+
+    // Release the lock: the held connect, then A's section, run.
+    expireGate = null;
+    gate.resolve();
+    await lockHolder;
+    await settle();
+    expect(saved().status).toBe("playing");
+    expect(saved().matchResult).toBeUndefined();
+    expect(gameRecorded()).toBe(false);
+    expect(sentTypes(whiteWs)).not.toContain("MATCH_OVER");
+    expect(pendingForfeitCount()).toBe(1);
+
+    // Not forfeited shortly before tab 2's close + 60 s.
+    await jest.advanceTimersByTimeAsync(FORFEIT_MS - 1_000);
+    await settle();
+    expect(saved().status).toBe("playing");
+    expect(gameRecorded()).toBe(false);
+
+    // Forfeited by tab 2's close + 60 s (about 120 s from the start).
+    await jest.advanceTimersByTimeAsync(secondCloseAt + FORFEIT_MS - Date.now());
+    await settle();
+    const room = saved();
+    expect(room.status).toBe("finished");
+    expect(room.matchResult).toMatchObject({ winner: "white", winType: "resign" });
+    expect(gameRecorded()).toBe(true);
+    expect(sentTypes(whiteWs)).toContain("MATCH_OVER");
+    expect(pendingForfeitCount()).toBe(0);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  // Two black tabs drop back to back while the first forfeit timer is still
+  // pending: the second schedule replaces (and clears) the first timer, and a
+  // single forfeit happens 60 s after the second drop.
+  test("a second drop within 60 s reschedules the pending forfeit", async () => {
+    const whiteWs = fakeWs();
+    const blackTab1 = fakeWs();
+    const blackTab2 = fakeWs();
+    await connect(whiteWs, WHITE_ID);
+    await connect(blackTab1, BLACK_ID);
+    await connect(blackTab2, BLACK_ID);
+
+    disconnect(blackTab1);
+    await settle();
+    await jest.advanceTimersByTimeAsync(10_000);
+    disconnect(blackTab2);
+    await settle();
+    const secondDropAt = Date.now();
+    expect(pendingForfeitCount()).toBe(1);
+    expect(jest.getTimerCount()).toBe(1);
+
+    // The first drop's 60 s pass without a forfeit.
+    await jest.advanceTimersByTimeAsync(FORFEIT_MS - 1_000);
+    await settle();
+    expect(saved().status).toBe("playing");
+    expect(gameRecorded()).toBe(false);
+
+    // Forfeited once, 60 s after the second drop.
+    await jest.advanceTimersByTimeAsync(secondDropAt + FORFEIT_MS - Date.now());
+    await settle();
+    expect(saved().status).toBe("finished");
+    expect(saved().matchResult).toMatchObject({ winner: "white", winType: "resign" });
+    expect(sentTypes(whiteWs).filter(t => t === "MATCH_OVER")).toHaveLength(1);
+    expect(query.mock.calls.filter(([sql]) => /UPDATE\s+games/i.test(sql))).toHaveLength(1);
+    expect(pendingForfeitCount()).toBe(0);
+    expect(jest.getTimerCount()).toBe(0);
   });
 });
