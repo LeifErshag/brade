@@ -46,6 +46,7 @@ class FakeClient extends EventEmitter {
     this.released = false;
     this.releasedWithTimeout = undefined;
     this.releaseArgs = undefined; // arguments of the release() call
+    this.releasedAtLogIndex = undefined; // queryLog length when released
     this.ended = false;
     clients.push(this);
   }
@@ -53,6 +54,7 @@ class FakeClient extends EventEmitter {
   async end() { this.released = true; this.ended = true; }
   release(...args) {
     this.releaseArgs = args;
+    this.releasedAtLogIndex = queryLog.length;
     this.released = true;
     this.releasedWithTimeout = this.connectionParameters.query_timeout;
   }
@@ -100,6 +102,7 @@ const squash = (s) => s.replace(new RegExp("^\uFEFF"), "").replace(/\s+/g, " ").
 const isSetLocalOff = (t) => /^set local statement_timeout\s*(=|to)\s*'?0'?$/i.test(squash(t));
 const isBegin = (t) => /^begin( transaction| work)?$/i.test(squash(t));
 const isCommit = (t) => /^commit( transaction| work)?$/i.test(squash(t));
+const isRollback = (t) => /^rollback( transaction| work)?$/i.test(squash(t));
 const isEnd = (t) => /^(commit|rollback)\b/i.test(squash(t));
 
 async function migrationFiles() {
@@ -225,6 +228,8 @@ test("a failing migration rejects with its filename and original error, and disc
   expect(m).not.toBeNull();
   const conn = m.entry.owner;
   expect(conn).toBeInstanceOf(FakeClient);
+  // ROLLBACK is still attempted on that connection, even though it fails.
+  expect(m.sameConn.some((e) => e.i > m.idx && isRollback(e.text))).toBe(true);
   expect(conn.released).toBe(true);
   if (conn.pool) {
     expect(conn.releaseArgs).toBeDefined();
@@ -232,4 +237,71 @@ test("a failing migration rejects with its filename and original error, and disc
   } else {
     expect(conn.ended || Boolean(conn.releaseArgs?.[0])).toBe(true);
   }
+});
+
+// Issue #80: the wrapped error keeps the original as `cause`, and a plain SQL
+// error with a working ROLLBACK really sends ROLLBACK before releasing.
+
+function resetLogs() {
+  pools.length = 0;
+  clients.length = 0;
+  queryLog.length = 0;
+}
+
+async function failingConnect() {
+  return connectPostgres().then(
+    () => { throw new Error("connectPostgres unexpectedly resolved"); },
+    (err) => err,
+  );
+}
+
+test("a failing migration's error carries the original error as cause", async () => {
+  const [first] = await migrationFiles();
+  resetLogs();
+  const original = new Error('relation "nope" does not exist');
+  original.code = "42P01";
+  failQuery = (text) => (squash(text) === first.sql ? original : null);
+
+  const err = await failingConnect();
+  expect(err).toBeInstanceOf(Error);
+  // Message format is unchanged.
+  expect(err.message).toBe(`Migration failed (${first.name}): ${original.message}`);
+  // The original error object itself survives, with its stack and code.
+  expect(err.cause).toBe(original);
+  expect(err.cause.code).toBe("42P01");
+  expect(err.cause.stack).toBe(original.stack);
+});
+
+test("a plain SQL error with a working ROLLBACK sends ROLLBACK on the same connection before releasing it", async () => {
+  const [first] = await migrationFiles();
+  resetLogs();
+  const original = new Error('syntax error at or near "SELEC"');
+  original.code = "42601";
+  failQuery = (text) => (squash(text) === first.sql ? original : null);
+
+  const err = await failingConnect();
+  expect(err.message).toBe(`Migration failed (${first.name}): ${original.message}`);
+  expect(err.message).not.toMatch(/rollback/i);
+
+  const m = findMigration(first.sql);
+  expect(m).not.toBeNull();
+  const conn = m.entry.owner;
+  expect(conn).toBeInstanceOf(FakeClient);
+  expect(m.entry.via).toBe("client");
+
+  const after = m.sameConn.filter((e) => e.i > m.idx);
+  const rollbacks = after.filter((e) => isRollback(e.text));
+  expect(rollbacks).toHaveLength(1);
+  // Nothing else is sent between the failing SQL and ROLLBACK: no COMMIT and
+  // no _migrations bookkeeping for the failed file.
+  expect(after[0].i).toBe(rollbacks[0].i);
+  expect(after.some((e) => isCommit(e.text))).toBe(false);
+  expect(after.some((e) => /insert\s+into\s+_migrations/i.test(e.text))).toBe(false);
+
+  // Released exactly after ROLLBACK went out.
+  expect(conn.released).toBe(true);
+  expect(conn.releasedAtLogIndex).toBeGreaterThan(rollbacks[0].i);
+
+  // No later migration ran after the failure.
+  expect(queryLog.slice(m.idx + 1).every((e) => e.owner === conn)).toBe(true);
 });
