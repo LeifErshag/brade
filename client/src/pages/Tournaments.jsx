@@ -1,14 +1,17 @@
 import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router";
 import { useAuth } from "../AuthContext.jsx";
+import { LanguageBar } from "../components/LanguageToggle.jsx";
+import { useI18n } from "../i18n/I18nContext.jsx";
 
 const S = {
   page: {
     background: "#2a1400", minHeight: "100vh", fontFamily: "Georgia, serif",
-    padding: "32px 16px",
+    padding: "0 16px 32px",
   },
+  langBar: { padding: "10px 0 16px" },
   inner:    { maxWidth: 700, margin: "0 auto" },
-  header:   { display: "flex", alignItems: "center", gap: 16, marginBottom: 32 },
+  header:   { display: "flex", alignItems: "center", gap: 16, marginBottom: 32, flexWrap: "wrap" },
   back:     { color: "#a07840", textDecoration: "none", fontSize: 13 },
   title:    { color: "#e8b86d", fontSize: 28, margin: 0, flex: 1 },
   btnPrimary: {
@@ -50,12 +53,6 @@ const S = {
   formActions: { display: "flex", gap: 10, marginTop: 18 },
 };
 
-const TYPE_LABELS = {
-  round_robin:        "Round Robin",
-  single_elimination: "Single Elimination",
-  swiss:              "Swiss",
-};
-
 const STATUS_STYLE = {
   registration: { background: "#1a4a1a", color: "#7ddb7d" },
   active:       { background: "#4a3800", color: "#e8d06d" },
@@ -66,11 +63,13 @@ const STATUS_STYLE = {
 export default function Tournaments() {
   const { user, authFetch } = useAuth();
   const navigate = useNavigate();
+  const { t, msg } = useI18n();
 
   const [tournaments, setTournaments] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [showCreate, setShowCreate]   = useState(false);
   const [creating, setCreating]       = useState(false);
+  // { key } or { server }: translated at render time.
   const [createError, setCreateError] = useState(null);
 
   const [form, setForm] = useState({
@@ -101,7 +100,7 @@ export default function Tournaments() {
 
   async function handleCreate(e) {
     e.preventDefault();
-    if (!form.name.trim()) { setCreateError("Name is required"); return; }
+    if (!form.name.trim()) { setCreateError({ key: "tournaments.nameRequired" }); return; }
     setCreating(true);
     setCreateError(null);
     try {
@@ -122,7 +121,7 @@ export default function Tournaments() {
       if (res.ok) {
         navigate(`/tournaments/${data.id}`);
       } else {
-        setCreateError(data.error ?? "Failed to create tournament");
+        setCreateError(data.error ? { server: data.error } : { key: "tournaments.createFailed" });
       }
     } finally {
       setCreating(false);
@@ -136,23 +135,25 @@ export default function Tournaments() {
       return;
     }
     const body = await res.json().catch(() => ({}));
-    // Already a member, or tournament went active since page loaded — just go there
+    // Already a member, or tournament went active since page loaded — just go there.
+    // Compares the server's raw (English) text, before any translation.
     if (body.error === "Already registered" || body.error === "Registration is closed") {
       navigate(`/tournaments/${id}`);
       return;
     }
-    window.alert(body.error ?? "Could not join");
+    window.alert(body.error ? msg({ server: body.error }) : t("tournaments.joinFailed"));
   }
 
   return (
     <div style={S.page}>
       <div style={S.inner}>
+        <LanguageBar style={S.langBar} />
         <div style={S.header}>
-          <Link to="/" style={S.back}>← Home</Link>
-          <h1 style={S.title}>Tournaments</h1>
+          <Link to="/" style={S.back}>{t("common.backHome")}</Link>
+          <h1 style={S.title}>{t("tournaments.title")}</h1>
           {user && !showCreate && (
             <button style={S.btnPrimary} onClick={() => setShowCreate(true)}>
-              Create
+              {t("tournaments.create")}
             </button>
           )}
         </div>
@@ -161,44 +162,43 @@ export default function Tournaments() {
         {showCreate && user && (
           <>
             <form style={S.form} onSubmit={handleCreate}>
-              <p style={S.formTitle}>New Tournament</p>
+              <p style={S.formTitle}>{t("tournaments.newTournament")}</p>
 
               <div style={S.fieldGroup}>
-                <label style={S.label}>Name</label>
+                <label style={S.label}>{t("tournaments.name")}</label>
                 <input
                   style={S.input}
                   value={form.name}
                   onChange={e => setField("name", e.target.value)}
                   maxLength={60}
-                  placeholder="e.g. Midvinterlaget 2026"
+                  placeholder={t("tournaments.namePlaceholder")}
                 />
               </div>
 
               <div style={{ ...S.formRow }}>
                 <div style={{ ...S.fieldGroup, flex: 1 }}>
-                  <label style={S.label}>Format</label>
+                  <label style={S.label}>{t("tournaments.format")}</label>
                   <select style={S.select} value={form.tournament_type}
                     onChange={e => setField("tournament_type", e.target.value)}>
-                    <option value="round_robin">Round Robin</option>
-                    <option value="single_elimination">Single Elimination</option>
-                    <option value="swiss">Swiss</option>
+                    {["round_robin", "single_elimination", "swiss"].map(type => (
+                      <option key={type} value={type}>{t(`tournament.type.${type}`)}</option>
+                    ))}
                   </select>
                 </div>
                 <div style={{ ...S.fieldGroup, flex: 1 }}>
-                  <label style={S.label}>Match length</label>
+                  <label style={S.label}>{t("matchLength.label")}</label>
                   <select style={S.select} value={form.match_length}
                     onChange={e => setField("match_length", Number(e.target.value))}>
-                    <option value={1}>1 game</option>
-                    <option value={3}>Best of 3</option>
-                    <option value={5}>Best of 5</option>
-                    <option value={7}>Best of 7</option>
+                    {[1, 3, 5, 7].map(n => (
+                      <option key={n} value={n}>{n === 1 ? t("matchLength.one") : t("matchLength.bestOf", { n })}</option>
+                    ))}
                   </select>
                 </div>
               </div>
 
               <div style={{ ...S.formRow }}>
                 <div style={{ ...S.fieldGroup, flex: 1 }}>
-                  <label style={S.label}>Max players</label>
+                  <label style={S.label}>{t("tournaments.maxPlayers")}</label>
                   <select style={S.select} value={form.max_players}
                     onChange={e => setField("max_players", Number(e.target.value))}>
                     {[2,4,6,8,12,16,24,32].map(n => (
@@ -208,27 +208,27 @@ export default function Tournaments() {
                 </div>
                 {form.tournament_type === "swiss" && (
                   <div style={{ ...S.fieldGroup, flex: 1 }}>
-                    <label style={S.label}>Rounds (blank = auto)</label>
+                    <label style={S.label}>{t("tournaments.rounds")}</label>
                     <input
                       style={S.input}
                       type="number"
                       min={1} max={20}
                       value={form.total_rounds}
                       onChange={e => setField("total_rounds", e.target.value)}
-                      placeholder="auto"
+                      placeholder={t("tournaments.roundsPlaceholder")}
                     />
                   </div>
                 )}
               </div>
 
-              {createError && <p style={S.error}>{createError}</p>}
+              {createError && <p style={S.error}>{msg(createError)}</p>}
 
               <div style={S.formActions}>
                 <button type="submit" style={S.btnPrimary} disabled={creating}>
-                  {creating ? "Creating…" : "Create Tournament"}
+                  {creating ? t("common.creating") : t("tournaments.createTournament")}
                 </button>
                 <button type="button" style={S.btnSecondary} onClick={() => { setShowCreate(false); setCreateError(null); }}>
-                  Cancel
+                  {t("common.cancel")}
                 </button>
               </div>
             </form>
@@ -238,31 +238,36 @@ export default function Tournaments() {
 
         {/* ── Tournament list ── */}
         {loadingList ? (
-          <p style={S.empty}>Loading…</p>
+          <p style={S.empty}>{t("common.loading")}</p>
         ) : tournaments.length === 0 ? (
-          <p style={S.empty}>No tournaments yet. Create one to get started!</p>
+          <p style={S.empty}>{t("tournaments.empty")}</p>
         ) : (
-          tournaments.map(t => (
-            <div key={t.id} style={S.card}>
+          tournaments.map(tm => (
+            <div key={tm.id} style={S.card}>
               <div style={S.cardInfo}>
-                <div style={S.cardName}>{t.name}</div>
+                <div style={S.cardName}>{tm.name}</div>
                 <div style={S.cardMeta}>
-                  {TYPE_LABELS[t.tournament_type]} · {t.player_count}/{t.max_players} players
-                  · Best of {t.match_length} · by {t.creator_name}
+                  {t("tournaments.meta", {
+                    type:    t(`tournament.type.${tm.tournament_type}`),
+                    count:   tm.player_count,
+                    max:     tm.max_players,
+                    n:       tm.match_length,
+                    creator: tm.creator_name,
+                  })}
                 </div>
               </div>
-              <span style={{ ...S.statusBadge, ...(STATUS_STYLE[t.status] ?? {}) }}>
-                {t.status === "registration" ? "Open" :
-                 t.status === "active"       ? `Round ${t.current_round}` :
-                 t.status}
+              <span style={{ ...S.statusBadge, ...(STATUS_STYLE[tm.status] ?? {}) }}>
+                {tm.status === "active"
+                  ? t("tournaments.round", { n: tm.current_round })
+                  : t(`tournament.status.${tm.status}`)}
               </span>
-              {t.status === "registration" && user ? (
-                <button style={S.btnPrimary} onClick={() => handleJoin(t.id)}>
-                  Join
+              {tm.status === "registration" && user ? (
+                <button style={S.btnPrimary} onClick={() => handleJoin(tm.id)}>
+                  {t("common.join")}
                 </button>
               ) : (
-                <Link to={`/tournaments/${t.id}`} style={S.btnSecondary}>
-                  View
+                <Link to={`/tournaments/${tm.id}`} style={S.btnSecondary}>
+                  {t("common.view")}
                 </Link>
               )}
             </div>

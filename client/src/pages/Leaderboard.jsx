@@ -1,12 +1,15 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router";
+import { LanguageBar } from "../components/LanguageToggle.jsx";
+import { useI18n } from "../i18n/I18nContext.jsx";
 
 const S = {
   page: {
     background: "#2a1400", minHeight: "100vh", fontFamily: "Georgia, serif",
     display: "flex", flexDirection: "column", alignItems: "center",
-    padding: "40px 16px",
+    padding: "0 16px 40px",
   },
+  langBar: { padding: "10px 0 20px", maxWidth: 640 },
   title:    { color: "#e8b86d", fontSize: 32, letterSpacing: 3, margin: 0 },
   subtitle: { color: "#a07840", fontSize: 14, marginTop: 6, marginBottom: 32 },
   card: {
@@ -48,6 +51,7 @@ const S = {
 export default function Leaderboard() {
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const { t } = useI18n();
 
   useEffect(() => {
     fetch("/api/users/leaderboard")
@@ -59,23 +63,24 @@ export default function Leaderboard() {
 
   return (
     <div style={S.page}>
-      <h1 style={S.title}>Leaderboard</h1>
-      <p style={S.subtitle}>Top players by ELO rating</p>
+      <LanguageBar style={S.langBar} />
+      <h1 style={S.title}>{t("leaderboard.title")}</h1>
+      <p style={S.subtitle}>{t("leaderboard.subtitle")}</p>
 
       <div style={S.card}>
         {loading ? (
           <p style={S.empty}>…</p>
         ) : players.length === 0 ? (
-          <p style={S.empty}>No games played yet.</p>
+          <p style={S.empty}>{t("leaderboard.empty")}</p>
         ) : (
           <table style={S.table}>
             <thead style={S.thead}>
               <tr>
                 <th style={S.th}>#</th>
-                <th style={S.th}>Player</th>
+                <th style={S.th}>{t("leaderboard.colPlayer")}</th>
                 <th style={S.thRight}>ELO</th>
-                <th style={S.thRight}>W / L</th>
-                <th style={S.thRight}>Win %</th>
+                <th style={S.thRight}>{t("leaderboard.colWinLoss")}</th>
+                <th style={S.thRight}>{t("leaderboard.colWinPct")}</th>
               </tr>
             </thead>
             <tbody>
@@ -105,7 +110,7 @@ export default function Leaderboard() {
       </div>
 
       <div style={S.backRow}>
-        <Link to="/" style={S.btnBack}>← Home</Link>
+        <Link to="/" style={S.btnBack}>{t("common.backHome")}</Link>
       </div>
     </div>
   );

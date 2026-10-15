@@ -1,27 +1,21 @@
 import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router";
 import { useAuth } from "../AuthContext.jsx";
+import { LanguageBar } from "../components/LanguageToggle.jsx";
+import { useI18n } from "../i18n/I18nContext.jsx";
 
-const WIN_LABELS = {
-  normal:      "Bearing off",
-  gammon:      "Gammon",
-  monk:        "Monk",
-  jan:         "Jan",
-  forced_jan:  "Forced Jan",
-  resign:      "Resign",
-};
-
-function fmtDate(iso) {
+function fmtDate(iso, locale) {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  return new Date(iso).toLocaleDateString(locale, { month: "short", day: "numeric", year: "numeric" });
 }
 
 const S = {
   page: {
     background: "#2a1400", minHeight: "100vh", fontFamily: "Georgia, serif",
     display: "flex", flexDirection: "column", alignItems: "center",
-    padding: "40px 16px",
+    padding: "0 16px 40px",
   },
+  langBar: { padding: "10px 0 20px", maxWidth: 640 },
   card: {
     background: "#3a1a00", borderRadius: 12, padding: 36, width: "100%",
     maxWidth: 460, textAlign: "center",
@@ -91,9 +85,11 @@ const S = {
 export default function Profile() {
   const { user, loading, logout, updateProfile, authFetch } = useAuth();
   const navigate = useNavigate();
+  const { t, msg, winType } = useI18n();
 
   const [name, setName]           = useState("");
   const [saving, setSaving]       = useState(false);
+  // { type, key } or { type, server }: translated at render time.
   const [feedback, setFeedback]   = useState(null);
   const [games, setGames]         = useState([]);
   const [gamesLoading, setGamesLoading] = useState(true);
@@ -118,26 +114,27 @@ export default function Profile() {
   async function handleSave(e) {
     e.preventDefault();
     const trimmed = name.trim();
-    if (!trimmed) return setFeedback({ type: "error", msg: "Name cannot be empty." });
-    if (trimmed.length > 50) return setFeedback({ type: "error", msg: "Name is too long (max 50 chars)." });
-    if (trimmed === user.display_name) return setFeedback({ type: "success", msg: "No changes to save." });
+    if (!trimmed) return setFeedback({ type: "error", key: "profile.nameEmpty" });
+    if (trimmed.length > 50) return setFeedback({ type: "error", key: "profile.nameTooLong" });
+    if (trimmed === user.display_name) return setFeedback({ type: "success", key: "profile.noChanges" });
 
     setSaving(true);
     setFeedback(null);
     const result = await updateProfile({ display_name: trimmed });
     setSaving(false);
     if (result.ok) {
-      setFeedback({ type: "success", msg: "Name updated." });
+      setFeedback({ type: "success", key: "profile.nameUpdated" });
     } else {
-      const issues = result.error?.issues;
-      const msg = issues?.[0]?.message ?? "Failed to save — please try again.";
-      setFeedback({ type: "error", msg });
+      // Zod messages (e.g. "Name too long") are mapped like other server texts.
+      const issue = result.error?.issues?.[0]?.message;
+      setFeedback(issue ? { type: "error", server: issue } : { type: "error", key: "profile.saveFailed" });
     }
   }
 
   if (loading || !user) {
     return (
       <div style={S.page}>
+        <LanguageBar style={S.langBar} />
         <p style={{ color: "#a07840" }}>…</p>
       </div>
     );
@@ -149,6 +146,7 @@ export default function Profile() {
 
   return (
     <div style={S.page}>
+      <LanguageBar style={S.langBar} />
       {/* ── Profile card ── */}
       <div style={S.card}>
         {user.avatar_url
@@ -158,14 +156,15 @@ export default function Profile() {
         <p style={S.name}>{user.display_name}</p>
         <p style={S.stat}>ELO {user.elo}</p>
         <p style={S.stat}>
-          {user.wins}W · {user.losses}L
-          {winRate !== null && ` · ${winRate}% win rate`}
+          {winRate !== null
+            ? t("profile.statsWithRate", { wins: user.wins, losses: user.losses, pct: winRate })
+            : t("profile.stats", { wins: user.wins, losses: user.losses })}
         </p>
 
         <hr style={S.divider} />
 
         <form onSubmit={handleSave}>
-          <label style={S.label} htmlFor="display_name">Display name</label>
+          <label style={S.label} htmlFor="display_name">{t("profile.displayName")}</label>
           <input
             id="display_name"
             style={{ ...S.input, ...(feedback?.type === "error" ? S.inputError : {}) }}
@@ -175,41 +174,41 @@ export default function Profile() {
             disabled={saving}
           />
           {feedback && (
-            <p style={feedback.type === "error" ? S.error : S.success}>{feedback.msg}</p>
+            <p style={feedback.type === "error" ? S.error : S.success}>{msg(feedback)}</p>
           )}
           <div style={S.row}>
             <button type="submit" style={S.btnPrimary} disabled={saving}>
-              {saving ? "Saving…" : "Save"}
+              {saving ? t("profile.saving") : t("profile.save")}
             </button>
-            <Link to="/" style={S.btnSecondary}>Home</Link>
+            <Link to="/" style={S.btnSecondary}>{t("common.home")}</Link>
           </div>
         </form>
 
         <hr style={S.divider} />
 
         <div style={{ display: "flex", justifyContent: "center", gap: 16 }}>
-          <Link to="/leaderboard" style={S.btnSecondary}>Leaderboard</Link>
-          <button style={S.btnDanger} onClick={logout}>Sign out</button>
+          <Link to="/leaderboard" style={S.btnSecondary}>{t("common.leaderboard")}</Link>
+          <button style={S.btnDanger} onClick={logout}>{t("common.signOut")}</button>
         </div>
       </div>
 
       {/* ── Recent games ── */}
       <div style={S.histCard}>
-        <p style={S.histTitle}>Recent Games</p>
+        <p style={S.histTitle}>{t("profile.recentGames")}</p>
         {gamesLoading ? (
           <p style={S.noGames}>…</p>
         ) : games.length === 0 ? (
-          <p style={S.noGames}>No completed games yet.</p>
+          <p style={S.noGames}>{t("profile.noGames")}</p>
         ) : (
           <table style={S.table}>
             <thead style={S.thead}>
               <tr>
-                <th style={S.th}>Opponent</th>
-                <th style={S.th}>Result</th>
-                <th style={S.th}>Type</th>
-                <th style={S.thRight}>Score</th>
+                <th style={S.th}>{t("profile.colOpponent")}</th>
+                <th style={S.th}>{t("profile.colResult")}</th>
+                <th style={S.th}>{t("profile.colType")}</th>
+                <th style={S.thRight}>{t("profile.colScore")}</th>
                 <th style={S.thRight}>ELO</th>
-                <th style={S.thRight}>Date</th>
+                <th style={S.thRight}>{t("profile.colDate")}</th>
               </tr>
             </thead>
             <tbody>
@@ -224,8 +223,8 @@ export default function Profile() {
                 return (
                   <tr key={g.id} style={isLast ? {} : S.tr}>
                     <td style={S.td}>{oppName ?? "—"}</td>
-                    <td style={won ? S.tdWin : S.tdLoss}>{won ? "Win" : "Loss"}</td>
-                    <td style={S.tdRight}>{WIN_LABELS[g.win_type] ?? g.win_type ?? "—"}</td>
+                    <td style={won ? S.tdWin : S.tdLoss}>{won ? t("profile.win") : t("profile.loss")}</td>
+                    <td style={S.tdRight}>{g.win_type ? winType(g.win_type) : "—"}</td>
                     <td style={S.tdRight}>{g.white_score}–{g.black_score}</td>
                     <td style={
                       eloDelta == null ? S.tdEloNone
@@ -236,7 +235,7 @@ export default function Profile() {
                         : eloDelta >= 0 ? `+${eloDelta}`
                         : `${eloDelta}`}
                     </td>
-                    <td style={S.tdRight}>{fmtDate(g.ended_at)}</td>
+                    <td style={S.tdRight}>{fmtDate(g.ended_at, t("meta.locale"))}</td>
                   </tr>
                 );
               })}

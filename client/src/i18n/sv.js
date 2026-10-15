@@ -290,6 +290,7 @@ export default {
   },
 
   tournamentDetail: {
+    back: "← Turneringar",
     notFound: "Turneringen hittades inte",
     roundOf: "Rond {n}/{total}",
     meta: "{type} · Bäst av {n} · {count}/{max} spelare",

@@ -290,6 +290,7 @@ export default {
   },
 
   tournamentDetail: {
+    back: "← Tournaments",
     notFound: "Tournament not found",
     roundOf: "Round {n}/{total}",
     meta: "{type} · Best of {n} · {count}/{max} players",

@@ -1,12 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Link, useParams, useNavigate } from "react-router";
 import { useAuth } from "../AuthContext.jsx";
+import { LanguageBar } from "../components/LanguageToggle.jsx";
+import { useI18n } from "../i18n/I18nContext.jsx";
 
 const S = {
   page: {
     background: "#2a1400", minHeight: "100vh", fontFamily: "Georgia, serif",
-    padding: "32px 16px",
+    padding: "0 16px 32px",
   },
+  langBar: { padding: "10px 0 16px" },
   inner:   { maxWidth: 760, margin: "0 auto" },
   header:  { display: "flex", alignItems: "center", gap: 16, marginBottom: 8, flexWrap: "wrap" },
   back:    { color: "#a07840", textDecoration: "none", fontSize: 13 },
@@ -87,12 +90,6 @@ const STATUS_STYLE = {
   cancelled:    { background: "#3a0000", color: "#c0392b" },
 };
 
-const TYPE_LABELS = {
-  round_robin:        "Round Robin",
-  single_elimination: "Single Elimination",
-  swiss:              "Swiss",
-};
-
 const MATCH_STATUS_STYLE = {
   playing:   { background: "#1a4a1a", color: "#7ddb7d" },
   completed: { background: "#2a1400", color: "#6b3a10" },
@@ -100,13 +97,20 @@ const MATCH_STATUS_STYLE = {
   pending:   { background: "#4a2800", color: "#a07840" },
 };
 
+// A failed action's message: the server's text when it sent one.
+function failure(body, fallbackKey) {
+  return body.error ? { server: body.error } : { key: fallbackKey };
+}
+
 export default function TournamentDetail() {
   const { id }   = useParams();
   const navigate = useNavigate();
   const { user, authFetch } = useAuth();
+  const { t, msg } = useI18n();
 
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
+  // Message descriptors ({ key } / { server }), translated at render time.
   const [error, setError]     = useState(null);
   const [actionErr, setActionErr] = useState(null);
 
@@ -115,7 +119,7 @@ export default function TournamentDetail() {
     if (res.ok) {
       setData(await res.json());
     } else {
-      setError("Tournament not found");
+      setError({ key: "tournamentDetail.notFound" });
     }
     setLoading(false);
   }, [id, authFetch]);
@@ -154,33 +158,43 @@ export default function TournamentDetail() {
   async function handleJoin() {
     const res = await authFetch(`/api/tournaments/${id}/join`, { method: "POST" });
     const body = await res.json().catch(() => ({}));
-    if (res.ok) { load(); } else { setActionErr(body.error ?? "Failed"); }
+    if (res.ok) { load(); } else { setActionErr(failure(body, "tournamentDetail.failed")); }
   }
 
   async function handleLeave() {
     const res = await authFetch(`/api/tournaments/${id}/leave`, { method: "POST" });
     const body = await res.json().catch(() => ({}));
-    if (res.ok) { navigate("/tournaments"); } else { setActionErr(body.error ?? "Failed"); }
+    if (res.ok) { navigate("/tournaments"); } else { setActionErr(failure(body, "tournamentDetail.failed")); }
   }
 
   async function handleStart() {
     const res = await authFetch(`/api/tournaments/${id}/start`, { method: "POST" });
     const body = await res.json().catch(() => ({}));
-    if (res.ok) { load(); } else { setActionErr(body.error ?? "Failed to start"); }
+    if (res.ok) { load(); } else { setActionErr(failure(body, "tournamentDetail.startFailed")); }
   }
 
   async function handleCancel() {
-    if (!window.confirm("Cancel this tournament?")) return;
+    if (!window.confirm(t("tournamentDetail.cancelConfirm"))) return;
     const res = await authFetch(`/api/tournaments/${id}/cancel`, { method: "POST" });
     const body = await res.json().catch(() => ({}));
-    if (res.ok) { load(); } else { setActionErr(body.error ?? "Failed"); }
+    if (res.ok) { load(); } else { setActionErr(failure(body, "tournamentDetail.failed")); }
   }
 
-  if (loading) return <div style={S.page}><p style={{ color: "#a07840", textAlign: "center", paddingTop: 60 }}>Loading…</p></div>;
-  if (error)   return <div style={S.page}><p style={{ color: "#c0392b", textAlign: "center", paddingTop: 60 }}>{error}</p></div>;
+  if (loading || error) {
+    return (
+      <div style={S.page}>
+        <div style={S.inner}>
+          <LanguageBar style={S.langBar} />
+          {loading
+            ? <p style={{ color: "#a07840", textAlign: "center", paddingTop: 44 }}>{t("common.loading")}</p>
+            : <p style={{ color: "#c0392b", textAlign: "center", paddingTop: 44 }}>{msg(error)}</p>}
+        </div>
+      </div>
+    );
+  }
 
-  const { players = [], matches = [], ...t } = data;
-  const isCreator = user?.id === t.creator_id;
+  const { players = [], matches = [], ...tm } = data;
+  const isCreator = user?.id === tm.creator_id;
   const isPlayer  = players.some(p => p.player_id === user?.id);
 
   // Group matches by round
@@ -192,7 +206,7 @@ export default function TournamentDetail() {
 
   // My active match in current round
   const myActiveMatch = matches.find(m =>
-    m.round === t.current_round &&
+    m.round === tm.current_round &&
     m.status === "playing" &&
     (m.white_id === user?.id || m.black_id === user?.id)
   );
@@ -200,63 +214,71 @@ export default function TournamentDetail() {
   return (
     <div style={S.page}>
       <div style={S.inner}>
+        <LanguageBar style={S.langBar} />
 
         {/* ── Header ── */}
         <div style={S.header}>
-          <Link to="/tournaments" style={S.back}>← Tournaments</Link>
-          <h1 style={S.title}>{t.name}</h1>
-          <span style={{ ...S.statusBadge, ...(STATUS_STYLE[t.status] ?? {}) }}>
-            {t.status === "active" ? `Round ${t.current_round}/${t.total_rounds}` : t.status}
+          <Link to="/tournaments" style={S.back}>{t("tournamentDetail.back")}</Link>
+          <h1 style={S.title}>{tm.name}</h1>
+          <span style={{ ...S.statusBadge, ...(STATUS_STYLE[tm.status] ?? {}) }}>
+            {tm.status === "active"
+              ? t("tournamentDetail.roundOf", { n: tm.current_round, total: tm.total_rounds })
+              : t(`tournament.status.${tm.status}`)}
           </span>
         </div>
         <p style={S.meta}>
-          {TYPE_LABELS[t.tournament_type]} · Best of {t.match_length} · {players.length}/{t.max_players} players
-          {t.creator_name && ` · Created by ${t.creator_name}`}
+          {t("tournamentDetail.meta", {
+            type:  t(`tournament.type.${tm.tournament_type}`),
+            n:     tm.match_length,
+            count: players.length,
+            max:   tm.max_players,
+          })}
+          {tm.creator_name && t("tournamentDetail.createdBy", { name: tm.creator_name })}
         </p>
 
         {/* ── Winner banner ── */}
-        {t.status === "finished" && t.winner_name && (
+        {tm.status === "finished" && tm.winner_name && (
           <div style={S.winner}>
-            <p style={S.winnerTitle}>Tournament Complete</p>
-            <p style={S.winnerName}>Winner: {t.winner_name}</p>
+            <p style={S.winnerTitle}>{t("tournamentDetail.complete")}</p>
+            <p style={S.winnerName}>{t("tournamentDetail.winner", { name: tm.winner_name })}</p>
           </div>
         )}
 
         {/* ── Actions ── */}
         <div style={S.actions}>
-          {t.status === "registration" && user && !isPlayer && (
-            <button style={S.btnPrimary} onClick={handleJoin}>Join Tournament</button>
+          {tm.status === "registration" && user && !isPlayer && (
+            <button style={S.btnPrimary} onClick={handleJoin}>{t("tournamentDetail.join")}</button>
           )}
-          {t.status === "registration" && isPlayer && !isCreator && (
-            <button style={S.btnSecondary} onClick={handleLeave}>Leave</button>
+          {tm.status === "registration" && isPlayer && !isCreator && (
+            <button style={S.btnSecondary} onClick={handleLeave}>{t("tournamentDetail.leave")}</button>
           )}
-          {t.status === "registration" && isCreator && (
+          {tm.status === "registration" && isCreator && (
             <>
               <button style={S.btnPrimary} onClick={handleStart}
                 disabled={players.length < 2}
-                title={players.length < 2 ? "Need at least 2 players" : ""}>
-                Start Tournament
+                title={players.length < 2 ? t("tournamentDetail.needTwo") : ""}>
+                {t("tournamentDetail.start")}
               </button>
-              <button style={S.btnDanger} onClick={handleCancel}>Cancel</button>
+              <button style={S.btnDanger} onClick={handleCancel}>{t("common.cancel")}</button>
             </>
           )}
-          {t.status === "active" && myActiveMatch?.room_id && (
+          {tm.status === "active" && myActiveMatch?.room_id && (
             <Link to={`/game/${myActiveMatch.room_id}`} style={S.btnPrimary}>
-              Play My Match →
+              {t("tournamentDetail.playMyMatch")}
             </Link>
           )}
         </div>
-        {actionErr && <p style={S.error}>{actionErr}</p>}
+        {actionErr && <p style={S.error}>{msg(actionErr)}</p>}
 
         {/* ── Standings / Player list ── */}
         <div style={S.section}>
           <p style={S.sectionTitle}>
-            {t.status === "registration" ? "Registered Players" : "Standings"}
+            {tm.status === "registration" ? t("tournamentDetail.registeredPlayers") : t("tournamentDetail.standings")}
           </p>
 
-          {t.status === "registration" ? (
+          {tm.status === "registration" ? (
             <div>
-              {players.length === 0 && <p style={{ color: "#6b3a10", fontSize: 13 }}>No players yet.</p>}
+              {players.length === 0 && <p style={{ color: "#6b3a10", fontSize: 13 }}>{t("tournamentDetail.noPlayers")}</p>}
               {players.map(p => (
                 <div key={p.player_id} style={S.playerRow}>
                   {p.avatar_url
@@ -265,8 +287,8 @@ export default function TournamentDetail() {
                   }
                   <span style={S.playerName}>{p.display_name}</span>
                   <span style={S.playerElo}>ELO {p.seed_elo}</span>
-                  {p.player_id === t.creator_id && (
-                    <span style={{ color: "#6b3a10", fontSize: 11 }}>organiser</span>
+                  {p.player_id === tm.creator_id && (
+                    <span style={{ color: "#6b3a10", fontSize: 11 }}>{t("tournamentDetail.organiser")}</span>
                   )}
                 </div>
               ))}
@@ -276,13 +298,13 @@ export default function TournamentDetail() {
               <thead>
                 <tr>
                   <th style={S.th}>#</th>
-                  <th style={S.th}>Player</th>
-                  <th style={{ ...S.th, textAlign: "center" }}>W</th>
-                  <th style={{ ...S.th, textAlign: "center" }}>L</th>
-                  {t.tournament_type !== "single_elimination" && (
-                    <th style={{ ...S.th, textAlign: "center" }}>Bye</th>
+                  <th style={S.th}>{t("tournamentDetail.colPlayer")}</th>
+                  <th style={{ ...S.th, textAlign: "center" }}>{t("tournamentDetail.colWins")}</th>
+                  <th style={{ ...S.th, textAlign: "center" }}>{t("tournamentDetail.colLosses")}</th>
+                  {tm.tournament_type !== "single_elimination" && (
+                    <th style={{ ...S.th, textAlign: "center" }}>{t("tournamentDetail.colByes")}</th>
                   )}
-                  <th style={{ ...S.th, textAlign: "right" }}>ELO seed</th>
+                  <th style={{ ...S.th, textAlign: "right" }}>{t("tournamentDetail.colSeed")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -298,11 +320,11 @@ export default function TournamentDetail() {
                         : <span style={S.avatarPh}>{p.display_name[0].toUpperCase()}</span>
                       }
                       {p.display_name}
-                      {p.player_id === user?.id && <span style={{ color: "#6b3a10", fontSize: 11, marginLeft: 6 }}>you</span>}
+                      {p.player_id === user?.id && <span style={{ color: "#6b3a10", fontSize: 11, marginLeft: 6 }}>{t("tournamentDetail.you")}</span>}
                     </td>
                     <td style={{ ...S.td, textAlign: "center", color: "#7ddb7d" }}>{p.wins}</td>
                     <td style={{ ...S.td, textAlign: "center", color: "#c0392b" }}>{p.losses}</td>
-                    {t.tournament_type !== "single_elimination" && (
+                    {tm.tournament_type !== "single_elimination" && (
                       <td style={{ ...S.tdMuted, textAlign: "center" }}>{p.byes}</td>
                     )}
                     <td style={{ ...S.tdMuted, textAlign: "right" }}>{p.seed_elo}</td>
@@ -316,38 +338,36 @@ export default function TournamentDetail() {
         {/* ── Matches ── */}
         {Object.keys(rounds).length > 0 && (
           <div style={S.section}>
-            <p style={S.sectionTitle}>Matches</p>
+            <p style={S.sectionTitle}>{t("tournamentDetail.matches")}</p>
             {Object.entries(rounds)
               .sort(([a], [b]) => Number(b) - Number(a)) // newest round first
               .map(([round, rMatches]) => (
                 <div key={round}>
-                  <p style={S.roundLabel}>Round {round}</p>
+                  <p style={S.roundLabel}>{t("tournamentDetail.round", { n: round })}</p>
                   {rMatches.map(m => (
                     <div key={m.id} style={S.matchCard}>
                       <div style={S.matchPlayers}>
-                        <span>{m.white_name ?? "TBD"}</span>
-                        <span style={S.matchVs}>vs</span>
-                        <span>{m.black_name ?? "BYE"}</span>
+                        <span>{m.white_name ?? t("tournamentDetail.tbd")}</span>
+                        <span style={S.matchVs}>{t("common.vs")}</span>
+                        <span>{m.black_name ?? t("tournamentDetail.byePlayer")}</span>
                         {m.status === "completed" && m.winner_name && (
                           <span style={{ color: "#a07840", fontSize: 12, marginLeft: 10 }}>
-                            → {m.winner_name} wins
+                            {t("tournamentDetail.wins", { name: m.winner_name })}
                           </span>
                         )}
                       </div>
                       <span style={{ ...S.matchStatus, ...(MATCH_STATUS_STYLE[m.status] ?? {}) }}>
-                        {m.status === "playing" ? "In Progress" :
-                         m.status === "completed" ? "Done" :
-                         m.status === "bye" ? "Bye" : "Pending"}
+                        {t(`tournament.matchStatus.${MATCH_STATUS_STYLE[m.status] ? m.status : "pending"}`)}
                       </span>
                       {m.room_id && m.status === "playing" &&
                         (m.white_id === user?.id || m.black_id === user?.id) && (
                         <Link to={`/game/${m.room_id}`} style={{ ...S.btnSecondary, padding: "5px 14px", fontSize: 12 }}>
-                          Play →
+                          {t("tournamentDetail.play")}
                         </Link>
                       )}
                       {m.room_id && m.status !== "playing" && (
                         <Link to={`/game/${m.room_id}`} style={{ ...S.btnSecondary, padding: "5px 14px", fontSize: 12, opacity: 0.6 }}>
-                          View
+                          {t("common.view")}
                         </Link>
                       )}
                     </div>
