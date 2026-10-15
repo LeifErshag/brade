@@ -60,6 +60,11 @@ export function cancelDisconnectForfeit(roomId, color) {
   forfeitTimers.delete(key);
 }
 
+// Test helper: number of pending (scheduled or fired but not yet run) forfeits.
+export function pendingForfeitCount() {
+  return forfeitTimers.size;
+}
+
 // ── Main message handler ──────────────────────────────────────────────────────
 // Each message is processed under the room's lock (see roomLock.js), so its
 // read-modify-write of the room state cannot interleave with another writer.
