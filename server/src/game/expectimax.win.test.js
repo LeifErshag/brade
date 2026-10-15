@@ -75,6 +75,43 @@ describe.each(["white", "black"])("Grandmaster wins for %s", (color) => {
     expect(checkWin({ ...end, turn: color })?.winType).toBe("jan");
   });
 
+  test.each([[[5, 6]], [[6, 5]]])("§11 prefers sprängjan (burst in our Q1) over plain jan, dice %j", (dice) => {
+    const gs = emptyGs(color);
+    gs.bar[color] = 2;
+    put(gs, color, 0, color, 4);
+    for (let p = 1; p <= 3; p++) put(gs, color, p, color, 3);
+    put(gs, color, 4, opp, 2);                 // their band in our Q1
+    put(gs, color, 5, opp, 1);                 // their blot in our Q1
+    gs.bar[opp] = 1;
+    put(gs, opp, 0, opp, 3);
+    for (let p = 1; p <= 4; p++) put(gs, opp, p, opp, 2);
+    gs.dice = dice;
+    clearExpectimaxCache("SJ" + color);
+    const legal = getLegalMoves(gs, color);
+    const m = getNextExpectimaxMove(gs, color, legal, "SJ" + color);
+    clearExpectimaxCache("SJ" + color);
+    expect(m).toEqual({ from: "bar", to: pathToIdx(color, 4), die: 5 });
+    const r = applyMove(gs, color, m.from, m.to, m.die);
+    expect(checkWin({ ...r.gs, turn: color }, r.burstFirstQuarter)?.winType).toBe("sprangjan");
+  });
+
+  test("an opponent sprängjan reply scores below an opponent plain-jan reply", () => {
+    // Mirror of the test above, seen from the side that gets made jan.
+    const gs = emptyGs(opp);
+    gs.bar[opp] = 2;
+    put(gs, opp, 0, opp, 4);
+    for (let p = 1; p <= 3; p++) put(gs, opp, p, opp, 3);
+    put(gs, opp, 4, color, 2);
+    put(gs, opp, 5, color, 1);
+    gs.bar[color] = 1;
+    put(gs, color, 0, color, 3);
+    for (let p = 1; p <= 4; p++) put(gs, color, p, color, 2);
+    const burstOnly = opponentReplyValue(gs, color, [5, 5, 5, 5]); // only bar→4
+    const hitOnly   = opponentReplyValue(gs, color, [6, 6, 6, 6]); // only bar→5
+    expect(burstOnly).toBeLessThan(hitOnly);
+    expect(hitOnly).toBeLessThan(-1000);
+  });
+
   test("§7/§9 bearing off the last two with the opponent on the bar is hemspel med munk", () => {
     const gs = emptyGs(color);
     gs.off[color] = 13;
