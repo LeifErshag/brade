@@ -2,14 +2,18 @@ import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router";
 import { useAuth } from "../AuthContext.jsx";
 import { OFFICIAL_RULES_URL } from "../components/RulesContent.jsx";
+import { LanguageBar } from "../components/LanguageToggle.jsx";
+import { useI18n } from "../i18n/I18nContext.jsx";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
 const S = {
   page: {
-    background: "#2a1400", minHeight: "100vh", display: "flex",
-    alignItems: "center", justifyContent: "center", fontFamily: "Georgia, serif",
+    background: "#2a1400", minHeight: "100vh", display: "flex", flexDirection: "column",
+    fontFamily: "Georgia, serif",
   },
+  // Vertically centred in the space below the language toggle.
+  main:   { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 16px 24px" },
   center: { textAlign: "center" },
   title:    { color: "#e8b86d", fontSize: 48, letterSpacing: 4, margin: 0 },
   subtitle: { color: "#a07840", fontSize: 16, marginTop: 8 },
@@ -54,6 +58,7 @@ const S = {
 export default function Home() {
   const { user, loading, logout, authFetch } = useAuth();
   const navigate = useNavigate();
+  const { t, msg } = useI18n();
   const isGuest = !loading && !user;
 
   const [matchLength, setMatchLength]   = useState(5);
@@ -61,6 +66,8 @@ export default function Home() {
   const [aiDifficulty, setAiDifficulty] = useState("journeyman");
   const [creatingAi, setCreatingAi]     = useState(false);
   const [roomCode, setRoomCode]         = useState("");
+  // Errors are kept as message descriptors ({ key } / { server }) and
+  // translated at render time, so they follow a language switch.
   const [joinError, setJoinError]       = useState(null);
   const [joining, setJoining]           = useState(false);
   const [createError, setCreateError]   = useState(null);
@@ -141,7 +148,7 @@ export default function Home() {
           sessionStorage.setItem(`guest_id_${data.roomId}`,    data.guestId);
           navigate(`/game/${data.roomId}`);
         } else {
-          setCreateError("Could not start game. Please try again.");
+          setCreateError({ key: "error.couldNotStart" });
         }
       } else {
         const res = await authFetch("/api/games", {
@@ -152,13 +159,13 @@ export default function Home() {
           const data = await res.json();
           navigate(`/game/${data.roomId}`);
         } else if (res.status === 401) {
-          setCreateError("Session expired — please sign in again.");
+          setCreateError({ key: "error.sessionExpired" });
         } else {
-          setCreateError("Could not start game. Please try again.");
+          setCreateError({ key: "error.couldNotStart" });
         }
       }
     } catch {
-      setCreateError("Network error. Please try again.");
+      setCreateError({ key: "error.network" });
     } finally {
       setCreatingAi(false);
     }
@@ -181,12 +188,12 @@ export default function Home() {
         }
         navigate(`/game/${data.roomId}`);
       } else if (res.status === 401) {
-        setTutorialError("Sessionen har gått ut – logga in igen.");
+        setTutorialError({ key: "error.sessionExpired" });
       } else {
-        setTutorialError("Kunde inte starta guiden. Försök igen.");
+        setTutorialError({ key: "home.tutorialFailed" });
       }
     } catch {
-      setTutorialError("Nätverksfel. Försök igen.");
+      setTutorialError({ key: "error.network" });
     } finally {
       setStartingTutorial(false);
     }
@@ -204,12 +211,12 @@ export default function Home() {
         const data = await res.json();
         navigate(`/game/${data.roomId}`);
       } else if (res.status === 401) {
-        setCreateError("Session expired — please sign in again.");
+        setCreateError({ key: "error.sessionExpired" });
       } else {
-        setCreateError("Could not start game. Please try again.");
+        setCreateError({ key: "error.couldNotStart" });
       }
     } catch {
-      setCreateError("Network error. Please try again.");
+      setCreateError({ key: "error.network" });
     } finally {
       setCreating(false);
     }
@@ -218,7 +225,7 @@ export default function Home() {
   async function handleJoin() {
     const code = roomCode.trim().toUpperCase();
     if (!/^[A-Z0-9]{8}$/.test(code)) {
-      setJoinError("Room codes are 8 characters (A–Z, 0–9)");
+      setJoinError({ key: "home.roomCodeFormat" });
       return;
     }
     setJoinError(null);
@@ -229,191 +236,192 @@ export default function Home() {
         navigate(`/game/${code}`);
       } else {
         const body = await res.json().catch(() => ({}));
-        setJoinError(body.error ?? "Room not found");
+        setJoinError(body.error ? { server: body.error } : { key: "home.roomNotFound" });
       }
+    } catch {
+      setJoinError({ key: "error.network" });
     } finally {
       setJoining(false);
     }
   }
 
+  const matchLengthOptions = [1, 3, 5, 7].map(n => (
+    <option key={n} value={n}>{n === 1 ? t("matchLength.one") : t("matchLength.bestOf", { n })}</option>
+  ));
+  const aiOptions = ["beginner", "journeyman", "master", "grandmaster"].map(level => (
+    <option key={level} value={level}>{t(`ai.${level}`)}</option>
+  ));
+
   if (loading) {
     return (
       <div style={S.page}>
-        <p style={{ color: "#a07840" }}>…</p>
+        <LanguageBar />
+        <div style={S.main}><p style={{ color: "#a07840" }}>…</p></div>
       </div>
     );
   }
 
   return (
     <div style={S.page}>
-      <div style={S.center}>
-        <h1 style={S.title}>Bräde</h1>
-        <p style={S.subtitle}>Svenskt Brädspel</p>
+      <LanguageBar />
+      <main style={S.main}>
+        <div style={S.center}>
+          <h1 style={S.title}>Bräde</h1>
+          <p style={S.subtitle}>{t("home.subtitle")}</p>
 
-        <div style={S.tutorial}>
-          <button onClick={handleTutorial} disabled={startingTutorial} style={S.btnPrimary}>
-            {startingTutorial ? "Startar…" : "Lär dig spela"}
-          </button>
-          <p style={S.tutorialHint}>
-            Ett övningsparti mot datorn där reglerna förklaras medan du spelar. Räknas inte i statistiken.
-          </p>
-          {tutorialError && <p style={S.error}>{tutorialError}</p>}
+          <div style={S.tutorial}>
+            <button onClick={handleTutorial} disabled={startingTutorial} style={S.btnPrimary}>
+              {startingTutorial ? t("common.starting") : t("home.learn")}
+            </button>
+            <p style={S.tutorialHint}>
+              {t("home.learnHint")}
+            </p>
+            {tutorialError && <p style={S.error}>{msg(tutorialError)}</p>}
+          </div>
+
+          {user ? (
+            <>
+              <div style={{ marginTop: 28 }}>
+                {user.avatar_url
+                  ? <img src={user.avatar_url} alt="" style={S.avatar} />
+                  : <span style={S.avatarPlaceholder}>{user.display_name[0].toUpperCase()}</span>
+                }
+                <p style={S.name}>{user.display_name}</p>
+                <p style={S.elo}>{t("home.stats", { elo: user.elo, wins: user.wins, losses: user.losses })}</p>
+              </div>
+
+              <div style={S.row}>
+                <Link to="/profile"      style={S.btnSecondary}>{t("common.profile")}</Link>
+                <Link to="/leaderboard"  style={S.btnSecondary}>{t("common.leaderboard")}</Link>
+                <Link to="/tournaments"  style={S.btnSecondary}>{t("common.tournaments")}</Link>
+                <Link to="/rules"        style={S.btnSecondary}>{t("common.rules")}</Link>
+                <button style={S.btnSecondary} onClick={logout}>{t("common.signOut")}</button>
+              </div>
+
+              <hr style={S.divider} />
+
+              {/* ── Play ── */}
+              <div style={S.playSection}>
+                <p style={S.sectionLabel}>{t("home.createGame")}</p>
+                <div style={S.playRow}>
+                  <select
+                    value={matchLength}
+                    onChange={e => setMatchLength(Number(e.target.value))}
+                    style={S.select}
+                    aria-label={t("matchLength.label")}
+                  >
+                    {matchLengthOptions}
+                  </select>
+                  <button onClick={handleCreate} disabled={creating} style={S.btnPrimary}>
+                    {creating ? t("common.creating") : t("home.createButton")}
+                  </button>
+                </div>
+
+                <p style={{ ...S.sectionLabel, marginTop: 20 }}>{t("home.playAi")}</p>
+                <div style={S.playRow}>
+                  <select
+                    value={aiDifficulty}
+                    onChange={e => setAiDifficulty(e.target.value)}
+                    style={S.select}
+                    aria-label={t("ai.label")}
+                  >
+                    {aiOptions}
+                  </select>
+                  <button onClick={handleCreateAi} disabled={creatingAi} style={S.btnPrimary}>
+                    {creatingAi ? t("common.starting") : t("home.playAi")}
+                  </button>
+                </div>
+                {createError && <p style={S.error}>{msg(createError)}</p>}
+
+                <p style={{ ...S.sectionLabel, marginTop: 20 }}>{t("home.findMatch")}</p>
+                {mmStatus === "waiting" ? (
+                  <div style={S.playRow}>
+                    <span style={{ color: "#a07840", fontSize: 13 }}>
+                      {t("home.searching")} {mmQueueSize > 1 ? t("home.inQueue", { n: mmQueueSize }) : ""}
+                      {mmWaitSecs > 0 && t("home.waited", { n: mmWaitSecs })}
+                    </span>
+                    <button onClick={handleCancelMatch} style={S.btnSecondary}>{t("common.cancel")}</button>
+                  </div>
+                ) : (
+                  <div style={S.playRow}>
+                    <button onClick={handleFindMatch} style={S.btnPrimary}>{t("home.findMatchButton")}</button>
+                  </div>
+                )}
+
+                <p style={{ ...S.sectionLabel, marginTop: 20 }}>{t("home.joinWithCode")}</p>
+                <div style={S.playRow}>
+                  <input
+                    style={S.input}
+                    placeholder={t("home.roomCodePlaceholder")}
+                    maxLength={8}
+                    value={roomCode}
+                    onChange={e => {
+                      setJoinError(null);
+                      setRoomCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""));
+                    }}
+                    onKeyDown={e => e.key === "Enter" && handleJoin()}
+                  />
+                  <button onClick={handleJoin} disabled={joining} style={S.btnPrimary}>
+                    {joining ? t("common.joining") : t("common.join")}
+                  </button>
+                </div>
+                {joinError && <p style={S.error}>{msg(joinError)}</p>}
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={S.row}>
+                <a href={`${API}/auth/google`} style={S.btnPrimary}>{t("common.signInWith", { provider: "Google" })}</a>
+                <a href={`${API}/auth/github`} style={S.btnSecondary}>{t("common.signInWith", { provider: "GitHub" })}</a>
+              </div>
+              <div style={{ marginTop: 16, display: "flex", gap: 10, justifyContent: "center" }}>
+                <Link to="/leaderboard" style={{ ...S.btnSecondary, fontSize: 12 }}>{t("common.leaderboard")}</Link>
+                <Link to="/rules"       style={{ ...S.btnSecondary, fontSize: 12 }}>{t("common.rules")}</Link>
+              </div>
+
+              <hr style={S.divider} />
+
+              <div style={S.playSection}>
+                <p style={S.sectionLabel}>{t("home.playAiGuest")}</p>
+                <div style={S.playRow}>
+                  <select
+                    value={matchLength}
+                    onChange={e => setMatchLength(Number(e.target.value))}
+                    style={S.select}
+                    aria-label={t("matchLength.label")}
+                  >
+                    {matchLengthOptions}
+                  </select>
+                  <select
+                    value={aiDifficulty}
+                    onChange={e => setAiDifficulty(e.target.value)}
+                    style={S.select}
+                    aria-label={t("ai.label")}
+                  >
+                    {aiOptions}
+                  </select>
+                  <button onClick={handleCreateAi} disabled={creatingAi} style={S.btnPrimary}>
+                    {creatingAi ? t("common.starting") : t("home.playAi")}
+                  </button>
+                </div>
+                <p style={{ ...S.subtitle, fontSize: 12, marginTop: 12 }}>
+                  {t("home.signInHint")}
+                </p>
+                {createError && <p style={S.error}>{msg(createError)}</p>}
+              </div>
+            </>
+          )}
+
+          <footer style={S.footer}>
+            <p style={S.footerText}>
+              {t("home.footer", { org: t("source.org") })}{" "}
+              <a href={OFFICIAL_RULES_URL} target="_blank" rel="noopener noreferrer" style={S.footerLink}>
+                {t("home.footerLink")}
+              </a>
+            </p>
+          </footer>
         </div>
-
-        {user ? (
-          <>
-            <div style={{ marginTop: 28 }}>
-              {user.avatar_url
-                ? <img src={user.avatar_url} alt="" style={S.avatar} />
-                : <span style={S.avatarPlaceholder}>{user.display_name[0].toUpperCase()}</span>
-              }
-              <p style={S.name}>{user.display_name}</p>
-              <p style={S.elo}>ELO {user.elo} · {user.wins}W {user.losses}L</p>
-            </div>
-
-            <div style={S.row}>
-              <Link to="/profile"      style={S.btnSecondary}>Profile</Link>
-              <Link to="/leaderboard"  style={S.btnSecondary}>Leaderboard</Link>
-              <Link to="/tournaments"  style={S.btnSecondary}>Tournaments</Link>
-              <Link to="/rules"        style={S.btnSecondary}>Regler</Link>
-              <button style={S.btnSecondary} onClick={logout}>Sign out</button>
-            </div>
-
-            <hr style={S.divider} />
-
-            {/* ── Play ── */}
-            <div style={S.playSection}>
-              <p style={S.sectionLabel}>Create a game</p>
-              <div style={S.playRow}>
-                <select
-                  value={matchLength}
-                  onChange={e => setMatchLength(Number(e.target.value))}
-                  style={S.select}
-                  aria-label="Match length"
-                >
-                  <option value={1}>1 game</option>
-                  <option value={3}>Best of 3</option>
-                  <option value={5}>Best of 5</option>
-                  <option value={7}>Best of 7</option>
-                </select>
-                <button onClick={handleCreate} disabled={creating} style={S.btnPrimary}>
-                  {creating ? "Creating…" : "Create Game"}
-                </button>
-              </div>
-
-              <p style={{ ...S.sectionLabel, marginTop: 20 }}>Play vs AI</p>
-              <div style={S.playRow}>
-                <select
-                  value={aiDifficulty}
-                  onChange={e => setAiDifficulty(e.target.value)}
-                  style={S.select}
-                  aria-label="AI difficulty"
-                >
-                  <option value="beginner">Beginner</option>
-                  <option value="journeyman">Journeyman</option>
-                  <option value="master">Master</option>
-                  <option value="grandmaster">Grandmaster</option>
-                </select>
-                <button onClick={handleCreateAi} disabled={creatingAi} style={S.btnPrimary}>
-                  {creatingAi ? "Starting…" : "Play vs AI"}
-                </button>
-              </div>
-              {createError && <p style={S.error}>{createError}</p>}
-
-              <p style={{ ...S.sectionLabel, marginTop: 20 }}>Find a match</p>
-              {mmStatus === "waiting" ? (
-                <div style={S.playRow}>
-                  <span style={{ color: "#a07840", fontSize: 13 }}>
-                    Searching… {mmQueueSize > 1 ? `(${mmQueueSize} in queue)` : ""}
-                    {mmWaitSecs > 0 && ` · ${mmWaitSecs}s`}
-                  </span>
-                  <button onClick={handleCancelMatch} style={S.btnSecondary}>Cancel</button>
-                </div>
-              ) : (
-                <div style={S.playRow}>
-                  <button onClick={handleFindMatch} style={S.btnPrimary}>Find Match</button>
-                </div>
-              )}
-
-              <p style={{ ...S.sectionLabel, marginTop: 20 }}>Join with code</p>
-              <div style={S.playRow}>
-                <input
-                  style={S.input}
-                  placeholder="ROOM CODE"
-                  maxLength={8}
-                  value={roomCode}
-                  onChange={e => {
-                    setJoinError(null);
-                    setRoomCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""));
-                  }}
-                  onKeyDown={e => e.key === "Enter" && handleJoin()}
-                />
-                <button onClick={handleJoin} disabled={joining} style={S.btnPrimary}>
-                  {joining ? "Joining…" : "Join"}
-                </button>
-              </div>
-              {joinError && <p style={S.error}>{joinError}</p>}
-            </div>
-          </>
-        ) : (
-          <>
-            <div style={S.row}>
-              <a href={`${API}/auth/google`} style={S.btnPrimary}>Sign in with Google</a>
-              <a href={`${API}/auth/github`} style={S.btnSecondary}>Sign in with GitHub</a>
-            </div>
-            <div style={{ marginTop: 16, display: "flex", gap: 10, justifyContent: "center" }}>
-              <Link to="/leaderboard" style={{ ...S.btnSecondary, fontSize: 12 }}>Leaderboard</Link>
-              <Link to="/rules"       style={{ ...S.btnSecondary, fontSize: 12 }}>Regler</Link>
-            </div>
-
-            <hr style={S.divider} />
-
-            <div style={S.playSection}>
-              <p style={S.sectionLabel}>Play vs AI as Guest</p>
-              <div style={S.playRow}>
-                <select
-                  value={matchLength}
-                  onChange={e => setMatchLength(Number(e.target.value))}
-                  style={S.select}
-                  aria-label="Match length"
-                >
-                  <option value={1}>1 game</option>
-                  <option value={3}>Best of 3</option>
-                  <option value={5}>Best of 5</option>
-                  <option value={7}>Best of 7</option>
-                </select>
-                <select
-                  value={aiDifficulty}
-                  onChange={e => setAiDifficulty(e.target.value)}
-                  style={S.select}
-                  aria-label="AI difficulty"
-                >
-                  <option value="beginner">Beginner</option>
-                  <option value="journeyman">Journeyman</option>
-                  <option value="master">Master</option>
-                  <option value="grandmaster">Grandmaster</option>
-                </select>
-                <button onClick={handleCreateAi} disabled={creatingAi} style={S.btnPrimary}>
-                  {creatingAi ? "Starting…" : "Play vs AI"}
-                </button>
-              </div>
-              <p style={{ ...S.subtitle, fontSize: 12, marginTop: 12 }}>
-                Sign in to track your stats and play against other humans.
-              </p>
-              {createError && <p style={S.error}>{createError}</p>}
-            </div>
-          </>
-        )}
-
-        <footer style={S.footer}>
-          <p style={S.footerText}>
-            Spelreglerna kommer från Vasamuseets vänner – Brädspelssektionen.{" "}
-            <a href={OFFICIAL_RULES_URL} target="_blank" rel="noopener noreferrer" style={S.footerLink}>
-              Läs de officiella spelreglerna ↗
-            </a>
-          </p>
-        </footer>
-      </div>
+      </main>
     </div>
   );
 }

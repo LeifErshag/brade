@@ -25,6 +25,7 @@ export default [
         WebSocket:       "readonly",
         fetch:           "readonly",
         sessionStorage:  "readonly",
+        localStorage:    "readonly",
         URLSearchParams: "readonly",
       },
     },

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import RulesContent from "./RulesContent.jsx";
+import { useI18n } from "../i18n/I18nContext.jsx";
 
 // Narrow screens get a bottom sheet instead of a side panel.
 const MOBILE_QUERY = "(max-width: 640px)";
@@ -67,6 +68,7 @@ const S = {
  *                   (e.g. "rules-bearing-off"); see RULES_SECTIONS
  */
 export default function RulesDrawer({ open, onClose, section }) {
+  const { t } = useI18n();
   const isMobile = useIsMobile();
   const closeBtnRef = useRef(null);
   const panelRef    = useRef(null);
@@ -152,9 +154,9 @@ export default function RulesDrawer({ open, onClose, section }) {
       >
         {isMobile && <div style={S.handle} aria-hidden="true" />}
         <div style={S.header}>
-          <h2 id="rules-drawer-title" style={S.title}>Spelregler</h2>
-          <button ref={closeBtnRef} type="button" onClick={onClose} style={S.close} aria-label="Stäng reglerna">
-            Stäng ✕
+          <h2 id="rules-drawer-title" style={S.title}>{t("rulesDrawer.title")}</h2>
+          <button ref={closeBtnRef} type="button" onClick={onClose} style={S.close} aria-label={t("rulesDrawer.closeLabel")}>
+            {t("rulesDrawer.close")}
           </button>
         </div>
         <div ref={bodyRef} style={S.body}>
