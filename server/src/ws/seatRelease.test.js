@@ -468,3 +468,117 @@ describe("a registered connection that is closing does not keep the seat", () =>
     expectDrained();
   });
 });
+
+// Issue #81: the guards inside the release itself.
+describe("what a seat release leaves alone", () => {
+  test("a hasGuest flag already set before this connect stays set when the seat is released", async () => {
+    // A guest is already in the room (e.g. the host), so hasGuest is set
+    // before this guest's connect assigns the black seat.
+    const withGuest = lobby();
+    withGuest.hasGuest = true;
+    store.set(`room:${ROOM_ID}`, JSON.stringify(withGuest));
+
+    const token = signGuestToken(USER_ID, "Gus");
+    const ws1 = fakeWs();
+    duringSeatWrite(() => closeWs(ws1));
+    await handleConnection(ws1, userReq(token));
+
+    expect(ws1.send).not.toHaveBeenCalled();
+    expectNoUserRegistration();
+    expectSeatReleased();
+    expect(saved().hasGuest).toBe(true);
+    expect(lastHostState().room.hasGuest).toBe(true);
+    expectDrained();
+  });
+
+  test("a room that has left the lobby before the deferred release runs keeps the seat", async () => {
+    const ws1 = fakeWs();
+    const ws2 = fakeWs();
+    let conn2;
+    duringSeatWrite(() => {
+      closeWs(ws1);
+      // conn2 is in flight, so conn1 defers the release to it. A section
+      // queued between them starts the game before conn2's section runs.
+      withRoomLock(ROOM_ID, () => {
+        const room = saved();
+        room.status = "playing";
+        store.set(`room:${ROOM_ID}`, JSON.stringify(room));
+      });
+      conn2 = handleConnection(ws2, userReq());
+      closeWs(ws2);
+    });
+
+    await handleConnection(ws1, userReq());
+    await conn2;
+
+    const room = saved();
+    expect(room.status).toBe("playing");
+    expect(room.players.black).toBe(USER_ID);
+    expect(room.playerInfo.black).toEqual({ display_name: "Bob", avatar_url: null });
+    expect(ws2.send).not.toHaveBeenCalled();
+    expectNoUserRegistration();
+    // No release, so nothing was broadcast to the host either.
+    expect(lastHostState()).toBeUndefined();
+    expectDrained();
+  });
+});
+
+// Issue #81: while another connect of the user is on its way in, the seat is
+// not given back in the meantime, so the room never shows black as empty.
+describe("no transient empty-seat broadcast while a reconnect is in flight", () => {
+  function hostBlackSeats() {
+    return hostWs.send.mock.calls.map(([raw]) => JSON.parse(raw))
+      .filter((m) => m.type === "ROOM_STATE")
+      .map((m) => m.room.players.black);
+  }
+
+  test("conn1 drops while conn2 is in flight and then registers: black is never broadcast as empty", async () => {
+    const ws1 = fakeWs();
+    const ws2 = fakeWs();
+    let conn2;
+    duringSeatWrite(() => {
+      closeWs(ws1);
+      conn2 = handleConnection(ws2, userReq());
+    });
+
+    await handleConnection(ws1, userReq());
+    await conn2;
+
+    expect(userConnections.get(USER_ID)?.has(ws2)).toBe(true);
+    expect(hostBlackSeats()).toEqual([USER_ID]);
+    expectDrained();
+  });
+
+  test("a connect arriving after a failed connect settles, before its release runs, keeps the release deferred", async () => {
+    const ws1 = fakeWs();
+    const ws2 = fakeWs();
+    const ws3 = fakeWs();
+    let conn2, conn3;
+    duringSeatWrite(() => {
+      closeWs(ws1);
+      // Make the first Redis read of conn2's own section fail (see the
+      // "fails instead of dropping" test above).
+      withRoomLock(ROOM_ID, () => {
+        redisGet.mockImplementationOnce(async () => { await tick(); throw new Error("redis blip"); });
+      });
+      conn2 = handleConnection(ws2, userReq());
+      // Queued behind conn2's section; still holds the lock when conn2's
+      // settle-time release is queued, so that release runs after it. A new
+      // connect of the user starts in here, i.e. after conn2 has settled
+      // but before its release has run.
+      withRoomLock(ROOM_ID, async () => {
+        for (let i = 0; i < 5; i++) await tick();
+        conn3 = handleConnection(ws3, userReq());
+      });
+    });
+
+    await handleConnection(ws1, userReq());
+    await expect(conn2).rejects.toThrow("redis blip");
+    await conn3;
+
+    expect(userConnections.get(USER_ID)?.has(ws3)).toBe(true);
+    expect(saved().players.black).toBe(USER_ID);
+    expect(hostBlackSeats()).toEqual([USER_ID]);
+    expectDrained();
+  });
+});
