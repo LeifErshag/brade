@@ -16,7 +16,6 @@ import {
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const MAX_OWN_CANDIDATES = 20;   // top-N pruning on our turn sequences
-const MAX_OPP_CANDIDATES = 10;   // top-N pruning on opponent sequences
 const SEARCH_TIMEOUT_MS  = 5000;
 
 // All 21 distinct dice outcomes with probabilities
@@ -93,7 +92,7 @@ export function getNextExpectimaxMove(gs, color, legalMoves, roomId) {
 //   7. Bear-off readiness
 //   8. Jan threat
 
-function evaluate(gs, color) {
+export function evaluate(gs, color) {
   const opp = color === "white" ? "black" : "white";
   let score = 0;
 
@@ -265,6 +264,49 @@ export function janThreat(gs, color, opp) {
   return 0;
 }
 
+// ── Opponent reply (min node) ───────────────────────────────────────────────
+// Value of the position `gs` (after our turn) for `color` when the opponent
+// rolls `dice` and plays the reply that is worst for us: the minimum of
+// evaluate(finalGs, color) over EVERY legal opponent sequence (#62). No
+// truncation, so the result does not depend on the engine's enumeration order.
+// If the opponent cannot move, the position stands as it is.
+// Only gs.board/bar/off are read; neither gs nor dice is mutated.
+// `evalCache` (optional) maps a position key to its evaluation for this one
+// `color` (never share it across colours), so positions
+// reached by several sequences, candidates or rolls are evaluated once.
+export function opponentReplyValue(gs, color, dice, evalCache = new Map()) {
+  const opp = color === "white" ? "black" : "white";
+  const oppGs = {
+    board:   gs.board.slice(),
+    bar:     { white: gs.bar.white, black: gs.bar.black },
+    off:     { white: gs.off.white, black: gs.off.black },
+    dice:    dice.slice(),
+    moveSeq: 0,
+  };
+
+  const oppSequences = legalTurnSequences(oppGs, opp);
+  if (oppSequences.length === 0) {
+    return evaluate({ board: gs.board, bar: gs.bar, off: gs.off }, color);
+  }
+
+  let worst = Infinity;
+  for (const { finalGs } of oppSequences) {
+    const key = positionKey(finalGs);
+    let s = evalCache.get(key);
+    if (s === undefined) {
+      s = evaluate(finalGs, color);
+      evalCache.set(key, s);
+    }
+    if (s < worst) worst = s;
+  }
+  return worst;
+}
+
+function positionKey(gs) {
+  return gs.board.join(",") + "|" + gs.bar.white + "," + gs.bar.black +
+         "|" + gs.off.white + "," + gs.off.black;
+}
+
 // ── Core search ─────────────────────────────────────────────────────────────
 // Uses legalTurnSequences() from the engine for correct, cheap enumeration.
 // The engine already applies all turn-level filters (maximal use, higher-die,
@@ -272,7 +314,6 @@ export function janThreat(gs, color, opp) {
 
 function computeBestTurnSequence(gs, color) {
   const startTime = Date.now();
-  const opp = color === "white" ? "black" : "white";
 
   // Enumerate our legal turn sequences
   const mySequences = legalTurnSequences(gs, color);
@@ -295,9 +336,13 @@ function computeBestTurnSequence(gs, color) {
     return candidates[0].moves;
   }
 
-  // 2-ply expectimax: for each candidate, average opponent's best response
+  // 2-ply expectimax: for each candidate, average over the 21 rolls the
+  // opponent's best reply among ALL their legal sequences (#62)
   let bestValue = -Infinity;
   let bestMoves = candidates[0].moves;
+  // Evaluations of opponent final positions, shared across candidates and
+  // dice outcomes: different candidates often lead to the same positions.
+  const evalCache = new Map();
 
   for (const cand of candidates) {
     if (Date.now() - startTime > SEARCH_TIMEOUT_MS) break;
@@ -305,35 +350,7 @@ function computeBestTurnSequence(gs, color) {
     let expectedValue = 0;
 
     for (const { dice, prob } of DICE_OUTCOMES) {
-      // Set up opponent's state with this dice roll
-      const oppGs = {
-        board:   cand.finalGs.board.slice(),
-        bar:     { white: cand.finalGs.bar.white, black: cand.finalGs.bar.black },
-        off:     { white: cand.finalGs.off.white, black: cand.finalGs.off.black },
-        dice:    dice.slice(),
-        moveSeq: 0,
-      };
-
-      // Enumerate opponent's turn sequences via the engine
-      const oppSequences = legalTurnSequences(oppGs, opp);
-
-      if (oppSequences.length === 0) {
-        // Opponent has no moves — evaluate our position as-is
-        expectedValue += prob * evaluate(cand._evalGs, color);
-        continue;
-      }
-
-      // Fast-evaluate opponent sequences — opponent minimizes our score
-      let oppBest = Infinity;
-      const limit = Math.min(oppSequences.length, MAX_OPP_CANDIDATES * 5);
-      for (let i = 0; i < limit; i++) {
-        const oSeq = oppSequences[i];
-        const evalGs = { board: oSeq.finalGs.board, bar: oSeq.finalGs.bar, off: oSeq.finalGs.off };
-        const s = evaluate(evalGs, color);
-        if (s < oppBest) oppBest = s;
-      }
-
-      expectedValue += prob * oppBest;
+      expectedValue += prob * opponentReplyValue(cand.finalGs, color, dice, evalCache);
     }
 
     if (expectedValue > bestValue) {
