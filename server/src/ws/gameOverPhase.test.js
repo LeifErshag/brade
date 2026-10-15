@@ -182,14 +182,29 @@ test("RESIGN ends the match with phase over and keeps the position", async () =>
 });
 
 test("a finished match rejects further moves", async () => {
-  await putRoom(makeRoom("OVERMOV1", bearOffState()));
+  const live = bearOffState();
+  const winningMove = live.legalMoves.find((x) => x.to === "off");
+  await putRoom(makeRoom("OVERMOV1", live));
   await bearOff("OVERMOV1");
   const before = await fakeRedis.get("room:OVERMOV1");
+  const broadcastsBefore = broadcasts.length;
 
-  for (const type of ["ROLL", "PASS", "RESIGN"]) {
-    await handleMessage({ msg: { type }, userId: WHITE_ID, roomId: "OVERMOV1", ws: null });
+  // The move that just won, replayed, and a move from the other player: a
+  // finished match must not accept either, nor any other game action.
+  const moves = [
+    { type: "MOVE", ...winningMove },
+    { type: "MOVE", from: pathToIdx("black", 12), to: pathToIdx("black", 13), die: 1 },
+  ];
+  for (const userId of [WHITE_ID, BLACK_ID]) {
+    for (const msg of [...moves, { type: "ROLL" }, { type: "PASS" }, { type: "RESIGN" }]) {
+      const sent = [];
+      const ws = { send: (data) => sent.push(JSON.parse(data)) };
+      await handleMessage({ msg, userId, roomId: "OVERMOV1", ws });
+      expect(sent.filter((m) => m.type === "ROOM_STATE")).toEqual([]);
+    }
   }
   expect(await fakeRedis.get("room:OVERMOV1")).toBe(before);
+  expect(broadcasts.length).toBe(broadcastsBefore);
 });
 
 // ── Game over within a match ─────────────────────────────────────────────────
