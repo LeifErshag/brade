@@ -13,8 +13,9 @@
 //      loop is detected);
 //   3. if one pass throws (here: a Redis read fails) while a rerun is
 //      pending, the pending rerun still runs and the AI plays its turn;
-//   4. a pass that throws with no rerun pending does not leave the room's
-//      guard behind: a later trigger plays the turn.
+//   4. a turn whose passes keep throwing with no rerun pending does not leave
+//      the room's guard behind once it gives up: a later trigger plays the
+//      turn. (Recovery from a single failing pass is in aiTurnRecovery.test.js.)
 
 import { jest } from "@jest/globals";
 
@@ -227,16 +228,18 @@ describe("a pass of the AI turn that throws", () => {
     expect(room.gameState.phase).toBe("rolling");
   }, 40_000);
 
-  test("with no rerun pending, does not block a later trigger", async () => {
+  test("with no rerun pending, does not block a later trigger once the turn gives up", async () => {
     const roomId = "LOOPER02";
     await fakeRedis.set(`room:${roomId}`, JSON.stringify(makeRoom(roomId)));
 
-    failReads = 1;
+    // Every room read fails, so the turn (with any bounded retries, issue
+    // #79) gives up without playing.
+    failReads = Infinity;
     const first = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
-    await runFor(10_000);
-    expect(failReads).toBe(0);
+    await runFor(120_000);
     expect(first.settled).toBe(true);
     expect(aiRollsWithMoves(roomId)).toBe(0);
+    failReads = 0;
 
     const later = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
     await runFor(20_000);
@@ -245,5 +248,5 @@ describe("a pass of the AI turn that throws", () => {
     const room = await getRoom(roomId);
     expect(aiRollsWithMoves(roomId)).toBe(1);
     expect(room.gameState.turn).toBe("white");
-  }, 60_000);
+  }, 120_000);
 });

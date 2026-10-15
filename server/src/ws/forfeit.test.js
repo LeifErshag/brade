@@ -45,7 +45,7 @@ const { handleConnection, rooms, userConnections, inFlightConnections } = await 
 const { withRoomLock } = await import("./roomLock.js");
 // Test-only export: number of pending (scheduled or fired but not yet run)
 // disconnect-forfeit entries.
-const { pendingForfeitCount } = await import("./handlers.js");
+const { pendingForfeitCount, scheduleDisconnectForfeit } = await import("./handlers.js");
 const { initGame } = await import("../game/engine.js");
 const { signAccessToken } = await import("../auth/tokens.js");
 
@@ -364,23 +364,19 @@ describe("disconnect forfeit", () => {
     expect(pendingForfeitCount()).toBe(0);
   });
 
-  // Issue #70, replace path (two tabs, no reconnect in between): black's tab 1
-  // drops (forfeit A scheduled although tab 2 is still registered). A fires
-  // while another connect holds the room lock and queues behind it. Tab 2
-  // then drops, scheduling forfeit B, which replaces A's entry while A is
-  // still queued. A must be a no-op; only B, 60 s after tab 2's close, may
-  // forfeit.
-  test("a newer disconnect's forfeit replaces one that has fired and is still queued", async () => {
+  // Issue #70, replace path: forfeit A for black has fired and is queued
+  // behind a connect that holds the room lock when a newer schedule B for the
+  // same player replaces A's entry. A must be a no-op; only B, 60 s after it
+  // was scheduled, may forfeit. Since #79 the close handler no longer
+  // schedules while the player has another registered connection, so two
+  // tabs can no longer produce this order; the schedules are made directly
+  // here to keep the token check covered. Black is not connected throughout.
+  test("a newer forfeit schedule replaces one that has fired and is still queued", async () => {
     const whiteWs = fakeWs();
-    const blackTab1 = fakeWs();
-    const blackTab2 = fakeWs();
     await connect(whiteWs, WHITE_ID);
-    await connect(blackTab1, BLACK_ID);
-    await connect(blackTab2, BLACK_ID);
     const startAt = Date.now();
 
-    disconnect(blackTab1);
-    await settle();
+    scheduleDisconnectForfeit(ROOM_ID, "black", BLACK_ID); // A
     expect(pendingForfeitCount()).toBe(1);
     expect(jest.getTimerCount()).toBe(1);
 
@@ -395,11 +391,10 @@ describe("disconnect forfeit", () => {
     await jest.advanceTimersByTimeAsync(FORFEIT_MS);
     expect(jest.getTimerCount()).toBe(0);
 
-    // Tab 2 drops: B is scheduled while A is still queued.
-    disconnect(blackTab2);
-    await jest.advanceTimersByTimeAsync(0);
-    const secondCloseAt = Date.now();
-    expect(secondCloseAt).toBe(startAt + FORFEIT_MS);
+    // B is scheduled while A is still queued.
+    scheduleDisconnectForfeit(ROOM_ID, "black", BLACK_ID); // B
+    const secondScheduleAt = Date.now();
+    expect(secondScheduleAt).toBe(startAt + FORFEIT_MS);
     expect(pendingForfeitCount()).toBe(1);
     expect(jest.getTimerCount()).toBe(1);
 
@@ -414,14 +409,14 @@ describe("disconnect forfeit", () => {
     expect(sentTypes(whiteWs)).not.toContain("MATCH_OVER");
     expect(pendingForfeitCount()).toBe(1);
 
-    // Not forfeited shortly before tab 2's close + 60 s.
+    // Not forfeited shortly before B's schedule + 60 s.
     await jest.advanceTimersByTimeAsync(FORFEIT_MS - 1_000);
     await settle();
     expect(saved().status).toBe("playing");
     expect(gameRecorded()).toBe(false);
 
-    // Forfeited by tab 2's close + 60 s (about 120 s from the start).
-    await jest.advanceTimersByTimeAsync(secondCloseAt + FORFEIT_MS - Date.now());
+    // Forfeited by B's schedule + 60 s (about 120 s from the start).
+    await jest.advanceTimersByTimeAsync(secondScheduleAt + FORFEIT_MS - Date.now());
     await settle();
     const room = saved();
     expect(room.status).toBe("finished");
@@ -432,10 +427,11 @@ describe("disconnect forfeit", () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
-  // Two black tabs drop back to back while the first forfeit timer is still
-  // pending: the second schedule replaces (and clears) the first timer, and a
-  // single forfeit happens 60 s after the second drop.
-  test("a second drop within 60 s reschedules the pending forfeit", async () => {
+  // Two black tabs drop 10 s apart: a single forfeit happens 60 s after the
+  // second drop, none 60 s after the first (since #79 the first drop, with
+  // tab 2 still registered, schedules nothing; before, the second schedule
+  // replaced the first).
+  test("two tabs dropping 10 s apart forfeit once, 60 s after the second drop", async () => {
     const whiteWs = fakeWs();
     const blackTab1 = fakeWs();
     const blackTab2 = fakeWs();
