@@ -17,8 +17,8 @@ const S = {
   },
   langBar: { padding: "10px 0 20px", maxWidth: 640 },
   card: {
-    background: "#3a1a00", borderRadius: 12, padding: 36, width: "100%",
-    maxWidth: 460, textAlign: "center",
+    background: "#3a1a00", borderRadius: 12, padding: "clamp(20px, 6vw, 36px)", width: "100%",
+    maxWidth: 460, textAlign: "center", boxSizing: "border-box",
   },
   avatar: { width: 80, height: 80, borderRadius: "50%", border: "2px solid #6b3a10" },
   avatarPlaceholder: {
@@ -55,7 +55,8 @@ const S = {
   // Games section
   histCard: {
     background: "#3a1a00", borderRadius: 12, padding: "0 0 16px 0",
-    width: "100%", maxWidth: 640, marginTop: 24, overflow: "hidden",
+    // Scrolls sideways on narrow screens instead of widening the page.
+    width: "100%", maxWidth: 640, marginTop: 24, overflowX: "auto",
   },
   histTitle: {
     color: "#e8b86d", fontSize: 16, letterSpacing: 1, margin: "0",

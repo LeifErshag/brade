@@ -351,6 +351,10 @@ export default function Game() {
 
   // ── Render ───────────────────────────────────────────────────────────────
 
+  // Right after the title, so on narrow screens it stays on the first header
+  // line instead of wrapping below the match info and Rules button.
+  const langToggle = <LanguageToggle />;
+
   if (loading && !guestToken) return <FullPage><p style={S.muted}>…</p></FullPage>;
 
   // Not authenticated and no guest token yet — offer choices
@@ -398,11 +402,13 @@ export default function Game() {
           {isTutorial ? (
             <>
               <h2 style={S.title}>{t("game.tutorialTitle")}</h2>
+              {langToggle}
               <span style={S.matchLen}>{t("game.notRated")}</span>
             </>
           ) : (
             <>
               <h2 style={S.title}>{t("game.roomTitle", { id: roomId })}</h2>
+              {langToggle}
               {room && (
                 <span style={S.matchLen}>
                   {room.matchLength === 1 ? t("game.matchLengthOne") : t("game.matchLength", { n: room.matchLength })}
@@ -421,7 +427,6 @@ export default function Game() {
           >
             {t("game.rules")}
           </button>
-          <LanguageToggle />
         </div>
 
         {!room ? (
