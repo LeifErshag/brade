@@ -192,6 +192,13 @@ export default function Board({
   onResign,
   readOnly = false,
   junkerNotice = null,
+  // The match has ended (room.status === "finished"): nobody has a turn, so
+  // there is no turn text and nothing on the board reacts, whatever the
+  // game state says.
+  gameOver = false,
+  // Optional short text that temporarily replaces the turn label, e.g. the
+  // result of the game that just ended within a match.
+  gameNotice = null,
   // Tutorial extras (both optional):
   //   highlightLegal   – make the "this checker can move" hint clearly visible
   //   onIllegalAttempt – ({ from, to }) => void, called when the player clicks
@@ -203,7 +210,8 @@ export default function Board({
   const [selected, setSelected] = useState(null);
 
   // A spectator (no colour) never has a turn, so nothing on the board reacts.
-  const isMyTurn = myColor != null && gs.turn === myColor;
+  // Neither does anyone once the match is over.
+  const isMyTurn = !gameOver && myColor != null && gs.turn === myColor;
   const canRoll = isMyTurn && gs.phase === "rolling";
   const canMove = isMyTurn && gs.phase === "moving";
   const noMoves = canMove && gs.legalMoves.length === 0;
@@ -384,9 +392,9 @@ export default function Board({
     })
     : null;
 
-  const turnLabel = isMyTurn
+  const turnLabel = gameOver ? null : (isMyTurn
     ? (canRoll ? "Your turn \u2014 roll the dice" : "Your turn \u2014 move a checker")
-    : `${playerInfo?.[gs.turn]?.display_name ?? gs.turn}'s turn`;
+    : `${playerInfo?.[gs.turn]?.display_name ?? gs.turn}'s turn`);
 
   return (
     <div style={S.wrap}>
@@ -408,11 +416,14 @@ export default function Board({
         </div>
       </div>
 
-      {/* Status line: the junker notice temporarily replaces the turn label */}
+      {/* Status line: a junker or game-result notice temporarily replaces the
+          turn label; it is empty once the match is over. */}
       <div style={S.turn}>
         {junkerNotice
           ? <span style={S.junker}>{playerInfo?.[junkerNotice]?.display_name ?? junkerNotice} is Junker!</span>
-          : turnLabel}
+          : gameNotice
+            ? <span style={S.junker}>{gameNotice}</span>
+            : turnLabel}
       </div>
 
       {/* SVG Board */}
