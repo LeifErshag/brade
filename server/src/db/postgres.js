@@ -41,6 +41,11 @@ export const POOL_TIMEOUTS = Object.freeze({
 // would cut off a long migration whose statement_timeout is lifted, so the
 // migration statement gets its own, much larger bound (node-postgres only
 // accepts a truthy per-query value as an override, so it cannot be 0).
+// Caveat: when this client-side timeout fires, pg sends no cancel request, so
+// the server-side statement keeps running and holding its locks until the
+// server notices the closed socket. A restart that retries the migration
+// would queue behind those locks; cancel the stale backend (pg_cancel_backend)
+// if that happens.
 export const MIGRATION_QUERY_TIMEOUT = 60 * 60_000; // 1 h
 
 export async function connectPostgres() {
@@ -80,6 +85,8 @@ async function runMigrations() {
       // pool's statement_timeout; lift it for this transaction only, and
       // raise the client-side timeout for the migration statement to match.
       await client.query("SET LOCAL statement_timeout = 0");
+      // On timeout the server keeps running this statement (no cancel is
+      // sent); see MIGRATION_QUERY_TIMEOUT.
       await client.query({ text: sql, query_timeout: MIGRATION_QUERY_TIMEOUT });
       await client.query("INSERT INTO _migrations (filename) VALUES ($1)", [filename]);
       await client.query("COMMIT");
