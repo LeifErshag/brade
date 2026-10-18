@@ -1298,6 +1298,79 @@ test("§11 (p.7) a wall burst inside the first quarter that makes jan is spräng
   expect(r?.points).toBe(6);
 });
 
+// §11 (p.7): the move that makes the opponent jan decides sprängjan. If an
+// earlier die of the roll bursts a first-quarter band but the opponent is not
+// jan yet, and a later move (here a hit) completes the jan, it is plain jan
+// (maintainer decision, #88). White has 2 on the bar and its own checkers on
+// pos 0–3; black has a band on white pos 4, a blot on pos 5 and 2 free entry
+// points in black's first quarter.
+function burstThenHitGs(dice) {
+  const gs = emptyGs("white", dice);
+  for (let p = 0; p <= 3; p++) place(gs, "white", p, p === 3 ? 4 : 3);
+  placeOppAtMoverPos(gs, "white", 4, 2);
+  placeOppAtMoverPos(gs, "white", 5, 1);
+  for (let p = 0; p <= 3; p++) place(gs, "black", p, 2);                // black Q1: 2 available
+  place(gs, "black", 8, 4);
+  gs.bar.white = 2;
+  return gs;
+}
+
+test("§11 (p.7) a burst that does not make jan, followed by a hit that does, is plain jan (#88)", () => {
+  const gs = burstThenHitGs([5, 6]);
+  expect(getLegalMoves(gs, "white")).toContainEqual({ from: "bar", to: 4, die: 5 });
+  const burst = applyMove(gs, "white", "bar", 4, 5);
+  expect(burst.burstFirstQuarter).toBe(true);
+  expect(burst.gs.bar.black).toBe(2);                                   // 2 on the bar, 2 available → not jan
+  expect(checkWin(burst.gs, burst.burstFirstQuarter)).toBeNull();
+  expect(getLegalMoves(burst.gs, "white")).toContainEqual({ from: "bar", to: 5, die: 6 });
+  const hit = applyMove(burst.gs, "white", "bar", 5, 6);
+  expect(hit.burstFirstQuarter).toBe(false);
+  expect(hit.gs.bar.black).toBe(3);
+  const r = checkWin(hit.gs, hit.burstFirstQuarter);
+  expect(r?.winner).toBe("white");
+  expect(r?.winType).toBe("jan");
+  expect(r?.points).toBe(4);
+});
+
+test("§11 (p.7) the same roll played hit first, burst last, is sprängjan (#88)", () => {
+  const gs = burstThenHitGs([6, 5]);
+  expect(getLegalMoves(gs, "white")).toContainEqual({ from: "bar", to: 5, die: 6 });
+  const hit = applyMove(gs, "white", "bar", 5, 6);
+  expect(checkWin(hit.gs, hit.burstFirstQuarter)).toBeNull();          // 1 on the bar → not jan
+  expect(getLegalMoves(hit.gs, "white")).toContainEqual({ from: "bar", to: 4, die: 5 });
+  const burst = applyMove(hit.gs, "white", "bar", 4, 5);
+  expect(burst.burstFirstQuarter).toBe(true);
+  const r = checkWin(burst.gs, burst.burstFirstQuarter);
+  expect(r?.winType).toBe("sprangjan");
+  expect(r?.points).toBe(6);
+});
+
+// §11 (p.7) "Ibland krävs det att spelaren spränger mer än ett band": the first
+// burst leaves black 2 on the bar with 2 entry points (not jan); the second
+// burst, which makes the jan, is itself a first-quarter burst → sprängjan.
+test("§11 (p.7) a burst that does not make jan, followed by a second first-quarter burst that does, is sprängjan (#88)", () => {
+  const gs = emptyGs("white", [5, 6]);
+  for (let p = 0; p <= 3; p++) place(gs, "white", p, p === 3 ? 4 : 3);
+  placeOppAtMoverPos(gs, "white", 4, 2);
+  placeOppAtMoverPos(gs, "white", 5, 2);
+  for (let p = 0; p <= 3; p++) place(gs, "black", p, 2);                // black Q1: 2 available
+  place(gs, "black", 8, 3);
+  gs.bar.white = 2;
+  expect(getLegalMoves(gs, "white")).toContainEqual({ from: "bar", to: 4, die: 5 });
+  const first = applyMove(gs, "white", "bar", 4, 5);
+  expect(first.burstFirstQuarter).toBe(true);
+  expect(first.gs.bar.black).toBe(2);
+  expect(checkWin(first.gs, first.burstFirstQuarter)).toBeNull();
+  expect(getLegalMoves(first.gs, "white")).toContainEqual({ from: "bar", to: 5, die: 6 });
+  const second = applyMove(first.gs, "white", "bar", 5, 6);
+  expect(second.burstFirstQuarter).toBe(true);
+  expect(second.gs.bar.black).toBe(4);
+  const r = checkWin(second.gs, second.burstFirstQuarter);
+  expect(r?.winner).toBe("white");
+  expect(r?.winType).toBe("sprangjan");
+  expect(r?.points).toBe(6);
+});
+
 test("§11 applyMove: a burst on the mover's path pos 6 (first point of Q2) is not a first-quarter burst (#34)", () => {
   const gs = emptyGs("black", [6]);
   gs.bar.black = 3;
