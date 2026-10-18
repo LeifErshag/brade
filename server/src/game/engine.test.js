@@ -1334,11 +1334,39 @@ test("§11 (p.7) a burst that does not make jan, followed by a hit that does, is
 
 test("§11 (p.7) the same roll played hit first, burst last, is sprängjan (#88)", () => {
   const gs = burstThenHitGs([6, 5]);
+  expect(getLegalMoves(gs, "white")).toContainEqual({ from: "bar", to: 5, die: 6 });
   const hit = applyMove(gs, "white", "bar", 5, 6);
   expect(checkWin(hit.gs, hit.burstFirstQuarter)).toBeNull();          // 1 on the bar → not jan
+  expect(getLegalMoves(hit.gs, "white")).toContainEqual({ from: "bar", to: 4, die: 5 });
   const burst = applyMove(hit.gs, "white", "bar", 4, 5);
   expect(burst.burstFirstQuarter).toBe(true);
   const r = checkWin(burst.gs, burst.burstFirstQuarter);
+  expect(r?.winType).toBe("sprangjan");
+  expect(r?.points).toBe(6);
+});
+
+// §11 (p.7) "Ibland krävs det att spelaren spränger mer än ett band": the first
+// burst leaves black 2 on the bar with 2 entry points (not jan); the second
+// burst, which makes the jan, is itself a first-quarter burst → sprängjan.
+test("§11 (p.7) a burst that does not make jan, followed by a second first-quarter burst that does, is sprängjan (#88)", () => {
+  const gs = emptyGs("white", [5, 6]);
+  for (let p = 0; p <= 3; p++) place(gs, "white", p, p === 3 ? 4 : 3);
+  placeOppAtMoverPos(gs, "white", 4, 2);
+  placeOppAtMoverPos(gs, "white", 5, 2);
+  for (let p = 0; p <= 3; p++) place(gs, "black", p, 2);                // black Q1: 2 available
+  place(gs, "black", 8, 3);
+  gs.bar.white = 2;
+  expect(getLegalMoves(gs, "white")).toContainEqual({ from: "bar", to: 4, die: 5 });
+  const first = applyMove(gs, "white", "bar", 4, 5);
+  expect(first.burstFirstQuarter).toBe(true);
+  expect(first.gs.bar.black).toBe(2);
+  expect(checkWin(first.gs, first.burstFirstQuarter)).toBeNull();
+  expect(getLegalMoves(first.gs, "white")).toContainEqual({ from: "bar", to: 5, die: 6 });
+  const second = applyMove(first.gs, "white", "bar", 5, 6);
+  expect(second.burstFirstQuarter).toBe(true);
+  expect(second.gs.bar.black).toBe(4);
+  const r = checkWin(second.gs, second.burstFirstQuarter);
+  expect(r?.winner).toBe("white");
   expect(r?.winType).toBe("sprangjan");
   expect(r?.points).toBe(6);
 });
