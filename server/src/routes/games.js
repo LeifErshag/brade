@@ -18,27 +18,22 @@ const CreateGameSchema = z.object({
     z.literal(1), z.literal(3), z.literal(5), z.literal(7),
   ]).default(5),
   opponent:     z.enum(["human", "ai"]).default("human"),
-  aiDifficulty: z.enum(["beginner", "journeyman", "master", "grandmaster"]).default("journeyman"),
 });
 
 const CreateAiGuestGameSchema = z.object({
   matchLength: z.union([
     z.literal(1), z.literal(3), z.literal(5), z.literal(7),
   ]).default(5),
-  aiDifficulty: z.enum(["beginner", "journeyman", "master", "grandmaster"]).default("journeyman"),
 });
 
-// Tutorial games take no options: always one game vs the easiest AI. `.default`
-// lets clients POST with no body at all.
+// Tutorial games take no options: always one game vs the tutorial AI, which
+// plays random legal moves (see ai.js). `.default` lets clients POST with no
+// body at all.
 const CreateTutorialSchema = z.object({}).strict().default({});
-
-// The tutorial opponent plays random legal moves, so the learner usually wins
-// and gets to see the bearing-off and scoring explanations.
-export const TUTORIAL_AI_DIFFICULTY = "beginner";
 
 // ── POST /api/games — create a new game room ──────────────────────────────────
 router.post("/", requireAuth, validate(CreateGameSchema), asyncHandler(async (req, res) => {
-  const { matchLength, opponent, aiDifficulty } = req.body;
+  const { matchLength, opponent } = req.body;
   const isAi  = opponent === "ai";
   const roomId = uuid().slice(0, 8).toUpperCase();
 
@@ -66,7 +61,6 @@ router.post("/", requireAuth, validate(CreateGameSchema), asyncHandler(async (re
       matchLength,
       createdBy:   req.userId,
       isAi:        true,
-      aiDifficulty,
       players:     { white: req.userId, black: AI_USER_ID },
       playerInfo:  {
         white: { display_name: creator?.display_name ?? "Player", avatar_url: creator?.avatar_url ?? null },
@@ -127,7 +121,7 @@ router.post("/", requireAuth, validate(CreateGameSchema), asyncHandler(async (re
 // ── POST /api/games/ai-guest — create an AI game without logging in ──────────
 // Issues a guest token in the same response. White = guest, Black = AI.
 router.post("/ai-guest", validate(CreateAiGuestGameSchema), asyncHandler(async (req, res) => {
-  const { matchLength, aiDifficulty } = req.body;
+  const { matchLength } = req.body;
   const roomId  = uuid().slice(0, 8).toUpperCase();
   const guestId = uuid();
   const guestDisplayName = "Guest";
@@ -149,7 +143,6 @@ router.post("/ai-guest", validate(CreateAiGuestGameSchema), asyncHandler(async (
     matchLength,
     createdBy:    guestId,
     isAi:         true,
-    aiDifficulty,
     hasGuest:     true,
     guestColor:   "white",
     players:      { white: guestId, black: AI_USER_ID },
@@ -225,7 +218,6 @@ router.post("/tutorial", validate(CreateTutorialSchema), asyncHandler(async (req
     createdBy:    playerId,
     isAi:         true,
     isTutorial:   true,
-    aiDifficulty: TUTORIAL_AI_DIFFICULTY,
     players:      { white: playerId, black: AI_USER_ID },
     playerInfo:   { white: playerInfo, black: AI_DISPLAY },
     ready:        { white: true, black: true },

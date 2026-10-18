@@ -52,14 +52,6 @@ export default {
     bestOf: "Best of {n}",
   },
 
-  ai: {
-    label: "AI difficulty",
-    beginner: "Beginner",
-    journeyman: "Journeyman",
-    master: "Master",
-    grandmaster: "Grandmaster",
-  },
-
   // One entry per win type in server/src/game/scoring.js (plus resign).
   winType: {
     hemspel:               "Bear-off (hemspel)",

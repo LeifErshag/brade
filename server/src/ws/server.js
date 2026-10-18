@@ -187,7 +187,7 @@ async function connectToRoom(ws, roomId, userId, isGuest, guestDisplayName) {
   const aiToRoll = gs?.phase === "rolling";
   const aiMidTurn = gs?.phase === "moving" && gs.legalMoves?.length > 0 && gs.dice?.length > 0;
   if (room.isAi && room.status === "playing" && gs?.turn === "black" && (aiToRoll || aiMidTurn)) {
-    triggerAiTurn(roomId, room.aiDifficulty).catch(e => console.error("AI first-turn error:", e));
+    triggerAiTurn(roomId).catch(e => console.error("AI first-turn error:", e));
   }
 
   ws.on("message", async (data) => {

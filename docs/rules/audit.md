@@ -131,10 +131,9 @@ Short summary in Swedish for other work (tutorial, rules panel), following the P
 
 | Check | Status | Notes |
 |---|---|---|
-| All difficulties choose only from engine-legal moves | ✅ | `pickMove` picks from `gs.legalMoves`. Grandmaster picks from `legalTurnSequences`, the same survivor set behind `getLegalMoves`. Covered by `ai.test.js` ("…always returns a legal move", "Grandmaster returns a move from getLegalMoves"). The engine fixes for #11 (optional wall burst) and #12 (junker is never jan) have landed, and the AI follows them automatically. |
+| The AI chooses only from engine-legal moves | ✅ | Grandmaster is the only AI opponent (#103); tutorial rooms play random moves from `gs.legalMoves`. Grandmaster picks from `legalTurnSequences`, the same survivor set behind `getLegalMoves`. Covered by `ai.test.js` ("random (tutorial) returns the legal move Math.random picks", "Grandmaster returns a move from getLegalMoves") and `aiMoveRevalidation.test.js`. |
 | Grandmaster cached plan is replayed without re-validation | ❓ (robustness, not a rule) | `triggerAiTurn` applies the AI's move without checking it against `gs.legalMoves`. Plans come from legal sequences, so this is safe today. |
 | Heuristic `janThreat` counts the winner's bands as available re-entry points | ✅ | Matches §10 and the engine's `checkJan`: only the loser's own checkers block an entry point. `evaluate` scores both our jan threat and the opponent's against us (#68). Game-ending sequences are terminal in the search and valued by points (sprängjan included), then §14 rank (#68). |
-| Master prompt describes vackert spel as "bear off all 15 in a special pattern" | ❓ (prompt text) | Per §8, vackert spel means *arranging* the checkers in a pattern with **none** borne off. It's only an LLM hint and doesn't affect legality. |
 
 ## Discrepancies filed
 

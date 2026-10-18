@@ -70,8 +70,6 @@ const pickMove = jest.fn(async (gs, color, legalMoves) => legalMoves[0] ?? null)
 jest.unstable_mockModule("../game/ai.js", () => ({
   AI_USER_ID,
   AI_DISPLAY: { display_name: "Computer", avatar_url: null },
-  MASTER_API_TIMEOUT_MS:  8_000,
-  MASTER_API_MAX_RETRIES: 0,
   pickMove,
 }));
 
@@ -96,7 +94,6 @@ function makeRoom(roomId) {
     matchLength:  3,
     createdBy:    HUMAN_ID,
     isAi:         true,
-    aiDifficulty: "beginner",
     gameDbId:     "game-uuid",
     players:      { white: HUMAN_ID, black: AI_USER_ID },
     playerInfo:   { white: { display_name: "Human" }, black: { display_name: "Computer" } },
@@ -216,7 +213,7 @@ describe("pickMove answering a move that is not legal, in an unchanged room", ()
       return move;
     });
 
-    const turn = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
+    const turn = track(triggerAiTurn(roomId).catch(() => {}));
     await runUntil(() => getRoom(roomId).gameState.turn === "white", TURN_MS);
 
     expect(pickedLegal).toBe(false);
@@ -285,7 +282,7 @@ describe("no longer the AI's move when its pick returns", () => {
     putRoom(roomId);
     const h = changeRoomDuringFirstPick(roomId, change);
 
-    const turn = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
+    const turn = track(triggerAiTurn(roomId).catch(() => {}));
     await runUntil(() => turn.settled, TURN_MS);
 
     // The stored state still has dice and legal moves, so only the turn/phase
@@ -317,7 +314,7 @@ describe("the match finished while the AI was choosing", () => {
       return r;
     });
 
-    const turn = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
+    const turn = track(triggerAiTurn(roomId).catch(() => {}));
     await runUntil(() => turn.settled, TURN_MS);
 
     expect(h.newer.gameState).toMatchObject({ turn: "black", phase: "moving" });
@@ -339,4 +336,30 @@ describe("the match finished while the AI was choosing", () => {
     expect(savesOf(roomId)).toHaveLength(h.savesAfterChange);
     expect(pendingRoomLockCount()).toBe(0);
   }, 60_000);
+});
+
+// ── Which AI plays (#103) ────────────────────────────────────────────────────
+// Grandmaster is the only AI opponent; tutorial rooms alone get random moves.
+// The choice comes from the room, so an old room that still carries an
+// aiDifficulty field from before #103 is played by Grandmaster too.
+
+describe("the AI that chooses the move", () => {
+  test.each([
+    ["a normal AI room",                      "WHICHAI1", {},                           false],
+    ["a room with a pre-#103 aiDifficulty",   "WHICHAI2", { aiDifficulty: "beginner" }, false],
+    ["a tutorial room",                       "WHICHAI3", { isTutorial: true },         true],
+  ])("%s: pickMove is called with random = %s", async (_label, roomId, extra, random) => {
+    putRoom(roomId, { ...makeRoom(roomId), ...extra });
+
+    const turn = track(triggerAiTurn(roomId).catch(() => {}));
+    await runUntil(() => getRoom(roomId).gameState.turn === "white", TURN_MS);
+
+    expect(pickMove).toHaveBeenCalled();
+    for (const [, color, , rid, opts] of pickMove.mock.calls) {
+      expect(color).toBe("black");
+      expect(rid).toBe(roomId);
+      expect(opts).toEqual({ random });
+    }
+    await runUntil(() => turn.settled, TURN_MS);
+  });
 });

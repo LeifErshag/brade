@@ -78,7 +78,6 @@ function makeRoom(roomId, gameState, { matchLength = 3, gameNum = 1 } = {}) {
     matchLength,
     createdBy:    HUMAN_ID,
     isAi:         true,
-    aiDifficulty: "beginner",
     gameDbId:     "game-uuid",
     players:      { white: HUMAN_ID, black: AI_USER_ID },
     playerInfo:   { white: { display_name: "Human" }, black: { display_name: "Computer" } },
@@ -203,7 +202,7 @@ describe.each([
 
     // The AI's turn starts once (as after the human hands over the turn);
     // nothing else triggers it afterwards.
-    const turn = triggerAiTurn(roomId, "beginner");
+    const turn = triggerAiTurn(roomId);
     await runFor(20_000);
     await turn;
 
@@ -241,8 +240,8 @@ describe("a normal AI turn", () => {
     gs.firstMove = false;
     await putRoom(makeRoom("ONCEAI01", gs));
 
-    const first  = triggerAiTurn("ONCEAI01", "beginner");
-    const second = triggerAiTurn("ONCEAI01", "beginner");
+    const first  = triggerAiTurn("ONCEAI01");
+    const second = triggerAiTurn("ONCEAI01");
     await runFor(20_000);
     await Promise.all([first, second]);
 
@@ -277,7 +276,7 @@ describe("a normal AI turn", () => {
     await handleMessage({ msg: { type: "MOVE", from, to, die }, userId: HUMAN_ID, roomId: "ONCEAI02", ws: null });
     // A second trigger for the same turn (e.g. the player reconnecting while
     // the AI is thinking) must not start a second turn.
-    const extra = triggerAiTurn("ONCEAI02", "beginner");
+    const extra = triggerAiTurn("ONCEAI02");
     await runFor(20_000);
     await extra;
 

@@ -69,8 +69,6 @@ const pickMove = jest.fn(async (gs, color, legalMoves) => legalMoves[0] ?? null)
 jest.unstable_mockModule("../game/ai.js", () => ({
   AI_USER_ID,
   AI_DISPLAY: { display_name: "Computer", avatar_url: null },
-  MASTER_API_TIMEOUT_MS:  8_000,
-  MASTER_API_MAX_RETRIES: 0,
   pickMove,
 }));
 
@@ -100,7 +98,6 @@ function makeRoom() {
     matchLength:  3,
     createdBy:    HUMAN_ID,
     isAi:         true,
-    aiDifficulty: "beginner",
     gameDbId:     "game-uuid",
     players:      { white: HUMAN_ID, black: AI_USER_ID },
     playerInfo:   { white: { display_name: "Human" }, black: { display_name: "Computer" } },

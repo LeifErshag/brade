@@ -70,8 +70,6 @@ const pickMove = jest.fn(async (gs, color, legalMoves) => legalMoves[0]);
 jest.unstable_mockModule("../game/ai.js", () => ({
   AI_USER_ID,
   AI_DISPLAY:             { display_name: "Computer", avatar_url: null },
-  MASTER_API_TIMEOUT_MS:  8_000,
-  MASTER_API_MAX_RETRIES: 0,
   pickMove,
 }));
 
@@ -103,7 +101,6 @@ function makeRoom({ moving = false } = {}) {
     matchLength:  3,
     createdBy:    HUMAN_ID,
     isAi:         true,
-    aiDifficulty: "beginner",
     gameDbId:     "game-uuid",
     players:      { white: HUMAN_ID, black: AI_USER_ID },
     playerInfo:   { white: { display_name: "Human" }, black: { display_name: "Computer" } },
@@ -181,7 +178,7 @@ describe("AI turn retry", () => {
     failSetsAfter = 1; // the roll is saved, the first move's save fails
     failSets = 1;
 
-    const t = track(triggerAiTurn(ROOM_ID, "beginner"));
+    const t = track(triggerAiTurn(ROOM_ID));
     await runFor(30_000);
 
     expect(t.settled).toBe(true);
@@ -194,7 +191,7 @@ describe("AI turn retry", () => {
     const room = makeRoom({ moving: true });
     store.set(`room:${ROOM_ID}`, JSON.stringify(room));
 
-    const t = track(triggerAiTurn(ROOM_ID, "beginner"));
+    const t = track(triggerAiTurn(ROOM_ID));
     await runFor(30_000);
 
     expect(t.settled).toBe(true);
@@ -210,7 +207,7 @@ describe("AI turn retry", () => {
     store.set(`room:${ROOM_ID}`, JSON.stringify(makeRoom()));
     setup();
 
-    const t = track(triggerAiTurn(ROOM_ID, "beginner"));
+    const t = track(triggerAiTurn(ROOM_ID));
     await runFor(30_000);
 
     expect(t.settled).toBe(true);
@@ -235,7 +232,7 @@ describe("AI turn retry", () => {
       return r;
     };
 
-    const t = track(triggerAiTurn(ROOM_ID, "beginner"));
+    const t = track(triggerAiTurn(ROOM_ID));
     await runFor(120_000);
     fakeRedis.set = realSet;
 
@@ -252,7 +249,7 @@ describe("AI turn retry", () => {
     expect(roomReads).toBe(readsBefore);
 
     failGets = false;
-    const later = track(triggerAiTurn(ROOM_ID, "beginner"));
+    const later = track(triggerAiTurn(ROOM_ID));
     await runFor(30_000);
     expect(later.settled).toBe(true);
     expectTurnFinished(stored());
@@ -264,7 +261,7 @@ describe("AI turn retry", () => {
     store.set(`room:${ROOM_ID}`, JSON.stringify(makeRoom()));
     failGets = true;
 
-    const t = track(triggerAiTurn(ROOM_ID, "beginner"));
+    const t = track(triggerAiTurn(ROOM_ID));
     await runFor(120_000);
 
     expect(t.settled).toBe(true);

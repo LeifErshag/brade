@@ -79,8 +79,6 @@ const pickMove = jest.fn(async (gs, color, legalMoves) => legalMoves[0]);
 jest.unstable_mockModule("../game/ai.js", () => ({
   AI_USER_ID,
   AI_DISPLAY:             { display_name: "Computer", avatar_url: null },
-  MASTER_API_TIMEOUT_MS:  8_000,
-  MASTER_API_MAX_RETRIES: 0,
   pickMove,
 }));
 
@@ -119,7 +117,6 @@ function makeRoom(roomId, { moving = false } = {}) {
     matchLength:  3,
     createdBy:    HUMAN_ID,
     isAi:         true,
-    aiDifficulty: "beginner",
     gameDbId:     "game-uuid",
     players:      { white: HUMAN_ID, black: AI_USER_ID },
     playerInfo:   { white: { display_name: "Human" }, black: { display_name: "Computer" } },
@@ -224,14 +221,14 @@ describe("AI retry backoff", () => {
       return false;
     };
 
-    const turn = track(triggerAiTurn(roomId, "beginner"));
+    const turn = track(triggerAiTurn(roomId));
     // The retry has read the room and saved its roll: the successful pass is
     // under way. A trigger now asks for a rerun after it.
     await runUntil(() => savesOf(roomId).length >= 1, 30_000);
     expect(reads.length).toBeGreaterThanOrEqual(2);
     expect(reads[0].failed).toBe(true);
     expect(getRoom(roomId).gameState).toMatchObject({ turn: "black", phase: "moving" });
-    triggerAiTurn(roomId, "beginner");
+    triggerAiTurn(roomId);
 
     await runUntil(() => turn.settled, 60_000);
     expect(turn.settled).toBe(true);
@@ -260,10 +257,10 @@ describe("AI retry backoff", () => {
     putRoom(roomId);
     failRead = (n) => n === 1; // the first pass fails at its roll
 
-    const turn = track(triggerAiTurn(roomId, "beginner"));
+    const turn = track(triggerAiTurn(roomId));
     // A second trigger while the first pass is still thinking: a rerun is
     // pending when that pass fails.
-    triggerAiTurn(roomId, "beginner");
+    triggerAiTurn(roomId);
 
     await runUntil(() => turn.settled, 60_000);
     expect(turn.settled).toBe(true);
@@ -296,7 +293,7 @@ describe("a trigger arriving during a backoff sleep", () => {
       let recovered = false;
       failRead = (n) => n >= 2 && !recovered;
 
-      const turn = track(triggerAiTurn(roomId, "beginner"));
+      const turn = track(triggerAiTurn(roomId));
       await runUntil(() => reads.filter((r) => r.failed).length >= failingAttempts, 60_000);
       expect(reads.filter((r) => r.failed)).toHaveLength(failingAttempts);
       const readsBefore = reads.length;
@@ -307,7 +304,7 @@ describe("a trigger arriving during a backoff sleep", () => {
       expect(reads.length).toBe(readsBefore); // still sleeping
       recovered = true;
       const triggeredAt = Date.now();
-      const again = track(triggerAiTurn(roomId, "beginner"));
+      const again = track(triggerAiTurn(roomId));
       await jest.advanceTimersByTimeAsync(0);
       expect(again.settled).toBe(true); // joined the running loop
 
@@ -332,7 +329,7 @@ describe("a trigger arriving during a backoff sleep", () => {
     let recovered = false;
     failRead = () => !recovered; // every read fails until Redis is back
 
-    const turn = track(triggerAiTurn(roomId, "beginner"));
+    const turn = track(triggerAiTurn(roomId));
     // After the fourth failure the loop sleeps 8 s.
     await runUntil(() => reads.filter((r) => r.failed).length >= 4, 60_000);
     expect(reads.filter((r) => r.failed)).toHaveLength(4);
@@ -340,7 +337,7 @@ describe("a trigger arriving during a backoff sleep", () => {
 
     recovered = true;
     const triggeredAt = Date.now();
-    const again = track(triggerAiTurn(roomId, "beginner"));
+    const again = track(triggerAiTurn(roomId));
     await jest.advanceTimersByTimeAsync(0);
     expect(again.settled).toBe(true); // joined the running loop
     await runUntil(() => reads.length > readsBefore, 30_000);
@@ -364,7 +361,7 @@ describe("a trigger arriving during a backoff sleep", () => {
     failRead = (n) => n >= 2 && !recovered;
     const failedReads = () => reads.filter((r) => r.failed);
 
-    const turn = track(triggerAiTurn(roomId, "beginner"));
+    const turn = track(triggerAiTurn(roomId));
     // After the third failure the loop sleeps 4 s.
     await runUntil(() => failedReads().length >= 3, 60_000);
     expect(failedReads()).toHaveLength(3);
@@ -373,7 +370,7 @@ describe("a trigger arriving during a backoff sleep", () => {
     // A first trigger wakes that sleep while Redis is still down: the pass
     // it starts fails, and the loop enters the 8 s sleep.
     await runFor(500);
-    triggerAiTurn(roomId, "beginner");
+    triggerAiTurn(roomId);
     await runUntil(() => failedReads().length >= 4, 30_000);
     expect(failedReads()).toHaveLength(4);
     const fourthFailAt = failedReads()[3].at;
@@ -389,7 +386,7 @@ describe("a trigger arriving during a backoff sleep", () => {
     // sleep, not wait it out.
     recovered = true;
     const triggeredAt = Date.now();
-    triggerAiTurn(roomId, "beginner");
+    triggerAiTurn(roomId);
     await runUntil(() => reads.length > readsBefore, 30_000);
     expect(reads.length).toBeGreaterThan(readsBefore);
     expect(reads[readsBefore].at - triggeredAt).toBeLessThanOrEqual(RESUME_MS);
@@ -408,12 +405,12 @@ describe("a trigger arriving during a backoff sleep", () => {
     putRoom(roomId);
     failRead = (n) => n >= 2; // every move step fails for good
 
-    const turn = track(triggerAiTurn(roomId, "beginner"));
+    const turn = track(triggerAiTurn(roomId));
     // A trigger every 3 s for a minute, each one possibly cutting a sleep
     // short; each attempt still costs at least a thinking delay.
     for (let i = 0; i < 20; i++) {
       await runFor(3_000);
-      triggerAiTurn(roomId, "beginner");
+      triggerAiTurn(roomId);
     }
     await runFor(120_000);
     expect(turn.settled).toBe(true);
@@ -432,9 +429,9 @@ describe("a trigger arriving during a backoff sleep", () => {
     putRoom(roomId);
     failRead = () => true; // every read fails, the roll included
 
-    const turn = track(triggerAiTurn(roomId, "beginner"));
+    const turn = track(triggerAiTurn(roomId));
     for (let i = 0; i < 100; i++) {
-      triggerAiTurn(roomId, "beginner");
+      triggerAiTurn(roomId);
       await jest.advanceTimersByTimeAsync(100);
     }
     // 10 s of triggers: at most one read per 0.7 s thinking delay.

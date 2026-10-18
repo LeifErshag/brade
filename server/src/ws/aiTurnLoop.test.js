@@ -89,7 +89,6 @@ function makeRoom(roomId) {
     matchLength:  3,
     createdBy:    HUMAN_ID,
     isAi:         true,
-    aiDifficulty: "beginner",
     gameDbId:     "game-uuid",
     players:      { white: HUMAN_ID, black: AI_USER_ID },
     playerInfo:   { white: { display_name: "Human" }, black: { display_name: "Computer" } },
@@ -165,7 +164,7 @@ describe("many triggers for the same room", () => {
 
     const turns = [];
     for (let i = 0; i < TRIGGERS; i++) {
-      turns.push(triggerAiTurn(roomId, "beginner").catch(() => {}));
+      turns.push(triggerAiTurn(roomId).catch(() => {}));
     }
     const all = track(Promise.all(turns));
     await runFor(20_000);
@@ -189,8 +188,8 @@ describe("many triggers for the same room", () => {
     const roomId = "LOOPGD02";
     await fakeRedis.set(`room:${roomId}`, JSON.stringify(makeRoom(roomId)));
 
-    const first  = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
-    const second = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
+    const first  = track(triggerAiTurn(roomId).catch(() => {}));
+    const second = track(triggerAiTurn(roomId).catch(() => {}));
     await runFor(20_000);
     expect(first.settled).toBe(true);
     expect(second.settled).toBe(true);
@@ -213,8 +212,8 @@ describe("a pass of the AI turn that throws", () => {
 
     // The first room read by the AI fails; a second trigger is pending.
     failReads = 1;
-    const first  = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
-    const second = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
+    const first  = track(triggerAiTurn(roomId).catch(() => {}));
+    const second = track(triggerAiTurn(roomId).catch(() => {}));
     await runFor(20_000);
 
     expect(failReads).toBe(0); // the failing read did happen
@@ -235,13 +234,13 @@ describe("a pass of the AI turn that throws", () => {
     // Every room read fails, so the turn (with any bounded retries, issue
     // #79) gives up without playing.
     failReads = Infinity;
-    const first = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
+    const first = track(triggerAiTurn(roomId).catch(() => {}));
     await runFor(120_000);
     expect(first.settled).toBe(true);
     expect(aiRollsWithMoves(roomId)).toBe(0);
     failReads = 0;
 
-    const later = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
+    const later = track(triggerAiTurn(roomId).catch(() => {}));
     await runFor(20_000);
     expect(later.settled).toBe(true);
 

@@ -63,7 +63,6 @@ export default function Home() {
 
   const [matchLength, setMatchLength]   = useState(5);
   const [creating, setCreating]         = useState(false);
-  const [aiDifficulty, setAiDifficulty] = useState("journeyman");
   const [creatingAi, setCreatingAi]     = useState(false);
   const [roomCode, setRoomCode]         = useState("");
   // Errors are kept as message descriptors ({ key } / { server }) and
@@ -140,7 +139,7 @@ export default function Home() {
         const res = await fetch(`${API}/api/games/ai-guest`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ matchLength, aiDifficulty }),
+          body: JSON.stringify({ matchLength }),
         });
         if (res.ok) {
           const data = await res.json();
@@ -153,7 +152,7 @@ export default function Home() {
       } else {
         const res = await authFetch("/api/games", {
           method: "POST",
-          body: JSON.stringify({ matchLength, opponent: "ai", aiDifficulty }),
+          body: JSON.stringify({ matchLength, opponent: "ai" }),
         });
         if (res.ok) {
           const data = await res.json();
@@ -248,9 +247,6 @@ export default function Home() {
   const matchLengthOptions = [1, 3, 5, 7].map(n => (
     <option key={n} value={n}>{n === 1 ? t("matchLength.one") : t("matchLength.bestOf", { n })}</option>
   ));
-  const aiOptions = ["beginner", "journeyman", "master", "grandmaster"].map(level => (
-    <option key={level} value={level}>{t(`ai.${level}`)}</option>
-  ));
 
   if (loading) {
     return (
@@ -319,14 +315,6 @@ export default function Home() {
 
                 <p style={{ ...S.sectionLabel, marginTop: 20 }}>{t("home.playAi")}</p>
                 <div style={S.playRow}>
-                  <select
-                    value={aiDifficulty}
-                    onChange={e => setAiDifficulty(e.target.value)}
-                    style={S.select}
-                    aria-label={t("ai.label")}
-                  >
-                    {aiOptions}
-                  </select>
                   <button onClick={handleCreateAi} disabled={creatingAi} style={S.btnPrimary}>
                     {creatingAi ? t("common.starting") : t("home.playAi")}
                   </button>
@@ -391,14 +379,6 @@ export default function Home() {
                     aria-label={t("matchLength.label")}
                   >
                     {matchLengthOptions}
-                  </select>
-                  <select
-                    value={aiDifficulty}
-                    onChange={e => setAiDifficulty(e.target.value)}
-                    style={S.select}
-                    aria-label={t("ai.label")}
-                  >
-                    {aiOptions}
                   </select>
                   <button onClick={handleCreateAi} disabled={creatingAi} style={S.btnPrimary}>
                     {creatingAi ? t("common.starting") : t("home.playAi")}
