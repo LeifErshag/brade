@@ -1,14 +1,14 @@
 # Bräde Web App — Development Plan
 
 ## Overview
-A fully playable implementation of Svenskt Bräde (Swedish Tables) as a web app, based on the official rules from Vasamuseets Brädspelsvänner (2003). Supports local multiplayer, AI opponents of varying skill, and a random opponent mode. Bilingual UI: Swedish / English.
+A fully playable implementation of Svenskt Bräde (Swedish Tables) as a web app, based on the official rules from Vasamuseets Brädspelsvänner (2003). Supports local multiplayer, a single Grandmaster AI opponent, and a random opponent mode. Bilingual UI: Swedish / English.
 
 ---
 
 ## Tech Stack
 - **React** (via Claude artifact)
 - **Tailwind CSS** for styling
-- **Claude API** (claude-sonnet-4-20250514) for Master-level AI opponent reasoning
+- ~~Claude API for Master-level AI~~ — removed in #103; Grandmaster (`server/src/game/ai.js`, `expectimax.js`) is the only AI
 - All game state managed in React (no backend required for local/AI modes)
 
 ---
@@ -92,7 +92,9 @@ A fully playable implementation of Svenskt Bräde (Swedish Tables) as a web app,
 ---
 
 ### 🔲 Phase 5 — AI Opponents
-**Goal:** Three AI skill levels.
+**Goal:** AI opponents.
+
+> **Update (#103):** The Beginner / Journeyman / Master levels and the Claude API integration were removed. Grandmaster is now the only AI; tutorial rooms (`room.isTutorial`) use an internal random-move opponent. The list below is the original plan, kept for history.
 
 - [ ] **Beginner (Nybörjare)**: picks a random legal move
 - [ ] **Journeyman (Gesäll)**: heuristic AI
@@ -107,7 +109,7 @@ A fully playable implementation of Svenskt Bräde (Swedish Tables) as a web app,
 - [ ] AI "thinking" animation / delay for realism
 - [ ] Difficulty selector in game setup
 
-**Deliverable:** All three AI levels playable, Master uses Claude API reasoning.
+**Deliverable:** (Superseded by #103.) Originally: all three AI levels playable, Master uses Claude API reasoning.
 
 ---
 
@@ -115,8 +117,8 @@ A fully playable implementation of Svenskt Bräde (Swedish Tables) as a web app,
 **Goal:** All game modes, complete UX.
 
 - [ ] **Local 2-player** (pass & play with screen flip or shared screen)
-- [ ] **vs AI** (choose difficulty)
-- [ ] **Random opponent** (random AI difficulty — simulates online matchmaking feel)
+- [ ] **vs AI** (Grandmaster; difficulty choice removed in #103)
+- [ ] **Random opponent** (simulates online matchmaking feel)
 - [ ] Game setup screen: player names, mode, match length, language
 - [ ] Move history / log (in Swedish or English)
 - [ ] Undo last move (local play only)
@@ -242,6 +244,8 @@ All UI text, labels, win type names, and rules reference available in both Swedi
 ### Phase 11 — Server-Side AI Opponents
 **Goal:** Let authenticated users play against a bot directly from the lobby, no second player required.
 
+> **Update (#103):** `aiDifficulty` was removed from the API, client and server (a stale `aiDifficulty` in a request body is stripped by Zod). Grandmaster is the only AI; tutorial rooms use a random-move opponent. The Beginner/Journeyman/Master and Claude Haiku items below are the original plan.
+
 - [ ] `POST /api/games` accepts `opponent: "ai"` + `aiDifficulty: "beginner" | "journeyman" | "master"`
 - [ ] Server creates the room and immediately occupies the black seat with a virtual AI user (stored as a `system` user in the DB)
 - [ ] AI move loop runs server-side inside the WebSocket handler — no client connection needed for the AI:
@@ -254,7 +258,7 @@ All UI text, labels, win type names, and rules reference available in both Swedi
 - [ ] AI games count toward ELO and match history (separate ELO column `elo_vs_ai` optional future)
 - [ ] Rate-limit Master AI calls: max 1 concurrent Claude request per user
 
-**Deliverable:** Single-player mode — click "Play vs AI", choose difficulty, game starts immediately.
+**Deliverable:** Single-player mode — click "Play vs AI", game starts immediately.
 
 ---
 
@@ -267,7 +271,7 @@ All UI text, labels, win type names, and rules reference available in both Swedi
   games         (id, white_id, black_id, winner_id, win_type, monk, white_score, black_score, started_at, ended_at)
   moves         (id, game_id, color, from_pt, to_pt, die, force, timestamp)
   ```
-- [ ] ELO rating system (K=32 standard, separate rating for each AI difficulty eventually)
+- [ ] ELO rating system (K=32 standard, a separate rating vs the AI is a possible future addition)
 - [ ] Player profile page: ELO, W/L record, win type breakdown, recent games, head-to-head
 - [ ] Match history: full replay from stored moves (step through game move by move)
 - [ ] Leaderboard: top players by ELO, filterable by time period
@@ -326,13 +330,13 @@ All UI text, labels, win type names, and rules reference available in both Swedi
 | Phase 2 — Movement Engine | ✅ Done | Dice, legal moves, bar, closing/huk rules, animations |
 | Phase 3 — Win Conditions & Scoring | ✅ Done | All 7 win types, monk, bear-off, match score |
 | Phase 4 — Five-Prime & Forcing | ✅ Done | Forceable points, forced jan, junker, visual cues |
-| Phase 5 — AI Opponents | ✅ Done | Beginner/Journeyman/Master, AI dice display, move animation |
+| Phase 5 — AI Opponents | ✅ Done | AI dice display, move animation (difficulty levels removed in #103) |
 | Phase 6 — UX Polish & Game Modes | ✅ Done | Move log, rules reference, undo, match length, random opponent |
 | Phase 7 — Infrastructure & CI/CD | ✅ Done | |
 | Phase 8 — OAuth Auth | ✅ Done | |
 | Phase 9 — Game Rooms & Invitations | ✅ Done | |
 | Phase 10 — WebSocket Game Server | ✅ Done | |
-| Phase 11 — Server-Side AI Opponents | ✅ Done | Beginner/Journeyman/Master (Claude Haiku), auto-play loop, ELO vs AI |
+| Phase 11 — Server-Side AI Opponents | ✅ Done | Grandmaster AI (levels and Claude Haiku removed in #103), auto-play loop, ELO vs AI |
 | Phase 12 — Match History & ELO | ✅ Done | Profile page with game history, ELO deltas, leaderboard |
 | Phase 13 — Matchmaking | ✅ Done | ELO-range queue, 2.5s polling, range expands every 30s |
 | Phase 14 — Tournaments | ⏳ Pending | |

@@ -25,6 +25,7 @@ const query = jest.fn(async (sql) => {
     return { rows: [{ display_name: "Lärling", avatar_url: null }] };
   }
   if (/SELECT elo FROM users/.test(sql)) return { rows: [{ elo: 1200 }] };
+  if (/SELECT id FROM games/.test(sql)) return { rows: [{ id: "game-uuid" }] };
   return { rows: [] };
 });
 
@@ -137,7 +138,7 @@ describe("POST /api/games/tutorial", () => {
 
   afterAll(() => new Promise((resolve) => server.close(resolve)));
 
-  test("guest: creates an unrated tutorial room vs the AI and no games row", async () => {
+  test("guest: creates an unrated tutorial room vs the random-move tutorial AI and no games row", async () => {
     const res = await fetch(`${base}/tutorial`, { method: "POST" });
     expect(res.status).toBe(201);
     const body = await res.json();
@@ -173,6 +174,27 @@ describe("POST /api/games/tutorial", () => {
     expect(room.playerInfo.white.display_name).toBe("Lärling");
 
     for (const sql of sqlCalls()) expect(sql).not.toMatch(RATING_SQL);
+  });
+
+  test("old clients: aiDifficulty on POST /api/games and /ai-guest is stripped, still 201", async () => {
+    const token = signAccessToken(HUMAN_ID);
+    const authed = await fetch(base, {
+      method:  "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body:    JSON.stringify({ opponent: "ai", matchLength: 3, aiDifficulty: "master" }),
+    });
+    expect(authed.status).toBe(201);
+    const authedBody = await authed.json();
+    expect((await getRoom(authedBody.roomId)).aiDifficulty).toBeUndefined();
+
+    const guest = await fetch(`${base}/ai-guest`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ matchLength: 3, aiDifficulty: "beginner" }),
+    });
+    expect(guest.status).toBe(201);
+    const guestBody = await guest.json();
+    expect((await getRoom(guestBody.roomId)).aiDifficulty).toBeUndefined();
   });
 
   test("rejects an invalid token instead of silently becoming a guest", async () => {
