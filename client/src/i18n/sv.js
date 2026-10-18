@@ -52,14 +52,6 @@ export default {
     bestOf: "Bäst av {n}",
   },
 
-  ai: {
-    label: "Datorns svårighetsgrad",
-    beginner: "Nybörjare",
-    journeyman: "Gesäll",
-    master: "Mästare",
-    grandmaster: "Stormästare",
-  },
-
   // De officiella namnen på vinsttyperna i server/src/game/scoring.js.
   winType: {
     hemspel:               "Hemspel",

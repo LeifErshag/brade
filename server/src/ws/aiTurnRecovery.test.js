@@ -87,8 +87,6 @@ const pickMove = jest.fn(async (gs, color, legalMoves) => legalMoves[0] ?? null)
 jest.unstable_mockModule("../game/ai.js", () => ({
   AI_USER_ID,
   AI_DISPLAY: { display_name: "Computer", avatar_url: null },
-  MASTER_API_TIMEOUT_MS:  8_000,
-  MASTER_API_MAX_RETRIES: 0,
   pickMove,
 }));
 
@@ -118,7 +116,6 @@ function makeRoom(roomId) {
     matchLength:  3,
     createdBy:    HUMAN_ID,
     isAi:         true,
-    aiDifficulty: "beginner",
     gameDbId:     "game-uuid",
     players:      { white: HUMAN_ID, black: AI_USER_ID },
     playerInfo:   { white: { display_name: "Human" }, black: { display_name: "Computer" } },
@@ -237,7 +234,7 @@ describe("a pass of the AI turn that fails mid-turn with no rerun pending", () =
     putRoom(roomId);
     arm();
 
-    const turn = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
+    const turn = track(triggerAiTurn(roomId).catch(() => {}));
     await runUntil(() => getRoom(roomId).gameState.turn === "white", RECOVERY_MS);
 
     // The failure happened, and the room was left black to move by it.
@@ -254,7 +251,7 @@ describe("a pass of the AI turn that fails mid-turn with no rerun pending", () =
     putRoom(roomId);
     failRead = (n) => n === 2;
 
-    triggerAiTurn(roomId, "beginner").catch(() => {});
+    triggerAiTurn(roomId).catch(() => {});
     await runUntil(() => getRoom(roomId).gameState.turn === "white", RECOVERY_MS);
 
     const history = savesOf(roomId);
@@ -297,7 +294,7 @@ describe("a Redis outage in the move step lasting OUTAGE_MS", () => {
     };
     failWrite = () => inOutage();
 
-    const turn = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
+    const turn = track(triggerAiTurn(roomId).catch(() => {}));
     await runUntil(() => getRoom(roomId).gameState.turn === "white", GIVE_UP_MS);
 
     expect(firstFailAt).not.toBeNull();
@@ -331,7 +328,7 @@ describe("pickMove returning no move", () => {
       putRoom(roomId);
       pickMove.mockImplementationOnce(async () => value);
 
-      const turn = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
+      const turn = track(triggerAiTurn(roomId).catch(() => {}));
       await runUntil(() => getRoom(roomId).gameState.turn === "white", RECOVERY_MS);
 
       const room = expectTurnFinished(roomId);
@@ -353,7 +350,7 @@ describe("pickMove returning no move", () => {
       putRoom(roomId);
       pickMove.mockImplementation(async () => value);
 
-      const turn = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
+      const turn = track(triggerAiTurn(roomId).catch(() => {}));
       await runUntil(() => getRoom(roomId).gameState.turn === "white", RECOVERY_MS);
 
       const room = expectTurnFinished(roomId);
@@ -384,7 +381,7 @@ describe("Redis failing permanently during the AI turn", () => {
 
     // All retries are over within GIVE_UP_MS of the trigger, whether they
     // run inside the trigger's promise or on timers of their own.
-    const turn = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
+    const turn = track(triggerAiTurn(roomId).catch(() => {}));
     await runFor(GIVE_UP_MS);
     expect(turn.settled).toBe(true);
 
@@ -409,7 +406,7 @@ describe("Redis failing permanently during the AI turn", () => {
     // Redis recovers: a new trigger resumes the moving phase with the dice
     // already rolled, and finishes the turn.
     failRead = () => false;
-    const later = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
+    const later = track(triggerAiTurn(roomId).catch(() => {}));
     await runUntil(() => getRoom(roomId).gameState.turn === "white", RECOVERY_MS);
     expectTurnFinished(roomId);
     for (const s of savesOf(roomId).filter((r) => r.gameState.turn === "black")) {
@@ -426,7 +423,7 @@ describe("Redis failing permanently during the AI turn", () => {
 
     // All retries are over within GIVE_UP_MS of the trigger, whether they
     // run inside the trigger's promise or on timers of their own.
-    const turn = track(triggerAiTurn(roomId, "beginner").catch(() => {}));
+    const turn = track(triggerAiTurn(roomId).catch(() => {}));
     await runFor(GIVE_UP_MS);
     expect(turn.settled).toBe(true);
 
@@ -441,7 +438,7 @@ describe("Redis failing permanently during the AI turn", () => {
     expect(pendingRoomLockCount()).toBe(0);
 
     failRead = () => false;
-    triggerAiTurn(roomId, "beginner").catch(() => {});
+    triggerAiTurn(roomId).catch(() => {});
     await runUntil(() => getRoom(roomId).gameState.turn === "white", RECOVERY_MS);
     expectTurnFinished(roomId);
   }, 240_000);

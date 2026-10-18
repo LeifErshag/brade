@@ -231,7 +231,7 @@ async function handleRoomMessage({ msg, userId, roomId, ws }) {
 
       // Trigger AI if turn switched to it
       if (room.isAi && gs.turn === "black" && gs.phase === "rolling") {
-        triggerAiTurn(roomId, room.aiDifficulty).catch(e => console.error("AI turn error:", e));
+        triggerAiTurn(roomId).catch(e => console.error("AI turn error:", e));
       }
       break;
     }
@@ -290,7 +290,7 @@ async function handleRoomMessage({ msg, userId, roomId, ws }) {
 
       // Trigger AI if turn switched to it
       if (room.isAi && newGs.turn === "black" && newGs.phase === "rolling") {
-        triggerAiTurn(roomId, room.aiDifficulty).catch(e => console.error("AI turn error:", e));
+        triggerAiTurn(roomId).catch(e => console.error("AI turn error:", e));
       }
       break;
     }
@@ -321,7 +321,7 @@ async function handleRoomMessage({ msg, userId, roomId, ws }) {
 
       // Trigger AI if turn switched to it
       if (room.isAi && gs.turn === "black" && gs.phase === "rolling") {
-        triggerAiTurn(roomId, room.aiDifficulty).catch(e => console.error("AI turn error:", e));
+        triggerAiTurn(roomId).catch(e => console.error("AI turn error:", e));
       }
       break;
     }
@@ -366,7 +366,7 @@ async function handleRoomMessage({ msg, userId, roomId, ws }) {
 // reconnect resumes the AI within one thinking delay instead of waiting out
 // up to 16 s. This cannot spin: every pass starts with a thinking delay, and
 // a woken pass that fails still counts towards the bounded failure count.
-const aiTurns = new Map(); // roomId -> { rerun: boolean, aiDifficulty, wake: (() => void) | null }
+const aiTurns = new Map(); // roomId -> { rerun: boolean, wake: (() => void) | null }
 
 // Delay before each retry of a failed pass; its length bounds the retries.
 // The count of consecutive failures is reset by every successful pass.
@@ -375,15 +375,14 @@ const AI_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000];
 // is played instead (pickMove returned nothing or threw).
 const AI_PICK_ATTEMPTS = 3;
 
-export async function triggerAiTurn(roomId, aiDifficulty) {
+export async function triggerAiTurn(roomId) {
   const running = aiTurns.get(roomId);
   if (running) {
-    running.rerun        = true;
-    running.aiDifficulty = aiDifficulty;
+    running.rerun = true;
     running.wake?.();
     return;
   }
-  const turn = { rerun: false, aiDifficulty, wake: null };
+  const turn = { rerun: false, wake: null };
   aiTurns.set(roomId, turn);
   try {
     let failures = 0; // consecutive failed passes
@@ -391,7 +390,7 @@ export async function triggerAiTurn(roomId, aiDifficulty) {
       turn.rerun = false;
       let failed = false;
       try {
-        await _triggerAiTurn(roomId, turn.aiDifficulty);
+        await _triggerAiTurn(roomId);
         failures = 0;
       } catch (err) {
         console.error("AI turn error:", err);
@@ -414,13 +413,13 @@ export async function triggerAiTurn(roomId, aiDifficulty) {
 
 // The AI turn is split into short locked sections (the roll, then one section
 // per move) so the "thinking" delays and the move choice run without holding
-// the room's lock. Choosing a move can be slow (the master AI calls the
-// Anthropic API), so it works on a snapshot taken by the previous section.
+// the room's lock. Choosing a move can be slow (Grandmaster searches the
+// position), so it works on a snapshot taken by the previous section.
 // The section that applies the move re-reads the room and applies it only if
 // the position is unchanged (same game, turn, phase, dice and move sequence),
 // because other writers (e.g. a human RESIGN or a reconnect) may have run in
 // the meantime (issue #60).
-async function _triggerAiTurn(roomId, aiDifficulty) {
+async function _triggerAiTurn(roomId) {
   // Brief "thinking" delay
   await sleep(700 + Math.random() * 800);
 
@@ -433,7 +432,7 @@ async function _triggerAiTurn(roomId, aiDifficulty) {
   while (snap) {
     await sleep(500);
     const gs       = snap.gameState;
-    const move     = await chooseAiMove(gs, aiDifficulty, roomId);
+    const move     = await chooseAiMove(gs, !!snap.isTutorial, roomId);
     const expected = aiPositionKey(snap);
     snap = await withRoomLock(roomId, () => aiMove(redis, roomId, expected, move));
   }
@@ -442,10 +441,10 @@ async function _triggerAiTurn(roomId, aiDifficulty) {
 // Ask pickMove for a move a few times; if it returns nothing (or throws)
 // every time, play the first legal move so the turn always completes
 // (issue #82). gs.legalMoves is non-empty here (see aiToMove).
-async function chooseAiMove(gs, aiDifficulty, roomId) {
+async function chooseAiMove(gs, random, roomId) {
   for (let attempt = 1; attempt <= AI_PICK_ATTEMPTS; attempt++) {
     try {
-      const move = await pickMove(gs, "black", gs.legalMoves, aiDifficulty, roomId);
+      const move = await pickMove(gs, "black", gs.legalMoves, roomId, { random });
       if (move) return move;
       console.error(`AI pickMove returned no move in room ${roomId} (attempt ${attempt})`);
     } catch (err) {
@@ -823,7 +822,7 @@ async function handleGameOver(redis, roomId, room, result, forceMatchOver = fals
     });
 
     if (room.isAi && gs.turn === "black" && gs.phase === "rolling") {
-      triggerAiTurn(roomId, room.aiDifficulty).catch(e => console.error("AI turn error:", e));
+      triggerAiTurn(roomId).catch(e => console.error("AI turn error:", e));
     }
   }
 }

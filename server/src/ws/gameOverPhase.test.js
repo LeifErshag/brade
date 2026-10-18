@@ -56,7 +56,7 @@ function makeRoom(roomId, gameState, { matchLength = 1, gameNum = 1, isTutorial 
     createdBy:  WHITE_ID,
     ...(isTutorial ? { isTutorial: true, gameDbId: null } : { gameDbId: "game-uuid" }),
     ...(hasGuest ? { hasGuest: true, guestColor: "black" } : {}),
-    ...(isAi ? { isAi: true, aiDifficulty: "beginner" } : {}),
+    ...(isAi ? { isAi: true } : {}),
     players:    { white: WHITE_ID, black: BLACK_ID },
     playerInfo: { white: { display_name: "Alice" }, black: { display_name: "Bob" } },
     ready:      { white: true, black: true },

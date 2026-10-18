@@ -1,7 +1,7 @@
 // ── Tutorial games are never recorded as rated games ─────────────────────────
 // Postgres, Redis and the WebSocket broadcast layer are replaced with in-memory
 // fakes so we can watch every SQL statement the server issues. Verifies that:
-//   1. POST /api/games/tutorial creates an `isTutorial` room vs the beginner AI
+//   1. POST /api/games/tutorial creates an `isTutorial` room vs the random-move tutorial AI
 //      without inserting a `games` row (guest and logged-in).
 //   2. Finishing a tutorial game (by winning or resigning) issues no SQL at all:
 //      no move log, no games update, no ELO / wins / losses.
@@ -53,7 +53,7 @@ jest.unstable_mockModule("./server.js", () => ({
 process.env.JWT_ACCESS_SECRET = "test-access-secret";
 
 const { handleMessage, triggerAiTurn } = await import("./handlers.js");
-const { default: gamesRouter, TUTORIAL_AI_DIFFICULTY } = await import("../routes/games.js");
+const { default: gamesRouter } = await import("../routes/games.js");
 const { signAccessToken } = await import("../auth/tokens.js");
 const { getLegalMoves } = await import("../game/engine.js");
 const { AI_USER_ID } = await import("../game/ai.js");
@@ -97,7 +97,6 @@ function makeRoom(roomId, { isTutorial }) {
     matchLength:  1,
     createdBy:    HUMAN_ID,
     isAi:         true,
-    aiDifficulty: "beginner",
     ...(isTutorial ? { isTutorial: true, gameDbId: null } : { gameDbId: "game-uuid" }),
     players:      { white: HUMAN_ID, black: AI_USER_ID },
     playerInfo:   { white: { display_name: "Lärling" }, black: { display_name: "Computer" } },
@@ -138,7 +137,7 @@ describe("POST /api/games/tutorial", () => {
 
   afterAll(() => new Promise((resolve) => server.close(resolve)));
 
-  test("guest: creates an unrated tutorial room vs the beginner AI and no games row", async () => {
+  test("guest: creates an unrated tutorial room vs the AI and no games row", async () => {
     const res = await fetch(`${base}/tutorial`, { method: "POST" });
     expect(res.status).toBe(201);
     const body = await res.json();
@@ -149,8 +148,6 @@ describe("POST /api/games/tutorial", () => {
     const room = await getRoom(body.roomId);
     expect(room.isTutorial).toBe(true);
     expect(room.isAi).toBe(true);
-    expect(room.aiDifficulty).toBe(TUTORIAL_AI_DIFFICULTY);
-    expect(TUTORIAL_AI_DIFFICULTY).toBe("beginner");
     expect(room.matchLength).toBe(1);
     expect(room.gameDbId).toBeNull();
     expect(room.players).toEqual({ white: body.guestId, black: AI_USER_ID });
@@ -210,7 +207,7 @@ describe("POST /api/games/tutorial", () => {
     const res = await fetch(`${base}/tutorial`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ isTutorial: false, aiDifficulty: "grandmaster" }),
+      body:    JSON.stringify({ isTutorial: false }),
     });
     expect(res.status).toBe(400);
     expect(store.size).toBe(0);
@@ -288,7 +285,7 @@ describe("finishing a tutorial game", () => {
     };
     await putRoom(room);
 
-    await triggerAiTurn("TUTOR003", "beginner");
+    await triggerAiTurn("TUTOR003");
 
     const after = await getRoom("TUTOR003");
     expect(after.status).toBe("finished");
