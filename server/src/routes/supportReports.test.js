@@ -118,6 +118,28 @@ describe("POST /api/support-reports", () => {
     expect((await post({ note: "slow", logs })).status).toBe(201);
   });
 
+  test("removes NUL characters, which Postgres rejects", async () => {
+    const res = await post({
+      note: "dice\u0000 stuck", page: "/game\u0000",
+      state: { "pha\u0000se": "roll\u0000ing", nested: { deep: ["a\u0000"] } },
+      logs: [{ t: "2026-10-25T10:00:00.000Z", level: "warn", msg: "bad\u0000", ctx: { k: "v\u0000" } }],
+    });
+    expect(res.status).toBe(201);
+    const params = insertParams();
+    expect(JSON.stringify(params)).not.toContain("\\u0000");
+    expect(params[3]).toBe("dice stuck");
+    expect(params[4]).toBe("/game");
+    expect(params[6]).toEqual({
+      state: { phase: "rolling", nested: { deep: ["a"] } },
+      logs: [{ t: "2026-10-25T10:00:00.000Z", level: "warn", msg: "bad", ctx: { k: "v" } }],
+    });
+  });
+
+  test("a note that is only NUL characters is rejected", async () => {
+    expect((await post({ note: "\u0000\u0000" })).status).toBe(400);
+    expect(query).not.toHaveBeenCalled();
+  });
+
   test("allows 5 reports an hour from one IP", async () => {
     const ip = "10.9.9.9";
     for (let i = 0; i < 5; i++) expect((await post({ note: `n${i}` }, undefined, ip)).status).toBe(201);

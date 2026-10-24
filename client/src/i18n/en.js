@@ -110,6 +110,7 @@ export default {
     "Unauthorised": "You need to sign in",
     "Invalid or expired token": "Your session has expired — please sign in again",
     "Bad request": "Bad request",
+    "request entity too large": "That is too much to send in one go",
     "Internal server error": "Internal server error",
     "Too many requests": "Too many requests — please wait a moment",
     "Too many login attempts": "Too many sign-in attempts — please wait a moment",
