@@ -1,6 +1,7 @@
 import { Component } from "react";
 import { useI18n } from "../i18n/I18nContext.jsx";
 import { clientLog, describeError, stackOf } from "../remoteLog.js";
+import ReportProblem from "./ReportProblem.jsx";
 
 // Catches a render crash anywhere below it, reports it to the server log
 // (issue #140) and shows a reload prompt instead of a blank page.
@@ -42,6 +43,9 @@ function CrashScreen() {
         >
           {t("crash.reload")}
         </button>
+        <div style={{ marginTop: 12 }}>
+          <ReportProblem />
+        </div>
       </div>
     </div>
   );

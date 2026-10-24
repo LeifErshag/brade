@@ -21,14 +21,18 @@ const MAX_MSG              = 500;
 const MAX_CONTEXT_KEYS     = 20;
 const MAX_CONTEXT_STRING   = 1000;
 const ROOM_ID              = /^[A-Z0-9]{8}$/;
+// Below the server's 64 kB body limit for problem reports, with room for
+// multi-byte characters in the note.
+const MAX_REPORT_CHARS     = 40_000;
 
 const recent   = [];
 const sentAt   = [];          // timestamps of sends in the last minute
 const lastSent = new Map();   // msg → when it was last sent
 
-// Set by the Game page: the room being played and the token it plays with
-// (a guest token is not in sessionStorage under access_token).
-let current = { roomId: null, token: null };
+// Set by the Game page: the room being played, the token it plays with (a
+// guest token is not in sessionStorage under access_token) and a function
+// returning a summary of what the page shows, for problem reports.
+let current = { roomId: null, token: null, state: null };
 
 export function setLogContext(next) {
   current = { ...current, ...next };
@@ -161,4 +165,48 @@ export function installGlobalErrorHandlers() {
       stack: stackOf(reason),
     }, { echo: false });
   });
+}
+
+// Sends a "Report a problem" note (issue #141) with the page's state summary
+// and the recent log lines, so the report can be investigated after Render's
+// logs have expired. Resolves to the short report ID; rejects with an Error
+// whose `serverError` is the server's error text, if any.
+export async function sendProblemReport(note) {
+  const body = { note };
+  if (ROOM_ID.test(current.roomId ?? "")) body.roomId = current.roomId;
+  const page = window.location?.pathname;
+  if (page) body.page = page.slice(0, 200);
+  try {
+    const state = current.state?.();
+    if (state && typeof state === "object") body.state = state;
+  } catch {
+    // A broken summary must not stop the report.
+  }
+  body.logs = recent.map(({ t, level, msg, ctx }) => ({
+    t, level, msg: msg.slice(0, 600), ...(ctx ? { ctx } : {}),
+  }));
+  // The server accepts 64 kB; drop the oldest lines until the report fits.
+  let json = JSON.stringify(body);
+  while (json.length > MAX_REPORT_CHARS && body.logs.length) {
+    body.logs.shift();
+    json = JSON.stringify(body);
+  }
+
+  const tkn = token();
+  const res = await fetch(`${API}/api/support-reports`, {
+    method:  "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(tkn ? { Authorization: `Bearer ${tkn}` } : {}),
+    },
+    body: json,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || typeof data.reportId !== "string") {
+    const err = new Error(`Report failed (${res.status})`);
+    err.serverError = data.error;
+    throw err;
+  }
+  clientLog.info(`Problem report sent: ${data.reportId}`);
+  return data.reportId;
 }

@@ -13,7 +13,11 @@
         document.documentElement.lang = lang;
       })();
     </script>
-    <style>html, body { margin: 0; background: #2a1400; }</style>
+    <style>
+      html, body { margin: 0; background: #2a1400; }
+      /* Modal dialogs (e.g. Report a problem): dim the page behind. */
+      dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+    </style>
   </head>
   <body>
     <div id="root"></div>

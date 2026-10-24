@@ -28,3 +28,13 @@ export const rateLimitClientLog = rateLimit({
   legacyHeaders: false,
   message: { error: "Too many requests" },
 });
+
+// Problem reports: 5 per hour per IP. A player sends one now and then; this
+// keeps a script from filling the support_reports table.
+export const rateLimitSupportReport = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests" },
+});
