@@ -16,7 +16,7 @@ const WORKER_URL = new URL("./expectimaxWorker.js", import.meta.url);
 // so its constants are not initialised yet while this module loads.
 let options = { workerUrl: WORKER_URL, answerTimeoutMs: null };
 
-let worker = null; // { thread, pending: Map<id, { msg, resolve, reject }>, timer }
+let worker = null; // { thread, pending: Map<id, { msg, resolve, reject }>, timer, online }
 let nextId = 1;
 
 // Each worker has its own pending searches, so a worker that dies (or is
@@ -24,7 +24,11 @@ let nextId = 1;
 function getWorker() {
   if (worker) return worker;
   const thread = new Worker(options.workerUrl);
-  const w = { thread, pending: new Map(), timer: null };
+  const w = { thread, pending: new Map(), timer: null, online: false };
+  thread.once("online", () => {
+    w.online = true;
+    watchHead(w);
+  });
   thread.on("message", ({ id, moves, error }) => {
     const p = w.pending.get(id);
     if (!p) return;
@@ -32,7 +36,7 @@ function getWorker() {
     if (error) p.reject(new Error(error));
     else p.resolve(moves);
     if (w.pending.size === 0) thread.unref();
-    watchHead(w); // the worker starts on the next queued search now
+    watchHead(w); // the worker went on to the next queued search as it replied
   });
   thread.on("error", err => fail(w, err));
   thread.on("exit", code => fail(w, new Error(`Grandmaster worker exited with code ${code}`)));
@@ -53,14 +57,15 @@ function fail(w, err) {
 
 // Times the search the worker is on: the oldest pending one, since the worker
 // answers them in order. Searches queued behind it are not timed until it
-// answers, so a long queue is not mistaken for a hang. The first search's
-// time includes starting the worker (a few tens of ms). A main thread blocked
-// for longer than the timeout can also look like a hung worker, since timers
-// run before a waiting answer is handled.
+// answers, so a long queue is not mistaken for a hang. Nor is starting the
+// worker: timing starts once it is online (a worker that fails to start emits
+// "error" or "exit" instead). A main thread blocked for longer than the
+// timeout can still look like a hung worker, since timers run before a
+// waiting answer is handled.
 function watchHead(w) {
   clearTimeout(w.timer);
   w.timer = null;
-  if (w.pending.size === 0) return;
+  if (!w.online || w.pending.size === 0) return;
   const ms = options.answerTimeoutMs ?? 2 * SEARCH_TIMEOUT_MS;
   w.timer = setTimeout(() => {
     const err = new Error(`Grandmaster worker did not answer within ${ms} ms`);
@@ -98,7 +103,9 @@ function post(search) {
 export async function stopSearchWorker() {
   const w = worker;
   worker = null;
-  if (w) await w.thread.terminate();
+  if (!w) return;
+  clearTimeout(w.timer);
+  await w.thread.terminate();
 }
 
 // Replaces the worker script and the answer timeout (tests); no arguments

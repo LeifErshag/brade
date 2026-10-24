@@ -112,7 +112,7 @@ describe("with a stand-in worker that is busy for busyMs per search", () => {
 
   beforeEach(async () => {
     await stopSearchWorker();
-    configureSearchWorker({ workerUrl: new URL("./expectimaxWorker.fixture.js", import.meta.url), answerTimeoutMs: 300 });
+    configureSearchWorker({ workerUrl: new URL("./expectimaxWorker.fixture.js", import.meta.url), answerTimeoutMs: 1000 });
   });
   afterEach(async () => {
     await stopSearchWorker();
@@ -124,7 +124,7 @@ describe("with a stand-in worker that is busy for busyMs per search", () => {
     try {
       const hung = busy(60000);
       const queued = [busy(0), busy(1)];
-      await expect(hung).rejects.toThrow("did not answer within 300 ms");
+      await expect(hung).rejects.toThrow("did not answer within 1000 ms");
       expect(await Promise.all(queued)).toEqual([[0], [1]]);
       expect(error).toHaveBeenCalledWith(expect.stringContaining("did not answer"));
     } finally {
@@ -134,9 +134,9 @@ describe("with a stand-in worker that is busy for busyMs per search", () => {
   });
 
   test("searches queued behind a slow one are not timed out while they wait", async () => {
-    // 4 × 150 ms in all, well past the 300 ms timeout; each one is within it.
-    const searches = [busy(150), busy(150), busy(150), busy(150)];
-    expect(await Promise.all(searches)).toEqual([[150], [150], [150], [150]]);
+    // 4 × 400 ms in all, well past the 1000 ms timeout; each one is within it.
+    const searches = [busy(400), busy(400), busy(400), busy(400)];
+    expect(await Promise.all(searches)).toEqual([[400], [400], [400], [400]]);
   });
 });
 
