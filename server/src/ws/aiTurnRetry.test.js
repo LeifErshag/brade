@@ -218,6 +218,8 @@ describe("AI turn retry", () => {
     expectTurnFinished(room);
     const movesPlayed = room.gameState.moveSeq - START_SEQ;
     expect(pickMove.mock.calls.length).toBeLessThanOrEqual(5 * movesPlayed);
+    // chooseAiMove handles it: no pass fails and needs the outer retry.
+    expect(console.error).not.toHaveBeenCalledWith("AI turn error:", expect.anything());
 
     const calls = pickMove.mock.calls.length;
     await runFor(60_000);
