@@ -38,6 +38,7 @@ export default [
         sessionStorage:  "readonly",
         localStorage:    "readonly",
         URLSearchParams: "readonly",
+        TextEncoder:     "readonly",
       },
     },
   },

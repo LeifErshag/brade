@@ -53,7 +53,8 @@ describe("errorHandler over HTTP", () => {
   test("a body over the size limit returns 413", async () => {
     const res = await post(JSON.stringify({ pad: "x".repeat(20 * 1024) }));
     expect(res.status).toBe(413);
-    expect(await res.json()).toEqual({ error: expect.any(String) });
+    // The client translates this text (i18n serverError).
+    expect(await res.json()).toEqual({ error: "request entity too large" });
   });
 
   test("an error without a status returns a generic 500", async () => {

@@ -110,6 +110,7 @@ export default {
     "Unauthorised": "Du måste logga in",
     "Invalid or expired token": "Sessionen har gått ut – logga in igen",
     "Bad request": "Felaktig begäran",
+    "request entity too large": "Det är för mycket att skicka på en gång",
     "Internal server error": "Internt serverfel",
     "Too many requests": "För många förfrågningar – vänta en stund",
     "Too many login attempts": "För många inloggningsförsök – vänta en stund",

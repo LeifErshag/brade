@@ -256,10 +256,11 @@ export default function Game() {
     />
   );
 
-  // Tag client log lines sent to the server with this room and token.
+  // Tag client log lines sent to the server with this room and token. Not
+  // cleared on unmount: a report from the crash screen still needs them, and
+  // remoteLog only uses them while the address is this room's page.
   useEffect(() => {
     setLogContext({ roomId, token: wsToken ?? null });
-    return () => setLogContext({ roomId: null, token: null });
   }, [roomId, wsToken]);
 
   // ── Debug console hooks: window.__brade ─────────────────────────────────────
@@ -342,7 +343,6 @@ export default function Game() {
 
     return () => {
       delete window.__brade;
-      setLogContext({ state: null });
     };
   }, []);
 

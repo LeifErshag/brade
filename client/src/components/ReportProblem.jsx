@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useI18n } from "../i18n/I18nContext.jsx";
 import { sendProblemReport } from "../remoteLog.js";
 
@@ -10,9 +10,12 @@ const S = {
   },
   dialog: {
     background: "#3a1a00", color: "#e8b86d", border: "1px solid #6b3a10", borderRadius: 12,
-    padding: "20px 22px", width: "min(440px, calc(100vw - 32px))", boxSizing: "border-box",
+    padding: 0, width: "min(440px, calc(100vw - 32px))", boxSizing: "border-box",
     fontFamily: "Georgia, serif",
   },
+  // The padding is on the content, so a click on the dialog element itself
+  // is a click on the backdrop.
+  body:    { padding: "20px 22px" },
   title:   { margin: "0 0 8px", fontSize: 20 },
   intro:   { margin: "0 0 12px", color: "#a07840", fontSize: 14, lineHeight: 1.4 },
   textarea: {
@@ -39,14 +42,19 @@ const MAX_NOTE = 2000;
  */
 export default function ReportProblem({ style }) {
   const { t, serverError } = useI18n();
+  const titleId = useId();
   const dialogRef = useRef(null);
+  // Bumped on each opening, so a report still sending from an earlier opening
+  // cannot replace the new form with its result.
+  const openingRef = useRef(0);
+  const pressedBackdropRef = useRef(false);
   const [open, setOpen]         = useState(false);
   const [note, setNote]         = useState("");
   const [sending, setSending]   = useState(false);
   const [error, setError]       = useState(null);
   const [reportId, setReportId] = useState(null);
 
-  // A native modal dialog: focus trap, Escape and backdrop come for free.
+  // A native modal dialog: focus trap and Escape come for free.
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
@@ -55,6 +63,8 @@ export default function ReportProblem({ style }) {
   }, [open]);
 
   function openDialog() {
+    openingRef.current += 1;
+    setSending(false);
     setNote("");
     setError(null);
     setReportId(null);
@@ -65,15 +75,30 @@ export default function ReportProblem({ style }) {
     e.preventDefault();
     const text = note.trim();
     if (!text || sending) return;
+    const opening = openingRef.current;
     setSending(true);
     setError(null);
     try {
-      setReportId(await sendProblemReport(text));
+      const id = await sendProblemReport(text);
+      if (opening === openingRef.current) setReportId(id);
     } catch (err) {
-      setError(err?.serverError ? serverError(err.serverError) : t("error.network"));
+      if (opening === openingRef.current) {
+        setError(err?.serverError ? serverError(err.serverError) : t("error.network"));
+      }
     } finally {
-      setSending(false);
+      if (opening === openingRef.current) setSending(false);
     }
+  }
+
+  // Closes on a click on the backdrop. Only when the press started there too:
+  // a text selection dragged out of the textarea also ends in a click on the
+  // dialog element.
+  function onBackdropPointerDown(e) {
+    pressedBackdropRef.current = e.target === e.currentTarget;
+  }
+  function onBackdropClick(e) {
+    if (pressedBackdropRef.current && e.target === e.currentTarget) setOpen(false);
+    pressedBackdropRef.current = false;
   }
 
   return (
@@ -84,43 +109,47 @@ export default function ReportProblem({ style }) {
       <dialog
         ref={dialogRef}
         style={S.dialog}
-        aria-labelledby="report-problem-title"
+        aria-labelledby={titleId}
         // Escape or the form's close: keep React state in step.
         onClose={() => setOpen(false)}
+        onPointerDown={onBackdropPointerDown}
+        onClick={onBackdropClick}
       >
-        <h2 id="report-problem-title" style={S.title}>{t("report.title")}</h2>
-        {reportId ? (
-          <>
-            <p style={S.done} role="status">{t("report.sent", { id: reportId })}</p>
-            <div style={S.buttons}>
-              <button type="button" style={{ ...S.btn, ...S.btnPrimary }} onClick={() => setOpen(false)} autoFocus>
-                {t("report.close")}
-              </button>
-            </div>
-          </>
-        ) : (
-          <form onSubmit={submit}>
-            <p style={S.intro}>{t("report.intro")}</p>
-            <textarea
-              style={S.textarea}
-              value={note}
-              onChange={e => setNote(e.target.value.slice(0, MAX_NOTE))}
-              placeholder={t("report.placeholder")}
-              aria-label={t("report.title")}
-              maxLength={MAX_NOTE}
-              autoFocus
-            />
-            {error && <p style={S.error} role="alert">{error}</p>}
-            <div style={S.buttons}>
-              <button type="button" style={S.btn} onClick={() => setOpen(false)}>
-                {t("report.cancel")}
-              </button>
-              <button type="submit" style={{ ...S.btn, ...S.btnPrimary }} disabled={sending || !note.trim()}>
-                {sending ? t("report.sending") : t("report.send")}
-              </button>
-            </div>
-          </form>
-        )}
+        <div style={S.body}>
+          <h2 id={titleId} style={S.title}>{t("report.title")}</h2>
+          {reportId ? (
+            <>
+              <p style={S.done} role="status">{t("report.sent", { id: reportId })}</p>
+              <div style={S.buttons}>
+                <button type="button" style={{ ...S.btn, ...S.btnPrimary }} onClick={() => setOpen(false)} autoFocus>
+                  {t("report.close")}
+                </button>
+              </div>
+            </>
+          ) : (
+            <form onSubmit={submit}>
+              <p style={S.intro}>{t("report.intro")}</p>
+              <textarea
+                style={S.textarea}
+                value={note}
+                onChange={e => setNote(e.target.value.slice(0, MAX_NOTE))}
+                placeholder={t("report.placeholder")}
+                aria-label={t("report.title")}
+                maxLength={MAX_NOTE}
+                autoFocus
+              />
+              {error && <p style={S.error} role="alert">{error}</p>}
+              <div style={S.buttons}>
+                <button type="button" style={S.btn} onClick={() => setOpen(false)}>
+                  {t("report.cancel")}
+                </button>
+                <button type="submit" style={{ ...S.btn, ...S.btnPrimary }} disabled={sending || !note.trim()}>
+                  {sending ? t("report.sending") : t("report.send")}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
       </dialog>
     </>
   );

@@ -23,7 +23,21 @@ const LogLine = z.object({
   ctx:   z.record(z.string().max(50), z.union([z.string().max(1000), z.number(), z.boolean(), z.null()])).optional(),
 });
 
-const SupportReportSchema = z.object({
+// Postgres rejects NUL characters in text and JSONB, so a report containing
+// one would fail with a 500. They are removed from every string and key
+// first. Anything nested deeper than MAX_DEPTH becomes null (the client's
+// state summary is flat).
+const MAX_DEPTH = 10;
+function stripNul(value, depth = 0) {
+  if (typeof value === "string") return value.replaceAll("\u0000", "");
+  if (value === null || typeof value !== "object") return value;
+  if (depth >= MAX_DEPTH) return null;
+  if (Array.isArray(value)) return value.map(v => stripNul(v, depth + 1));
+  return Object.fromEntries(Object.entries(value)
+    .map(([k, v]) => [k.replaceAll("\u0000", ""), stripNul(v, depth + 1)]));
+}
+
+const SupportReportSchema = z.preprocess(stripNul, z.object({
   note:   z.string().trim().min(1).max(2000),
   roomId: z.string().regex(ROOM_ID).optional(),
   page:   z.string().max(200).optional(),
@@ -32,7 +46,7 @@ const SupportReportSchema = z.object({
     .refine(o => Object.keys(o).length <= 40)
     .optional(),
   logs:   z.array(LogLine).max(50).optional(),
-}).strict();
+}).strict());
 
 // The short ID shown to the player: the first 8 characters of the row's UUID.
 export const shortReportId = (id) => id.slice(0, 8).toUpperCase();

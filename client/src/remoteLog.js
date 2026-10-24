@@ -21,9 +21,9 @@ const MAX_MSG              = 500;
 const MAX_CONTEXT_KEYS     = 20;
 const MAX_CONTEXT_STRING   = 1000;
 const ROOM_ID              = /^[A-Z0-9]{8}$/;
-// Below the server's 64 kB body limit for problem reports, with room for
-// multi-byte characters in the note.
-const MAX_REPORT_CHARS     = 40_000;
+// Below the server's 64 kB body limit for problem reports. Counted in UTF-8
+// bytes, as the server counts it.
+const MAX_REPORT_BYTES     = 60_000;
 
 const recent   = [];
 const sentAt   = [];          // timestamps of sends in the last minute
@@ -32,10 +32,23 @@ const lastSent = new Map();   // msg → when it was last sent
 // Set by the Game page: the room being played, the token it plays with (a
 // guest token is not in sessionStorage under access_token) and a function
 // returning a summary of what the page shows, for problem reports.
+//
+// It is kept when the page unmounts, so a report sent from the crash screen
+// after Game crashed still has its room, state and token, but it is only used
+// while the address is still that room's page.
 let current = { roomId: null, token: null, state: null };
 
 export function setLogContext(next) {
   current = { ...current, ...next };
+}
+
+const GAME_PAGE = /^\/game\/([^/]+)\/?$/;
+
+function roomContext() {
+  const match = GAME_PAGE.exec(window.location?.pathname ?? "");
+  let roomId = null;
+  try { roomId = match && decodeURIComponent(match[1]); } catch { /* malformed escape */ }
+  return roomId !== null && roomId === current.roomId ? current : {};
 }
 
 // The last BUFFER_SIZE log lines, oldest first.
@@ -78,7 +91,8 @@ function cleanContext(ctx) {
 }
 
 function token() {
-  if (current.token) return current.token;
+  const room = roomContext();
+  if (room.token) return room.token;
   try { return sessionStorage.getItem("access_token"); } catch { return null; }
 }
 
@@ -98,7 +112,8 @@ function mayBeSent(key) {
 function send(level, msg, ctx) {
   if (!mayBeSent(`${msg}|${ctx?.code ?? ""}`)) return;
   const body = { level, msg: msg.slice(0, MAX_MSG) || "(empty)" };
-  if (ROOM_ID.test(current.roomId ?? "")) body.roomId = current.roomId;
+  const { roomId } = roomContext();
+  if (ROOM_ID.test(roomId ?? "")) body.roomId = roomId;
   const page = window.location?.pathname;
   if (page) body.page = page.slice(0, 200);
   const context = cleanContext(ctx);
@@ -173,11 +188,12 @@ export function installGlobalErrorHandlers() {
 // whose `serverError` is the server's error text, if any.
 export async function sendProblemReport(note) {
   const body = { note };
-  if (ROOM_ID.test(current.roomId ?? "")) body.roomId = current.roomId;
+  const room = roomContext();
+  if (ROOM_ID.test(room.roomId ?? "")) body.roomId = room.roomId;
   const page = window.location?.pathname;
   if (page) body.page = page.slice(0, 200);
   try {
-    const state = current.state?.();
+    const state = room.state?.();
     if (state && typeof state === "object") body.state = state;
   } catch {
     // A broken summary must not stop the report.
@@ -186,8 +202,9 @@ export async function sendProblemReport(note) {
     t, level, msg: msg.slice(0, 600), ...(ctx ? { ctx } : {}),
   }));
   // The server accepts 64 kB; drop the oldest lines until the report fits.
+  const bytes = (text) => new TextEncoder().encode(text).length;
   let json = JSON.stringify(body);
-  while (json.length > MAX_REPORT_CHARS && body.logs.length) {
+  while (bytes(json) > MAX_REPORT_BYTES && body.logs.length) {
     body.logs.shift();
     json = JSON.stringify(body);
   }
