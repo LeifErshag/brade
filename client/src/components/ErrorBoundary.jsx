@@ -1,6 +1,6 @@
 import { Component } from "react";
 import { useI18n } from "../i18n/I18nContext.jsx";
-import { clientLog } from "../remoteLog.js";
+import { clientLog, describeError, stackOf } from "../remoteLog.js";
 
 // Catches a render crash anywhere below it, reports it to the server log
 // (issue #140) and shows a reload prompt instead of a blank page.
@@ -16,8 +16,8 @@ export default class ErrorBoundary extends Component {
 
   componentDidCatch(error, info) {
     // React already prints the error to the console.
-    clientLog.error(`Render crash: ${error?.message ?? String(error)}`, {
-      stack:          typeof error?.stack === "string" ? error.stack : undefined,
+    clientLog.error(`Render crash: ${describeError(error)}`, {
+      stack:          stackOf(error),
       componentStack: info?.componentStack,
     }, { echo: false });
   }

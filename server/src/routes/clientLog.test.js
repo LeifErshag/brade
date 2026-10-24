@@ -10,6 +10,7 @@ process.env.LOG_FORMAT = "json";
 const { default: clientLogRouter } = await import("./clientLog.js");
 const { signAccessToken, signGuestToken } = await import("../auth/tokens.js");
 const { default: express } = await import("express");
+const { default: jwt } = await import("jsonwebtoken");
 
 const USER_ID = "11111111-1111-1111-1111-111111111111";
 
@@ -18,6 +19,9 @@ describe("POST /api/client-log", () => {
 
   beforeAll(async () => {
     const app = express();
+    // Each test request gets its own client IP (X-Forwarded-For), so the
+    // per-IP rate limit only applies where a test means it to.
+    app.set("trust proxy", "loopback");
     app.use(express.json({ limit: "10kb" }));
     app.use("/api/client-log", clientLogRouter);
     await new Promise((resolve) => { server = app.listen(0, resolve); });
@@ -38,11 +42,13 @@ describe("POST /api/client-log", () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
-  function post(body, token) {
+  let nextIp = 1;
+  function post(body, token, ip = `10.0.0.${nextIp++}`) {
     return fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "X-Forwarded-For": ip,
         "User-Agent": "jest",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
@@ -74,6 +80,19 @@ describe("POST /api/client-log", () => {
     expect((await post({ level: "warn", msg: "x" }, "not-a-jwt")).status).toBe(204);
     expect((await post({ level: "warn", msg: "y" })).status).toBe(204);
     for (const [line] of out.warn.mock.calls) expect(JSON.parse(line).userId).toBeUndefined();
+  });
+
+  test("an expired token is accepted without a userId", async () => {
+    const expired = jwt.sign({ sub: USER_ID }, process.env.JWT_ACCESS_SECRET, { expiresIn: -10 });
+    expect((await post({ level: "warn", msg: "late" }, expired)).status).toBe(204);
+    expect(logged("warn").userId).toBeUndefined();
+  });
+
+  test("allows 30 lines a minute from one IP", async () => {
+    const ip = "10.9.9.9";
+    for (let i = 0; i < 30; i++) expect((await post({ level: "warn", msg: `m${i}` }, undefined, ip)).status).toBe(204);
+    expect((await post({ level: "warn", msg: "one more" }, undefined, ip)).status).toBe(429);
+    expect(out.warn).toHaveBeenCalledTimes(30);
   });
 
   test("token-looking text and unsafe context keys do not reach the log", async () => {

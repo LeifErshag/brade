@@ -255,16 +255,16 @@ export default function Game() {
     />
   );
 
-  // ── Debug console hooks: window.__brade ─────────────────────────────────────
-  // state()  → client's view of the current room (turn/phase/canRoll/wsStatus)
-  // server() → fetch authoritative server state for this room
-  // dump()   → both side by side, for spotting client/server divergence
   // Tag client log lines sent to the server with this room and token.
   useEffect(() => {
     setLogContext({ roomId, token: wsToken ?? null });
     return () => setLogContext({ roomId: null, token: null });
   }, [roomId, wsToken]);
 
+  // ── Debug console hooks: window.__brade ─────────────────────────────────────
+  // state()  → client's view of the current room (turn/phase/canRoll/wsStatus)
+  // server() → fetch authoritative server state for this room
+  // dump()   → both side by side, for spotting client/server divergence
   const debugRef = useRef(null);
   debugRef.current = { room, roomId, myId, myColor, wsToken, wsStatus, spectatorCount };
 

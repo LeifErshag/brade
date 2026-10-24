@@ -41,8 +41,21 @@ export function recentLogs() {
 
 // Same patterns as server/src/log.js, so a token never leaves the browser in
 // a log line (e.g. the WebSocket URL carries ?token=).
+// String() itself throws for some values (Object.create(null), objects with
+// a throwing toString), and anything can be thrown or rejected with.
+function safeString(value) {
+  try { return String(value); } catch { return "[unprintable]"; }
+}
+
+// The message of a thrown value, whatever it is.
+export function describeError(value) {
+  let message;
+  try { message = value?.message; } catch { /* throwing getter */ }
+  return safeString(message ?? value);
+}
+
 export function redact(text) {
-  return String(text)
+  return safeString(text)
     .replace(/([?&]token=)[^&\s"']+/gi, "$1[redacted]")
     .replace(/(Bearer\s+)[\w.~+/=-]+/gi, "$1[redacted]")
     .replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, "[jwt]");
@@ -65,19 +78,21 @@ function token() {
   try { return sessionStorage.getItem("access_token"); } catch { return null; }
 }
 
-function mayBeSent(msg) {
+// key: the message plus the close code, if any, so a series of different
+// closes is not collapsed into the first.
+function mayBeSent(key) {
   const now = Date.now();
   while (sentAt.length && now - sentAt[0] >= 60_000) sentAt.shift();
   if (sentAt.length >= MAX_SENDS_PER_MINUTE) return false;
-  if (now - (lastSent.get(msg) ?? -Infinity) < DEDUPE_MS) return false;
+  if (now - (lastSent.get(key) ?? -Infinity) < DEDUPE_MS) return false;
   sentAt.push(now);
-  lastSent.set(msg, now);
+  lastSent.set(key, now);
   if (lastSent.size > 100) lastSent.delete(lastSent.keys().next().value);
   return true;
 }
 
 function send(level, msg, ctx) {
-  if (!mayBeSent(msg)) return;
+  if (!mayBeSent(`${msg}|${ctx?.code ?? ""}`)) return;
   const body = { level, msg: msg.slice(0, MAX_MSG) || "(empty)" };
   if (ROOM_ID.test(current.roomId ?? "")) body.roomId = current.roomId;
   const page = window.location?.pathname;
@@ -105,15 +120,21 @@ function send(level, msg, ctx) {
 
 // echo: print to the console too (off for errors the browser already printed).
 // remote: send warnings and errors to the server.
+// Never throws: it runs in error handlers (the error boundary, the global
+// handlers), where a throw would lose the original error or blank the page.
 function write(level, msg, ctx, { echo = true, remote = true } = {}) {
-  const text = redact(msg);
-  if (echo) {
-    const out = level === "error" ? console.error : level === "warn" ? console.warn : console.info;
-    if (ctx === undefined) out(text); else out(text, ctx);
+  try {
+    const text = redact(msg);
+    if (echo) {
+      const out = level === "error" ? console.error : level === "warn" ? console.warn : console.info;
+      if (ctx === undefined) out(text); else out(text, ctx);
+    }
+    recent.push({ t: new Date().toISOString(), level, msg: text, ...(ctx ? { ctx: cleanContext(ctx) } : {}) });
+    if (recent.length > BUFFER_SIZE) recent.shift();
+    if (remote && level !== "info") send(level, text, ctx);
+  } catch {
+    // Drop the line.
   }
-  recent.push({ t: new Date().toISOString(), level, msg: text, ...(ctx ? { ctx: cleanContext(ctx) } : {}) });
-  if (recent.length > BUFFER_SIZE) recent.shift();
-  if (remote && level !== "info") send(level, text, ctx);
 }
 
 export const clientLog = {
@@ -122,19 +143,21 @@ export const clientLog = {
   error: (msg, ctx, opts) => write("error", msg, ctx, opts),
 };
 
-const stackOf = (err) => (typeof err?.stack === "string" ? err.stack : undefined);
+export function stackOf(err) {
+  try { return typeof err?.stack === "string" ? err.stack : undefined; } catch { return undefined; }
+}
 
 // Uncaught errors and unhandled rejections. The browser already prints them,
 // so they are only recorded and sent.
 export function installGlobalErrorHandlers() {
   window.addEventListener("error", (e) => {
-    clientLog.error(`Uncaught error: ${e.message}`, {
+    clientLog.error(`Uncaught error: ${describeError(e)}`, {
       file: e.filename, line: e.lineno, col: e.colno, stack: stackOf(e.error),
     }, { echo: false });
   });
   window.addEventListener("unhandledrejection", (e) => {
     const reason = e.reason;
-    clientLog.error(`Unhandled rejection: ${reason?.message ?? String(reason)}`, {
+    clientLog.error(`Unhandled rejection: ${describeError(reason)}`, {
       stack: stackOf(reason),
     }, { echo: false });
   });

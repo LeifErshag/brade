@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from "react";
-import { clientLog } from "../remoteLog.js";
+import { clientLog, describeError } from "../remoteLog.js";
 
 // Reconnect backoff: 1s, 2s, 4s, 8s, 16s, then capped at 30s (plus jitter).
 // The cap stays well under the server's 60s disconnect-forfeit grace, so a
@@ -78,7 +78,9 @@ export function useSocket({ roomId, token, onMessage, onOpen, onClose, onReconne
         try {
           onMsgRef.current(JSON.parse(e.data));
         } catch (err) {
-          clientLog.error("[ws] could not handle message", { message: err?.message ?? String(err), data: String(e.data).slice(0, 200) });
+          // The start of the message goes to the server log. Messages carry
+          // room state only (no tokens or chat); remoteLog masks token-like text.
+          clientLog.error("[ws] could not handle message", { message: describeError(err), data: String(e.data).slice(0, 200) });
         }
       };
 
