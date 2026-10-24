@@ -4,7 +4,8 @@
 //      without another search;
 //   2. if the room's cache is cleared while a search runs (the game ended),
 //      the move is still answered but no plan is cached for the next game;
-//   3. a failed search falls back to the first legal move.
+//   3. a failed search rejects (chooseAiMove retries it, #124), and the room's
+//      next search is not affected.
 
 import { jest } from "@jest/globals";
 
@@ -48,14 +49,14 @@ test("a cache cleared during the search keeps the plan out of the next game", as
   expect(await next).toEqual(m2);
 });
 
-test("a failed search falls back to the first legal move", async () => {
-  const error = jest.spyOn(console, "error").mockImplementation(() => {});
-  try {
-    const move = getNextExpectimaxMoveOffThread(gsAt(0), "black", legal, "R");
-    searches[0].reject(new Error("worker died"));
-    expect(await move).toEqual(legal[0]);
-    expect(error).toHaveBeenCalled();
-  } finally {
-    error.mockRestore();
-  }
+test("a failed search rejects, and the room's next search still plans", async () => {
+  const first = getNextExpectimaxMoveOffThread(gsAt(0), "black", legal, "R");
+  searches[0].reject(new Error("worker died"));
+  await expect(first).rejects.toThrow("worker died");
+  const retry = getNextExpectimaxMoveOffThread(gsAt(0), "black", legal, "R");
+  expect(searches).toHaveLength(2);
+  searches[1].resolve([m1, m2]);
+  expect(await retry).toEqual(m1);
+  expect(await getNextExpectimaxMoveOffThread(gsAt(1), "black", legal, "R")).toEqual(m2);
+  expect(searches).toHaveLength(2);
 });

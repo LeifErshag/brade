@@ -75,22 +75,23 @@ export function getNextExpectimaxMove(gs, color, legalMoves, roomId) {
 }
 
 // Same as getNextExpectimaxMove, but the search runs in a worker thread
-// (#106), so the event loop keeps serving every other room meanwhile.
+// (#106), so the event loop keeps serving every other room meanwhile. A failed
+// search rejects instead of falling back to the first legal move (#124), so
+// the caller (chooseAiMove) retries it, on a new worker if the worker crashed
+// or hung.
 export async function getNextExpectimaxMoveOffThread(gs, color, legalMoves, roomId) {
   const planned = takePlannedMove(gs, roomId);
   if (planned !== undefined) return planned;
 
   const token = {};
   searchesInFlight.set(roomId, token);
-  let bestMoves;
+  let bestMoves, current;
   try {
     bestMoves = await searchOffThread(gs, color);
-  } catch (err) {
-    console.error("Grandmaster search error:", err.message);
-    bestMoves = null;
+  } finally {
+    current = searchesInFlight.get(roomId) === token;
+    if (current) searchesInFlight.delete(roomId);
   }
-  const current = searchesInFlight.get(roomId) === token;
-  if (current) searchesInFlight.delete(roomId);
   // The room's cache was cleared while searching: answer, but plan nothing.
   if (!current) return bestMoves?.[0] ?? legalMoves[0] ?? null;
   return startPlan(gs, legalMoves, roomId, bestMoves);
