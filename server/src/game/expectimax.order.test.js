@@ -6,6 +6,10 @@
 // only, it returns the same sequences in reverse order. On a search that only
 // scores a prefix of the list, reversing the order changes the reply it finds
 // and therefore the move it picks.
+//
+// The search runs without a time budget: under CPU load a 500 ms budget cuts
+// the two searches short at different points, which makes them pick
+// different moves for reasons unrelated to the order (#129).
 
 import { jest } from "@jest/globals";
 
@@ -20,7 +24,7 @@ jest.unstable_mockModule("./engine.js", () => ({
   },
 }));
 
-const { getNextExpectimaxMove, clearExpectimaxCache } = await import("./expectimax.js");
+const { computeBestTurnSequence } = await import("./expectimax.js");
 
 const other = c => (c === "white" ? "black" : "white");
 
@@ -53,18 +57,14 @@ const FIXTURES = [
     board: [0, -2, 2, 2, -2, 0, -2, 0, 2, 2, 0, 0, -2, -2, -1, 2, 0, 0, 0, -2, 1, 2, 2, -2] },
 ];
 
-function firstMove(board, dice, color, reverseFor) {
+function bestTurn(board, dice, color, reverseFor) {
   control.reverseFor = reverseFor;
-  const roomId = `order-62-${color}-${reverseFor}`;
-  clearExpectimaxCache(roomId);
   try {
     const gs = makeGs(board, dice, color);
-    const legal = actualEngine.getLegalMoves(gs, color);
-    const move = getNextExpectimaxMove(gs, color, legal, roomId);
-    expect(legal).toContainEqual(move);
-    return move;
+    const moves = computeBestTurnSequence(gs, color, Infinity);
+    expect(actualEngine.legalTurnSequences(gs, color).map(s => s.moves)).toContainEqual(moves);
+    return moves;
   } finally {
-    clearExpectimaxCache(roomId);
     control.reverseFor = null;
   }
 }
@@ -75,9 +75,9 @@ describe.each(FIXTURES)("$color rolls $dice", ({ color, dice, board }) => {
     expect(actualEngine.legalTurnSequences(gs, color).some(s => s.ends)).toBe(false);
   });
 
-  test("the chosen move does not depend on the order of the opponent's sequences", () => {
-    const natural  = firstMove(board, dice, color, null);
-    const reversed = firstMove(board, dice, color, other(color));
+  test("the chosen turn does not depend on the order of the opponent's sequences", () => {
+    const natural  = bestTurn(board, dice, color, null);
+    const reversed = bestTurn(board, dice, color, other(color));
     expect(reversed).toEqual(natural);
   });
 });
