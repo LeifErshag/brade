@@ -1,6 +1,6 @@
 // Benchmark for Grandmaster's synchronous search (#106).
 //
-// Generates positions by random self-play from initGame(), then times one
+// Generates positions by seeded self-play from initGame(), then times one
 // full search (computeBestTurnSequence) on each, without the time budget, so
 // a slow position is measured rather than cut short. The game server runs
 // this search in a worker thread with a 500 ms budget; here it runs on the
@@ -122,8 +122,8 @@ function summarize(label, ms) {
   );
 }
 
-// Compact board in path terms of the absolute board array: white positive,
-// black negative, index 0 = point 1.
+// Compact board as absolute points 1-24 (point:colour+count), read from the
+// board array where white is positive, black negative and index 0 = point 1.
 function describe(p) {
   const pts = p.gs.board
     .map((n, i) => (n === 0 ? null : `${i + 1}:${n > 0 ? "W" : "B"}${Math.abs(n)}`))
@@ -141,10 +141,17 @@ console.log(`Games: ${GAMES}, seed: ${SEED}, mode: ${MODE}`);
 const positions = generatePositions();
 console.log(`Positions: ${positions.length}`);
 
-// Warm up the JIT so the first timings are not inflated.
-for (const p of positions.slice(0, 50)) timeSearch(p);
+// Warm up the JIT so the first timings are not inflated. Spread the warm-up
+// over all positions, not only game 0's cheap openings.
+const WARMUP = Math.min(50, positions.length);
+for (let i = 0; i < WARMUP; i++) {
+  timeSearch(positions[Math.floor(i * positions.length / WARMUP)]);
+}
 
 for (const p of positions) p.ms = timeSearch(p);
+// GC pauses do block the event loop in production, so keep the worst
+// single timing from before the re-timing below.
+const rawMax = positions.reduce((m, p) => Math.max(m, p.ms), 0);
 
 // A GC pause, another process or the machine sleeping can inflate a single
 // timing. Re-time the slowest 1% (at least 20) a few more times and keep the
@@ -167,6 +174,8 @@ summarize("doubles",   positions.filter(isDouble).map(p => p.ms));
 summarize("non-doubles", positions.filter(p => !isDouble(p)).map(p => p.ms));
 summarize("on bar",    positions.filter(isBar).map(p => p.ms));
 summarize("doubles+bar", positions.filter(p => isDouble(p) && isBar(p)).map(p => p.ms));
+
+console.log(`max before re-timing: ${rawMax.toFixed(1)} ms (may include GC pauses)`);
 
 const total = positions.reduce((a, p) => a + p.ms, 0);
 console.log(`\nTotal search time: ${(total / 1000).toFixed(1)} s, mean ${(total / positions.length).toFixed(1)} ms`);
