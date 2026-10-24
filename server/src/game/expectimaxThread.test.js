@@ -9,14 +9,15 @@
 //      searches, not the new worker's;
 //   6. a worker that does not answer a search in time is stopped: that
 //      search rejects, and the searches queued behind it are answered by a
-//      new worker (#124);
+//      new worker (#124); an answer it posts after the timeout is dropped
+//      (#131);
 //   7. searches queued behind a slow one are not timed until the worker
 //      starts on them, so a long queue is not taken for a hang;
 //   8. the worker does not keep the process from exiting, even when the
 //      first search fails before reaching it.
 
 import { jest } from "@jest/globals";
-import { setInterval, clearInterval } from "node:timers";
+import { setInterval, clearInterval, setImmediate } from "node:timers";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -127,6 +128,28 @@ describe("with a stand-in worker that is busy for busyMs per search", () => {
       await expect(hung).rejects.toThrow("did not answer within 1000 ms");
       expect(await Promise.all(queued)).toEqual([[0], [1]]);
       expect(error).toHaveBeenCalledWith(expect.stringContaining("did not answer"));
+    } finally {
+      error.mockRestore();
+    }
+    expect(await busy(0)).toEqual([0]);
+  });
+
+  test("an answer that arrives after the timeout is dropped", async () => {
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await busy(0)).toEqual([0]); // the worker is online, so timed
+      const late = busy(100);
+      const settled = expect(late).rejects.toThrow("did not answer within 1000 ms");
+      // Block the main thread past the timeout: the worker answers meanwhile,
+      // but the timer runs before that answer is handled and stops the worker.
+      // Blocked from the check phase, so the next loop turn starts with timers.
+      await new Promise(resolve => setImmediate(() => {
+        const end = Date.now() + 1500;
+        while (Date.now() < end);
+        resolve();
+      }));
+      await settled;
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("main thread"));
     } finally {
       error.mockRestore();
     }

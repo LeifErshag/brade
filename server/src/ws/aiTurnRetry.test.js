@@ -5,8 +5,9 @@
 //      with no rerun pending is retried, and the retry finishes the turn
 //      with the dice already rolled, never re-rolling;
 //   2. a trigger that finds the AI already moving continues with its dice;
-//   3. when pickMove returns nothing, the AI still finishes its turn by
-//      playing a legal move, with a bounded number of pickMove calls;
+//   3. when pickMove returns nothing or rejects (a failed Grandmaster
+//      search, #124), once or every time, the AI still finishes its turn by
+//      playing a legal move, with a bounded number of pickMove calls (#131);
 //   4. when Redis fails for good, the retries are bounded and end, the
 //      stored room is left as last saved (or untouched, if the roll failed),
 //      and a later trigger finishes the turn once Redis is back.
@@ -201,9 +202,11 @@ describe("AI turn retry", () => {
   });
 
   test.each([
-    ["once", () => pickMove.mockResolvedValueOnce(null)],
-    ["always", () => pickMove.mockResolvedValue(undefined)],
-  ])("pickMove returning nothing %s still finishes the turn", async (_label, setup) => {
+    ["returning nothing once", () => pickMove.mockResolvedValueOnce(null)],
+    ["returning nothing always", () => pickMove.mockResolvedValue(undefined)],
+    ["rejecting once", () => pickMove.mockRejectedValueOnce(new Error("search failed"))],
+    ["rejecting always", () => pickMove.mockRejectedValue(new Error("search failed"))],
+  ])("pickMove %s still finishes the turn", async (_label, setup) => {
     store.set(`room:${ROOM_ID}`, JSON.stringify(makeRoom()));
     setup();
 
@@ -215,6 +218,8 @@ describe("AI turn retry", () => {
     expectTurnFinished(room);
     const movesPlayed = room.gameState.moveSeq - START_SEQ;
     expect(pickMove.mock.calls.length).toBeLessThanOrEqual(5 * movesPlayed);
+    // chooseAiMove handles it: no pass fails and needs the outer retry.
+    expect(console.error).not.toHaveBeenCalledWith("AI turn error:", expect.anything());
 
     const calls = pickMove.mock.calls.length;
     await runFor(60_000);
