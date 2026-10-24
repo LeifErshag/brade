@@ -32,7 +32,8 @@ test("connectPostgres attaches an error listener to the pool", async () => {
   const err = new Error("terminating connection due to administrator command");
   // Without a listener, EventEmitter would throw this error synchronously.
   expect(() => pool.emit("error", err, {})).not.toThrow();
-  expect(errorSpy).toHaveBeenCalledWith("PostgreSQL idle client error:", err);
+  expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("PostgreSQL idle client error"));
+  expect(errorSpy.mock.calls[0][0]).toContain(err.message);
 });
 
 // ── Pool timeouts (issue #59) ────────────────────────────────────────────────

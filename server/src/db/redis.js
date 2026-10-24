@@ -1,4 +1,5 @@
 import Redis from "ioredis";
+import { log } from "../log.js";
 
 let client;
 
@@ -8,7 +9,7 @@ export async function connectRedis() {
     enableReadyCheck: true,
   });
   await client.ping();
-  console.log("Redis connected");
+  log.info("Redis connected");
 }
 
 export function getRedis() { return client; }

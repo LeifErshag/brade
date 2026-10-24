@@ -16,6 +16,7 @@ import {
   applyMove,
   winPoints,
 } from "./engine.js";
+import { log } from "../log.js";
 import { winRank } from "./scoring.js";
 import { searchOffThread } from "./expectimaxThread.js";
 
@@ -68,7 +69,7 @@ export function getNextExpectimaxMove(gs, color, legalMoves, roomId) {
   try {
     bestMoves = computeBestTurnSequence(gs, color);
   } catch (err) {
-    console.error("Grandmaster search error:", err.message);
+    log.error("Grandmaster search error", { roomId, err });
     bestMoves = null;
   }
   return startPlan(gs, legalMoves, roomId, bestMoves);

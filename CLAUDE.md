@@ -79,6 +79,7 @@ During development, `vite.config.js` proxies `/api`, `/auth`, and `/ws` to `loca
 - Input validation uses Zod via the `validate(schema)` middleware factory in `server/src/middleware/validate.js`.
 - `req.userId` is set by `requireAuth` middleware after JWT verification.
 - Room IDs are 8 uppercase alphanumeric characters (e.g., `A3F9B2C1`).
+- Server logging goes through `log.info/warn/error(msg, fields)` in `server/src/log.js`, not `console.*`. On Render it prints one JSON line per call. Include `userId` and `roomId` when known, so a player's problem can be found by searching Render's logs for their ID. Never log tokens, cookies, emails or full game state.
 
 ## Development workflow
 

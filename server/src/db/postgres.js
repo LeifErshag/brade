@@ -3,6 +3,7 @@ import pg from "pg";
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
+import { log } from "../log.js";
 
 const { Pool } = pg;
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "migrations");
@@ -13,8 +14,8 @@ let pool;
 // on the Pool; without a listener it becomes an uncaught exception and the
 // process exits, dropping every live game. Log it instead: pg discards the
 // broken client and the next query opens a fresh connection.
-export function handlePoolError(err, logger = console) {
-  logger.error("PostgreSQL idle client error:", err);
+export function handlePoolError(err, logger = log) {
+  logger.error("PostgreSQL idle client error", err);
 }
 
 // Timeouts, so a hung database cannot stall a room forever: START_GAME and
@@ -52,7 +53,7 @@ export async function connectPostgres() {
   pool = new Pool({ connectionString: process.env.DATABASE_URL, ...POOL_TIMEOUTS });
   pool.on("error", (err) => handlePoolError(err));
   await pool.query("SELECT 1"); // verify connection
-  console.log("PostgreSQL connected");
+  log.info("PostgreSQL connected");
   await runMigrations();
 }
 
@@ -90,7 +91,7 @@ async function runMigrations() {
       await client.query({ text: sql, query_timeout: MIGRATION_QUERY_TIMEOUT });
       await client.query("INSERT INTO _migrations (filename) VALUES ($1)", [filename]);
       await client.query("COMMIT");
-      console.log(`Migration applied: ${filename}`);
+      log.info("Migration applied", { filename });
     } catch (err) {
       // After a client-side timeout the connection may still be busy with the
       // abandoned statement; discard it rather than return it to the pool.

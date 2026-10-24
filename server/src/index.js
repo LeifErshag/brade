@@ -17,8 +17,9 @@ import { rateLimitApi } from "./middleware/ratelimit.js";
 import { installProcessErrorHandlers } from "./processErrors.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { runStartup } from "./startup.js";
+import { log } from "./log.js";
 
-installProcessErrorHandlers();
+installProcessErrorHandlers(process, log);
 
 const app = express();
 const httpServer = createServer(app);
@@ -52,7 +53,7 @@ app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
 // ── 404 & error handler ───────────────────────────────────────────────────────
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
-app.use(errorHandler());
+app.use(errorHandler(log));
 
 // ── Startup ───────────────────────────────────────────────────────────────────
 async function start() {
@@ -62,8 +63,8 @@ async function start() {
 
   const port = process.env.PORT || 3001;
   httpServer.listen(port, () => {
-    console.log(`Bräde server running on port ${port}`);
+    log.info("Bräde server running", { port });
   });
 }
 
-runStartup(start);
+runStartup(start, process, log);

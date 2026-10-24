@@ -62,6 +62,7 @@ beforeEach(() => {
   inFlightConnections.clear();
   errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
   jest.spyOn(console, "log").mockImplementation(() => {});
+  jest.spyOn(console, "warn").mockImplementation(() => {});
 });
 afterEach(() => jest.restoreAllMocks());
 
@@ -89,7 +90,8 @@ test("the connection listener logs the error and closes the socket with 1011", a
 
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(ws.close).toHaveBeenCalledWith(1011, "Server error");
-  expect(errorSpy).toHaveBeenCalledWith("WS connection error:", expect.objectContaining({ message: "redis down" }));
+  expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("WS connection error"));
+  expect(errorSpy.mock.calls[0][0]).toContain("redis down");
 });
 
 test("a missing room still closes with 4003 and is not treated as an error", async () => {

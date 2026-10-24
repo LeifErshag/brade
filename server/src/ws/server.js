@@ -6,6 +6,7 @@ import {
 import { getRedis, keys, TTL } from "../db/redis.js";
 import { query } from "../db/postgres.js";
 import { withRoomLock } from "./roomLock.js";
+import { log } from "../log.js";
 
 // rooms: Map<roomId, Set<{ws, userId}>>
 export const rooms = new Map();
@@ -35,12 +36,12 @@ export function initWebSocketServer(httpServer) {
     // Postgres down) would be an unhandled rejection. Log it and close the
     // socket with 1011 (internal error) so the client can retry.
     handleConnection(ws, req).catch((err) => {
-      console.error("WS connection error:", err);
+      log.error("WS connection error", { err });
       ws.close(1011, "Server error");
     });
   });
 
-  console.log("WebSocket server initialised");
+  log.info("WebSocket server initialised");
 }
 
 export async function handleConnection(ws, req) {
@@ -48,7 +49,10 @@ export async function handleConnection(ws, req) {
   const token  = url.searchParams.get("token");
   const roomId = url.searchParams.get("room");
 
-  if (!token || !roomId) { ws.close(4001, "Missing token or room"); return; }
+  if (!token || !roomId) {
+    log.warn("WS rejected: missing token or room", { roomId: roomId ?? undefined });
+    ws.close(4001, "Missing token or room"); return;
+  }
 
   let userId, isGuest = false, guestDisplayName = "Guest";
   try {
@@ -58,11 +62,17 @@ export async function handleConnection(ws, req) {
       isGuest = true;
       guestDisplayName = payload.display_name ?? "Guest";
     }
-  } catch {
+  } catch (err) {
+    // Expired tokens are normal (the client refreshes and reconnects), so
+    // only the reason is logged, not a stack.
+    log.warn("WS rejected: invalid token", { roomId, reason: err?.name });
     ws.close(4001, "Invalid token"); return;
   }
 
-  if (!/^[A-Z0-9]{8}$/.test(roomId)) { ws.close(4002, "Invalid room"); return; }
+  if (!/^[A-Z0-9]{8}$/.test(roomId)) {
+    log.warn("WS rejected: invalid room", { userId });
+    ws.close(4002, "Invalid room"); return;
+  }
 
   // Count this connect as in flight (synchronously, before the first await)
   // until it has registered or given up, so a seat release can tell that the
@@ -95,7 +105,7 @@ export async function handleConnection(ws, req) {
       try {
         await withRoomLock(roomId, () => releasePendingSeat(roomId, userId, 0));
       } catch (err) {
-        console.error(`Seat release error [${roomId}]:`, err);
+        log.error("Seat release error", { roomId, userId, err });
       }
     }
   }
@@ -107,7 +117,10 @@ export async function handleConnection(ws, req) {
 async function connectToRoom(ws, roomId, userId, isGuest, guestDisplayName) {
   const redis = getRedis();
   const rawRoom = await redis.get(keys.room(roomId));
-  if (!rawRoom) { ws.close(4003, "Room not found"); return; }
+  if (!rawRoom) {
+    log.warn("WS rejected: room not found", { roomId, userId });
+    ws.close(4003, "Room not found"); return;
+  }
 
   let room = JSON.parse(rawRoom);
   // Reset TTL on every connect so active rooms never expire mid-session
@@ -173,6 +186,8 @@ async function connectToRoom(ws, roomId, userId, isGuest, guestDisplayName) {
   if (!userConnections.has(userId)) userConnections.set(userId, new Set());
   userConnections.get(userId).add(ws);
 
+  log.info("WS connected", { roomId, userId, guest: isGuest || undefined, status: room.status });
+
   // Send full room state to every client in the room (including new arrival)
   broadcastState(roomId, room);
 
@@ -187,7 +202,7 @@ async function connectToRoom(ws, roomId, userId, isGuest, guestDisplayName) {
   const aiToRoll = gs?.phase === "rolling";
   const aiMidTurn = gs?.phase === "moving" && gs.legalMoves?.length > 0 && gs.dice?.length > 0;
   if (room.isAi && room.status === "playing" && gs?.turn === "black" && (aiToRoll || aiMidTurn)) {
-    triggerAiTurn(roomId).catch(e => console.error("AI first-turn error:", e));
+    triggerAiTurn(roomId).catch(err => log.error("AI first-turn error", { roomId, err }));
   }
 
   ws.on("message", async (data) => {
@@ -198,12 +213,13 @@ async function connectToRoom(ws, roomId, userId, isGuest, guestDisplayName) {
     try {
       await handleMessage({ msg, userId, roomId, ws });
     } catch (err) {
-      console.error(`WS handler error [${roomId}] type=${msg?.type}:`, err);
+      log.error("WS handler error", { roomId, userId, type: msg?.type, err });
       send(ws, { type: "ERROR", message: "Server error" });
     }
   });
 
-  ws.on("close", async () => {
+  ws.on("close", async (code) => {
+    log.info("WS disconnected", { roomId, userId, code });
     rooms.get(roomId)?.delete(client);
     if (rooms.get(roomId)?.size === 0) rooms.delete(roomId);
 
@@ -233,10 +249,11 @@ async function connectToRoom(ws, roomId, userId, isGuest, guestDisplayName) {
       .some(c => c.userId === userId && c.ws.readyState === 1 /* OPEN */);
     if (stillConnected) return;
     // Only what is left of the forfeit delay since the drop.
+    log.info("Disconnect forfeit scheduled", { roomId, userId, color: dc });
     scheduleDisconnectForfeit(roomId, dc, userId, DISCONNECT_FORFEIT_MS - (Date.now() - droppedAt));
   });
 
-  ws.on("error", (err) => console.error(`WS error [${roomId}]:`, err.message));
+  ws.on("error", (err) => log.error("WS error", { roomId, userId, err }));
 }
 
 // Give back a black seat auto-assigned to a user none of whose connections
