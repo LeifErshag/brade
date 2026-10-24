@@ -1,6 +1,6 @@
 // Benchmark for Grandmaster's synchronous search (#106).
 //
-// Generates positions by random self-play from initGame(), then times
+// Generates positions by seeded self-play from initGame(), then times
 // getNextExpectimaxMove on each one with a fresh roomId, so the cached turn
 // plan is never reused and every call runs the full search. The search runs
 // on the main thread, so these timings are how long one AI turn blocks the
@@ -107,7 +107,10 @@ function timeSearch(p) {
   const roomId = "BENCH" + (roomCounter++);
   const t0 = performance.now();
   getNextExpectimaxMove(gs, p.color, legalMoves, roomId);
-  return performance.now() - t0;
+  const ms = performance.now() - t0;
+  // Drop the cached turn plan so the cache does not grow across calls.
+  clearExpectimaxCache(roomId);
+  return ms;
 }
 
 function percentile(sorted, q) {
@@ -125,8 +128,8 @@ function summarize(label, ms) {
   );
 }
 
-// Compact board in path terms of the absolute board array: white positive,
-// black negative, index 0 = point 1.
+// Compact board as absolute points 1-24 (point:colour+count), read from the
+// board array where white is positive, black negative and index 0 = point 1.
 function describe(p) {
   const pts = p.gs.board
     .map((n, i) => (n === 0 ? null : `${i + 1}:${n > 0 ? "W" : "B"}${Math.abs(n)}`))
@@ -144,10 +147,17 @@ console.log(`Games: ${GAMES}, seed: ${SEED}, mode: ${MODE}`);
 const positions = generatePositions();
 console.log(`Positions: ${positions.length}`);
 
-// Warm up the JIT so the first timings are not inflated.
-for (const p of positions.slice(0, 50)) timeSearch(p);
+// Warm up the JIT so the first timings are not inflated. Spread the warm-up
+// over all positions, not only game 0's cheap openings.
+const WARMUP = 50;
+for (let i = 0; i < Math.min(WARMUP, positions.length); i++) {
+  timeSearch(positions[Math.floor(i * positions.length / WARMUP)]);
+}
 
 for (const p of positions) p.ms = timeSearch(p);
+// GC pauses do block the event loop in production, so keep the worst
+// single timing from before the re-timing below.
+const rawMax = positions.reduce((m, p) => Math.max(m, p.ms), 0);
 
 // A GC pause, another process or the machine sleeping can inflate a single
 // timing. Re-time the slowest 1% (at least 20) a few more times and keep the
@@ -170,6 +180,8 @@ summarize("doubles",   positions.filter(isDouble).map(p => p.ms));
 summarize("non-doubles", positions.filter(p => !isDouble(p)).map(p => p.ms));
 summarize("on bar",    positions.filter(isBar).map(p => p.ms));
 summarize("doubles+bar", positions.filter(p => isDouble(p) && isBar(p)).map(p => p.ms));
+
+console.log(`max before re-timing: ${rawMax.toFixed(1)} ms (includes GC pauses)`);
 
 const total = positions.reduce((a, p) => a + p.ms, 0);
 console.log(`\nTotal search time: ${(total / 1000).toFixed(1)} s, mean ${(total / positions.length).toFixed(1)} ms`);
