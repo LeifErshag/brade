@@ -1,0 +1,141 @@
+// Client-side log that also reaches the server (issue #140).
+//
+//   clientLog.warn("[ws] closed", { code: 1006, attempt: 2 });
+//
+// Every call prints to the browser console as before and is kept in a small
+// ring buffer (recentLogs(), attached to problem reports). Warnings and errors
+// are also POSTed to /api/client-log, where they land in the server log with
+// the player's userId, so a reported problem can be traced on Render.
+//
+// Sending must never get in the way of the game: it is fire-and-forget,
+// failures are ignored, and at most MAX_SENDS_PER_MINUTE lines are sent (the
+// same message at most once per DEDUPE_MS), so a reconnect loop cannot flood
+// the server.
+
+const API = import.meta.env.VITE_API_URL ?? "";
+
+const BUFFER_SIZE          = 50;
+const MAX_SENDS_PER_MINUTE = 10;
+const DEDUPE_MS            = 30_000;
+const MAX_MSG              = 500;
+const MAX_CONTEXT_KEYS     = 20;
+const MAX_CONTEXT_STRING   = 1000;
+const ROOM_ID              = /^[A-Z0-9]{8}$/;
+
+const recent   = [];
+const sentAt   = [];          // timestamps of sends in the last minute
+const lastSent = new Map();   // msg → when it was last sent
+
+// Set by the Game page: the room being played and the token it plays with
+// (a guest token is not in sessionStorage under access_token).
+let current = { roomId: null, token: null };
+
+export function setLogContext(next) {
+  current = { ...current, ...next };
+}
+
+// The last BUFFER_SIZE log lines, oldest first.
+export function recentLogs() {
+  return recent.slice();
+}
+
+// Same patterns as server/src/log.js, so a token never leaves the browser in
+// a log line (e.g. the WebSocket URL carries ?token=).
+export function redact(text) {
+  return String(text)
+    .replace(/([?&]token=)[^&\s"']+/gi, "$1[redacted]")
+    .replace(/(Bearer\s+)[\w.~+/=-]+/gi, "$1[redacted]")
+    .replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, "[jwt]");
+}
+
+// Flat, small and scalar-only, as /api/client-log accepts.
+function cleanContext(ctx) {
+  if (!ctx || typeof ctx !== "object") return undefined;
+  const out = {};
+  for (const [key, value] of Object.entries(ctx).slice(0, MAX_CONTEXT_KEYS)) {
+    const k = key.slice(0, 50);
+    if (value === null || typeof value === "number" || typeof value === "boolean") out[k] = value;
+    else if (value !== undefined) out[k] = redact(value).slice(0, MAX_CONTEXT_STRING);
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+function token() {
+  if (current.token) return current.token;
+  try { return sessionStorage.getItem("access_token"); } catch { return null; }
+}
+
+function mayBeSent(msg) {
+  const now = Date.now();
+  while (sentAt.length && now - sentAt[0] >= 60_000) sentAt.shift();
+  if (sentAt.length >= MAX_SENDS_PER_MINUTE) return false;
+  if (now - (lastSent.get(msg) ?? -Infinity) < DEDUPE_MS) return false;
+  sentAt.push(now);
+  lastSent.set(msg, now);
+  if (lastSent.size > 100) lastSent.delete(lastSent.keys().next().value);
+  return true;
+}
+
+function send(level, msg, ctx) {
+  if (!mayBeSent(msg)) return;
+  const body = { level, msg: msg.slice(0, MAX_MSG) || "(empty)" };
+  if (ROOM_ID.test(current.roomId ?? "")) body.roomId = current.roomId;
+  const page = window.location?.pathname;
+  if (page) body.page = page.slice(0, 200);
+  const context = cleanContext(ctx);
+  if (context) body.context = context;
+  const tkn = token();
+  // No keepalive: a cross-origin keepalive request that needs a CORS
+  // preflight (it carries Authorization) is rejected by some browsers. Lines
+  // logged while the page is closing are lost, which is acceptable: the
+  // socket cleanup on unload logs nothing.
+  try {
+    fetch(`${API}/api/client-log`, {
+      method:  "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(tkn ? { Authorization: `Bearer ${tkn}` } : {}),
+      },
+      body: JSON.stringify(body),
+    }).catch(() => {});
+  } catch {
+    // Never let logging throw into the caller.
+  }
+}
+
+// echo: print to the console too (off for errors the browser already printed).
+// remote: send warnings and errors to the server.
+function write(level, msg, ctx, { echo = true, remote = true } = {}) {
+  const text = redact(msg);
+  if (echo) {
+    const out = level === "error" ? console.error : level === "warn" ? console.warn : console.info;
+    if (ctx === undefined) out(text); else out(text, ctx);
+  }
+  recent.push({ t: new Date().toISOString(), level, msg: text, ...(ctx ? { ctx: cleanContext(ctx) } : {}) });
+  if (recent.length > BUFFER_SIZE) recent.shift();
+  if (remote && level !== "info") send(level, text, ctx);
+}
+
+export const clientLog = {
+  info:  (msg, ctx, opts) => write("info",  msg, ctx, opts),
+  warn:  (msg, ctx, opts) => write("warn",  msg, ctx, opts),
+  error: (msg, ctx, opts) => write("error", msg, ctx, opts),
+};
+
+const stackOf = (err) => (typeof err?.stack === "string" ? err.stack : undefined);
+
+// Uncaught errors and unhandled rejections. The browser already prints them,
+// so they are only recorded and sent.
+export function installGlobalErrorHandlers() {
+  window.addEventListener("error", (e) => {
+    clientLog.error(`Uncaught error: ${e.message}`, {
+      file: e.filename, line: e.lineno, col: e.colno, stack: stackOf(e.error),
+    }, { echo: false });
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    const reason = e.reason;
+    clientLog.error(`Unhandled rejection: ${reason?.message ?? String(reason)}`, {
+      stack: stackOf(reason),
+    }, { echo: false });
+  });
+}

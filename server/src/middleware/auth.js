@@ -14,3 +14,21 @@ export function requireAuth(req, res, next) {
     return res.status(401).json({ error: "Invalid or expired token" });
   }
 }
+
+// Like requireAuth, but never rejects: sets req.userId (and req.isGuest) when
+// a valid Bearer token is present, and passes the request on either way. For
+// endpoints that must work for signed-out players too, e.g. error reports
+// sent after a token has expired.
+export function optionalAuth(req, _res, next) {
+  const header = req.headers.authorization;
+  if (header?.startsWith("Bearer ")) {
+    try {
+      const payload = verifyAccessToken(header.slice(7));
+      req.userId = payload.sub;
+      if (payload.isGuest === true) req.isGuest = true;
+    } catch {
+      // Expired or invalid: treat the request as anonymous.
+    }
+  }
+  return next();
+}

@@ -24,6 +24,12 @@ export default {
     couldNotStart: "Kunde inte starta partiet. Försök igen.",
   },
 
+  crash: {
+    title: "Något gick fel",
+    body: "Sidan kraschade. Felet har rapporterats; att ladda om brukar hjälpa.",
+    reload: "Ladda om",
+  },
+
   common: {
     home: "Hem",
     backHome: "← Hem",
