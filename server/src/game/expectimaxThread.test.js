@@ -6,10 +6,19 @@
 //   4. if the worker exits, pending searches reject and the next search
 //      starts a new worker;
 //   5. a worker exiting after a new one started rejects only its own
-//      searches, not the new worker's.
+//      searches, not the new worker's;
+//   6. a worker that does not answer a search in time is stopped: its
+//      pending searches reject, and the next search starts a new worker
+//      (#124);
+//   7. searches queued behind a slow one are not timed until the worker
+//      starts on them, so a long queue is not taken for a hang;
+//   8. the worker does not keep the process from exiting, even when the
+//      first search fails before reaching it.
 
+import { jest } from "@jest/globals";
 import { setInterval, clearInterval } from "node:timers";
-import { searchOffThread, stopSearchWorker } from "./expectimaxThread.js";
+import { spawnSync } from "node:child_process";
+import { searchOffThread, stopSearchWorker, configureSearchWorker } from "./expectimaxThread.js";
 import { computeBestTurnSequence } from "./expectimax.js";
 import { pathToIdx } from "./engine.js";
 
@@ -91,4 +100,61 @@ test("a game state that cannot be cloned rejects, and the worker goes on", async
   const gs = midGame();
   await expect(searchOffThread({ ...gs, extra: () => {} }, "white")).rejects.toThrow();
   expect(await searchOffThread(gs, "white")).toEqual(computeBestTurnSequence(gs, "white"));
+});
+
+// ── Slow and hung workers (#124) ─────────────────────────────────────────────
+
+describe("with a stand-in worker that is busy for busyMs per search", () => {
+  const busy = busyMs => searchOffThread({ busyMs }, "white");
+
+  beforeEach(async () => {
+    await stopSearchWorker();
+    configureSearchWorker({ workerUrl: new URL("./expectimaxWorker.fixture.js", import.meta.url), answerTimeoutMs: 300 });
+  });
+  afterEach(async () => {
+    await stopSearchWorker();
+    configureSearchWorker();
+  });
+
+  test("a hung worker is stopped: its searches reject, and the next search starts a new worker", async () => {
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const hung = busy(60000);
+      const queued = busy(0);
+      await expect(hung).rejects.toThrow("did not answer within 300 ms");
+      await expect(queued).rejects.toThrow("did not answer within 300 ms");
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("did not answer"));
+    } finally {
+      error.mockRestore();
+    }
+    expect(await busy(0)).toEqual([0]);
+  });
+
+  test("searches queued behind a slow one are not timed out while they wait", async () => {
+    // 4 × 200 ms in all, well past the 300 ms timeout; each one is within it.
+    const searches = [busy(200), busy(200), busy(200), busy(200)];
+    expect(await Promise.all(searches)).toEqual([[200], [200], [200], [200]]);
+  });
+});
+
+describe("the worker does not keep the process alive", () => {
+  const moduleUrl = new URL("./expectimaxThread.js", import.meta.url).href;
+  // Runs `body` in a new Node process that has imported searchOffThread, and
+  // returns how it ended. A process kept alive by the worker is killed by the
+  // timeout.
+  const run = body => spawnSync(process.execPath, [
+    "--input-type=module",
+    "-e", `import { searchOffThread } from ${JSON.stringify(moduleUrl)};
+${body}`,
+  ], { timeout: 10000, encoding: "utf8" });
+
+  test.each([
+    ["after a search answers", `await searchOffThread({ dice: [1, 2] }, "white").catch(() => {});`],
+    ["when the first search cannot be sent to it", `await searchOffThread({ f() {} }, "white").catch(() => {});`],
+  ])("%s", (_label, body) => {
+    const result = run(body);
+    expect(result.error).toBeUndefined();
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+  }, 15000);
 });

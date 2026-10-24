@@ -1,38 +1,68 @@
 // ── Main-thread side of the Grandmaster search worker (#106) ────────────────
 // One long-lived worker, started on the first search. It searches one
-// position at a time; searches from other rooms queue behind it, each bounded
-// by SEARCH_TIMEOUT_MS. If the worker dies, its pending searches are rejected
-// and the next search starts a new worker.
+// position at a time; searches from other rooms queue behind it. If the worker
+// dies, its pending searches are rejected and the next search starts a new
+// worker. A worker that takes longer than the answer timeout over one search
+// is treated as hung (#124): it is stopped, which rejects its searches too.
 
 import { Worker } from "node:worker_threads";
+import { SEARCH_TIMEOUT_MS } from "./expectimax.js";
 
-let worker = null; // { thread, pending: Map<id, { resolve, reject }> }
+const WORKER_URL = new URL("./expectimaxWorker.js", import.meta.url);
+// Overridden by tests (configureSearchWorker). A null answerTimeoutMs means
+// twice the search budget, read when used: expectimax.js imports this module,
+// so its constants are not initialised yet while this module loads.
+let options = { workerUrl: WORKER_URL, answerTimeoutMs: null };
+
+let worker = null; // { thread, pending: Map<id, { resolve, reject }>, timer }
 let nextId = 1;
 
 // Each worker has its own pending searches, so a worker that dies (or is
 // stopped) after a new one has started rejects only its own searches.
 function getWorker() {
   if (worker) return worker;
-  const thread = new Worker(new URL("./expectimaxWorker.js", import.meta.url));
-  const w = { thread, pending: new Map() };
+  const thread = new Worker(options.workerUrl);
+  // An idle worker must not keep the process alive; searchOffThread refs it
+  // while a search is pending.
+  thread.unref();
+  const w = { thread, pending: new Map(), timer: null };
   thread.on("message", ({ id, moves, error }) => {
     const p = w.pending.get(id);
     if (!p) return;
     w.pending.delete(id);
     if (error) p.reject(new Error(error));
     else p.resolve(moves);
-    // An idle worker must not keep the process alive.
     if (w.pending.size === 0) thread.unref();
+    watchHead(w); // the worker starts on the next queued search now
   });
-  const fail = (err) => {
-    if (worker === w) worker = null;
-    for (const p of w.pending.values()) p.reject(err);
-    w.pending.clear();
-  };
-  thread.on("error", fail);
-  thread.on("exit", code => fail(new Error(`Grandmaster worker exited with code ${code}`)));
+  thread.on("error", err => fail(w, err));
+  thread.on("exit", code => fail(w, new Error(`Grandmaster worker exited with code ${code}`)));
   worker = w;
   return w;
+}
+
+function fail(w, err) {
+  if (worker === w) worker = null;
+  clearTimeout(w.timer);
+  for (const p of w.pending.values()) p.reject(err);
+  w.pending.clear();
+}
+
+// Times the search the worker is on: the oldest pending one, since the worker
+// answers them in order. Searches queued behind it are not timed until it
+// answers, so a long queue is not mistaken for a hang.
+function watchHead(w) {
+  clearTimeout(w.timer);
+  w.timer = null;
+  if (w.pending.size === 0) return;
+  const ms = options.answerTimeoutMs ?? 2 * SEARCH_TIMEOUT_MS;
+  w.timer = setTimeout(() => {
+    const err = new Error(`Grandmaster worker did not answer within ${ms} ms`);
+    console.error(`${err.message}; stopping it`);
+    fail(w, err);
+    w.thread.terminate();
+  }, ms);
+  w.timer.unref();
 }
 
 // The moves of the best turn for `color` in `gs` (as computeBestTurnSequence),
@@ -45,6 +75,7 @@ export function searchOffThread(gs, color) {
     w.thread.postMessage({ id, gs, color });
     w.pending.set(id, { resolve, reject });
     w.thread.ref();
+    if (w.pending.size === 1) watchHead(w);
   });
 }
 
@@ -53,4 +84,11 @@ export async function stopSearchWorker() {
   const w = worker;
   worker = null;
   if (w) await w.thread.terminate();
+}
+
+// Replaces the worker script and the answer timeout (tests); no arguments
+// restores the defaults. The script applies to the next worker started, the
+// timeout to the next search timed.
+export function configureSearchWorker({ workerUrl = WORKER_URL, answerTimeoutMs = null } = {}) {
+  options = { workerUrl, answerTimeoutMs };
 }
