@@ -17,11 +17,14 @@ import {
   winPoints,
 } from "./engine.js";
 import { winRank } from "./scoring.js";
+import { searchOffThread } from "./expectimaxThread.js";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const MAX_OWN_CANDIDATES = 20;   // top-N pruning on our turn sequences
-const SEARCH_TIMEOUT_MS  = 5000;
+// Time budget for one search (#106). Positions measured locally take at most
+// about 160 ms, so this only cuts pathological positions or a slow CPU short.
+export const SEARCH_TIMEOUT_MS = 500;
 
 // Value of a finished game per win point (#68). Far outside the heuristic
 // range of evaluate() (a few hundred either way), so any win beats any
@@ -43,30 +46,24 @@ for (let d1 = 1; d1 <= 6; d1++) {
 // ── Turn plan cache ─────────────────────────────────────────────────────────
 
 const turnPlanCache = new Map(); // roomId → { startMoveSeq, moves, nextIdx }
+// roomId → token of the off-thread search in progress for that room. Clearing
+// the room's cache drops it, so a search that was running when the game ended
+// does not cache its plan into the next game.
+const searchesInFlight = new Map();
 
 export function clearExpectimaxCache(roomId) {
   turnPlanCache.delete(roomId);
+  searchesInFlight.delete(roomId);
 }
 
-// ── Public entry point (called by ai.js pickMove) ───────────────────────────
+// ── Public entry points (getNextExpectimaxMoveOffThread is called by ai.js) ──
 
+// Searches on the calling thread. Used by tests and benchmarks; the game
+// server uses getNextExpectimaxMoveOffThread so the search cannot block it.
 export function getNextExpectimaxMove(gs, color, legalMoves, roomId) {
-  // Check cache for an existing plan
-  const cached = turnPlanCache.get(roomId);
-  if (cached) {
-    const expectedSeq = cached.startMoveSeq + cached.nextIdx;
-    if (gs.moveSeq === expectedSeq && cached.nextIdx < cached.moves.length) {
-      const move = cached.moves[cached.nextIdx];
-      cached.nextIdx++;
-      // Clean up if plan fully consumed
-      if (cached.nextIdx >= cached.moves.length) turnPlanCache.delete(roomId);
-      return move;
-    }
-    // Stale cache — discard
-    turnPlanCache.delete(roomId);
-  }
+  const planned = takePlannedMove(gs, roomId);
+  if (planned !== undefined) return planned;
 
-  // Compute the best full-turn sequence
   let bestMoves;
   try {
     bestMoves = computeBestTurnSequence(gs, color);
@@ -74,13 +71,57 @@ export function getNextExpectimaxMove(gs, color, legalMoves, roomId) {
     console.error("Grandmaster search error:", err.message);
     bestMoves = null;
   }
+  return startPlan(gs, legalMoves, roomId, bestMoves);
+}
 
+// Same as getNextExpectimaxMove, but the search runs in a worker thread
+// (#106), so the event loop keeps serving every other room meanwhile.
+export async function getNextExpectimaxMoveOffThread(gs, color, legalMoves, roomId) {
+  const planned = takePlannedMove(gs, roomId);
+  if (planned !== undefined) return planned;
+
+  const token = {};
+  searchesInFlight.set(roomId, token);
+  let bestMoves;
+  try {
+    bestMoves = await searchOffThread(gs, color);
+  } catch (err) {
+    console.error("Grandmaster search error:", err.message);
+    bestMoves = null;
+  }
+  const current = searchesInFlight.get(roomId) === token;
+  if (current) searchesInFlight.delete(roomId);
+  // The room's cache was cleared while searching: answer, but plan nothing.
+  if (!current) return bestMoves?.[0] ?? legalMoves[0] ?? null;
+  return startPlan(gs, legalMoves, roomId, bestMoves);
+}
+
+// The next move of the room's cached plan if the plan continues at
+// gs.moveSeq; otherwise undefined, and a stale plan is discarded.
+function takePlannedMove(gs, roomId) {
+  const cached = turnPlanCache.get(roomId);
+  if (!cached) return undefined;
+  const expectedSeq = cached.startMoveSeq + cached.nextIdx;
+  if (gs.moveSeq === expectedSeq && cached.nextIdx < cached.moves.length) {
+    const move = cached.moves[cached.nextIdx];
+    cached.nextIdx++;
+    // Clean up if plan fully consumed
+    if (cached.nextIdx >= cached.moves.length) turnPlanCache.delete(roomId);
+    return move;
+  }
+  // Stale cache — discard
+  turnPlanCache.delete(roomId);
+  return undefined;
+}
+
+// Caches the searched turn `bestMoves` and returns its first move, or the
+// first legal move if the search found nothing.
+function startPlan(gs, legalMoves, roomId, bestMoves) {
   if (!bestMoves || bestMoves.length === 0) {
     // Fallback: pick first legal move
     return legalMoves[0] ?? null;
   }
 
-  // Cache the plan and return the first move
   turnPlanCache.set(roomId, {
     startMoveSeq: gs.moveSeq,
     moves: bestMoves,
@@ -366,8 +407,12 @@ const JAN_VALUE = WIN_VALUE * winPoints("jan") + winRank("jan");
 // Uses legalTurnSequences() from the engine for correct, cheap enumeration.
 // The engine already applies all turn-level filters (maximal use, higher-die,
 // min-reduction) — we just need to evaluate the finalGs of each sequence.
+// Returns the moves of the best turn, or null if there is no legal turn.
+// The search stops after `timeoutMs` (#106) and returns the best of the
+// candidates it finished; candidates are tried in 1-ply order, so the 1-ply
+// best is returned if not even the first one finished.
 
-function computeBestTurnSequence(gs, color) {
+export function computeBestTurnSequence(gs, color, timeoutMs = SEARCH_TIMEOUT_MS) {
   const startTime = Date.now();
 
   // Enumerate our legal turn sequences
@@ -399,8 +444,8 @@ function computeBestTurnSequence(gs, color) {
 
   const candidates = mySequences.slice(0, MAX_OWN_CANDIDATES);
 
-  // If time is already tight or only a few candidates, return 1-ply best
-  if (Date.now() - startTime > SEARCH_TIMEOUT_MS * 0.8) {
+  // If time is already tight, return 1-ply best
+  if (Date.now() - startTime > timeoutMs * 0.8) {
     return candidates[0].moves;
   }
 
@@ -412,12 +457,14 @@ function computeBestTurnSequence(gs, color) {
   // dice outcomes: different candidates often lead to the same positions.
   const evalCache = new Map();
 
+  search:
   for (const cand of candidates) {
-    if (Date.now() - startTime > SEARCH_TIMEOUT_MS) break;
-
     let expectedValue = 0;
 
+    // The clock is checked per roll, as one candidate can take most of the
+    // budget. A candidate cut short is not compared: its sum is incomplete.
     for (const { dice, prob } of DICE_OUTCOMES) {
+      if (Date.now() - startTime > timeoutMs) break search;
       expectedValue += prob * opponentReplyValue(cand.finalGs, color, dice, evalCache);
     }
 
