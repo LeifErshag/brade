@@ -58,7 +58,6 @@ async function forfeitIfStillDisconnected(roomId, userId, key, token) {
   if (JSON.parse(raw).status !== "playing") return;
   // Force a resign for the disconnected player
   await handleRoomMessage({ msg: { type: "RESIGN", forfeit: true }, userId, roomId, ws: null });
-  log.info("Player forfeited after disconnect", { roomId, userId });
 }
 
 export function cancelDisconnectForfeit(roomId, color) {
@@ -333,9 +332,11 @@ async function handleRoomMessage({ msg, userId, roomId, ws }) {
       if (room.status !== "playing") break;
       if (!color) break;
       const winner = opp(color);
-      // A disconnect forfeit (ws null) is logged by forfeitIfStillDisconnected.
-      // Not msg.forfeit: a client could send that flag itself.
+      // Logged here, once the resign is sure to happen. Only the server's
+      // disconnect forfeit has no ws; not msg.forfeit, which a client could
+      // send itself.
       if (ws) log.info("Player resigned", { roomId, userId, color });
+      else log.info("Player forfeited after disconnect", { roomId, userId, color });
       // Resign ends the whole match immediately.
       const result = { winner, winType: "resign", points: 1, monk: false };
       await handleGameOver(redis, roomId, room, result, true /* forceMatchOver */);

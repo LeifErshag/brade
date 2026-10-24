@@ -60,7 +60,9 @@ describe("errorHandler over HTTP", () => {
     const res = await fetch(`${base}/boom`);
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: "Internal server error" });
-    expect(logger.error).toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith("Request failed", expect.objectContaining({
+      method: "GET", path: "/boom", err: expect.any(Error),
+    }));
   });
 
   test("a non-exposed 4xx keeps its status but hides the message", async () => {
@@ -94,7 +96,7 @@ describe("errorHandler unit", () => {
     expect(next).toHaveBeenCalledWith(err);
     expect(res.status).not.toHaveBeenCalled();
     expect(res.json).not.toHaveBeenCalled();
-    expect(logger.error).toHaveBeenCalledWith(err, { method: "GET", path: "/api/games", userId: "u1" });
+    expect(logger.error).toHaveBeenCalledWith("Request failed", { method: "GET", path: "/api/games", userId: "u1", err });
   });
 
   test("a 5xx status on the error is not passed through", () => {
