@@ -8,7 +8,9 @@
 //
 // Usage (from server/):
 //   node scripts/bench-grandmaster.js [games] [seed] [mode]
-// Defaults: 40 games, seed 1, mode "random". The same arguments give the
+// Defaults: 40 games, seed 1, mode "random". games must be a positive
+// integer and seed an integer from 0 to 2^32 - 1 (the PRNG keeps 32 bits of
+// state, so a wider seed would wrap around). The same arguments give the
 // same positions. Mode "random" plays a uniformly random legal turn for both
 // sides (many hits, bar and jan positions); mode "grandmaster" lets
 // Grandmaster play both sides (positions closer to real AI games: more
@@ -26,8 +28,8 @@ if (!Number.isInteger(GAMES) || GAMES < 1) {
   console.error(`Invalid games "${process.argv[2]}" (use a positive integer)`);
   process.exit(1);
 }
-if (!Number.isInteger(SEED)) {
-  console.error(`Invalid seed "${process.argv[3]}" (use an integer)`);
+if (!Number.isInteger(SEED) || SEED < 0 || SEED > 0xFFFFFFFF) {
+  console.error(`Invalid seed "${process.argv[3]}" (use an integer from 0 to 4294967295)`);
   process.exit(1);
 }
 if (MODE !== "random" && MODE !== "grandmaster") {
