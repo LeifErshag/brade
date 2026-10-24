@@ -11,10 +11,10 @@
 // Defaults: 40 games, seed 1, mode "random". games must be a positive
 // decimal integer and seed a decimal integer from 0 to 2^32 - 1 (the PRNG
 // keeps 32 bits of state, so a wider seed would wrap around). The same
-// arguments give the same positions. Mode "random" plays a uniformly random legal turn for both
-// sides (many hits, bar and jan positions); mode "grandmaster" lets
-// Grandmaster play both sides (positions closer to real AI games: more
-// bands and primes).
+// arguments give the same positions. Mode "random" plays a uniformly
+// random legal turn for both sides (many hits, bar and jan positions); mode
+// "grandmaster" lets Grandmaster play both sides (positions closer to real
+// AI games: more bands and primes).
 
 import { performance } from "node:perf_hooks";
 import os from "node:os";
