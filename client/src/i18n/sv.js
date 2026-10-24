@@ -66,7 +66,7 @@ export default {
     uppspel_munk:          "Uppspel med munk",
     jan:                   "Jan",
     sprangjan:             "Sprängjan",
-    resign:                "Uppgivet",
+    resign:                "Gav upp",
   },
 
   // Serverns exakta engelska texter, översatta för visning.
