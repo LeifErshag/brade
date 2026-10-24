@@ -1,4 +1,5 @@
 import js from "@eslint/js";
+import globals from "globals";
 
 export default [
   js.configs.recommended,
@@ -6,13 +7,7 @@ export default [
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "module",
-      globals: {
-        process:      "readonly",
-        console:      "readonly",
-        setTimeout:   "readonly",
-        clearTimeout: "readonly",
-        URL:          "readonly",
-      },
+      globals: globals.nodeBuiltin,
     },
     rules: {
       "no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
@@ -31,7 +26,6 @@ export default [
         beforeAll:  "readonly",
         afterAll:   "readonly",
         jest:       "readonly",
-        fetch:      "readonly",
       },
     },
   },
