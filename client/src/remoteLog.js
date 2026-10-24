@@ -10,12 +10,14 @@
 // Sending must never get in the way of the game: it is fire-and-forget,
 // failures are ignored, and at most MAX_SENDS_PER_MINUTE lines are sent (the
 // same message at most once per DEDUPE_MS), so a reconnect loop cannot flood
-// the server.
+// the server. The last ERROR_RESERVE of those are kept for errors, so a burst
+// of warnings cannot crowd out a crash that follows it.
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
 const BUFFER_SIZE          = 50;
 const MAX_SENDS_PER_MINUTE = 10;
+const ERROR_RESERVE        = 3;
 const DEDUPE_MS            = 30_000;
 const MAX_MSG              = 500;
 const MAX_CONTEXT_KEYS     = 20;
@@ -98,10 +100,11 @@ function token() {
 
 // key: the message plus the close code, if any, so a series of different
 // closes is not collapsed into the first.
-function mayBeSent(key) {
+function mayBeSent(level, key) {
   const now = Date.now();
   while (sentAt.length && now - sentAt[0] >= 60_000) sentAt.shift();
-  if (sentAt.length >= MAX_SENDS_PER_MINUTE) return false;
+  const budget = level === "error" ? MAX_SENDS_PER_MINUTE : MAX_SENDS_PER_MINUTE - ERROR_RESERVE;
+  if (sentAt.length >= budget) return false;
   if (now - (lastSent.get(key) ?? -Infinity) < DEDUPE_MS) return false;
   sentAt.push(now);
   lastSent.set(key, now);
@@ -110,7 +113,7 @@ function mayBeSent(key) {
 }
 
 function send(level, msg, ctx) {
-  if (!mayBeSent(`${msg}|${ctx?.code ?? ""}`)) return;
+  if (!mayBeSent(level, `${msg}|${ctx?.code ?? ""}`)) return;
   const body = { level, msg: msg.slice(0, MAX_MSG) || "(empty)" };
   const { roomId } = roomContext();
   if (ROOM_ID.test(roomId ?? "")) body.roomId = roomId;
@@ -166,10 +169,24 @@ export function stackOf(err) {
   try { return typeof err?.stack === "string" ? err.stack : undefined; } catch { return undefined; }
 }
 
+// In development builds React also hands an error that an error boundary
+// catches to window's "error" handlers, so the same crash would be reported
+// both as uncaught and by the boundary. Each error object is reported once,
+// by whichever sees it first.
+const reported = new WeakSet();
+
+export function firstReport(err) {
+  if (err === null || (typeof err !== "object" && typeof err !== "function")) return true;
+  if (reported.has(err)) return false;
+  reported.add(err);
+  return true;
+}
+
 // Uncaught errors and unhandled rejections. The browser already prints them,
 // so they are only recorded and sent.
 export function installGlobalErrorHandlers() {
   window.addEventListener("error", (e) => {
+    if (!firstReport(e.error)) return;
     clientLog.error(`Uncaught error: ${describeError(e)}`, {
       file: e.filename, line: e.lineno, col: e.colno, stack: stackOf(e.error),
     }, { echo: false });

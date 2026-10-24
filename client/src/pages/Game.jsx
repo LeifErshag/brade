@@ -199,6 +199,15 @@ export default function Game() {
     clearTimeout(junkerTimer.current);
   }, []);
 
+  // Tag client log lines sent to the server with this room and token. Not
+  // cleared on unmount: a report from the crash screen still needs them, and
+  // remoteLog only uses them while the address is this room's page. Declared
+  // before useSocket so that it runs first and lines from the very first
+  // connect attempt are tagged too.
+  useEffect(() => {
+    setLogContext({ roomId, token: wsToken ?? null });
+  }, [roomId, wsToken]);
+
   const { send } = useSocket({
     roomId: (wsToken && !loading) ? roomId : null,
     token:  wsToken,
@@ -255,13 +264,6 @@ export default function Game() {
       onOpenRules={openRulesAt}
     />
   );
-
-  // Tag client log lines sent to the server with this room and token. Not
-  // cleared on unmount: a report from the crash screen still needs them, and
-  // remoteLog only uses them while the address is this room's page.
-  useEffect(() => {
-    setLogContext({ roomId, token: wsToken ?? null });
-  }, [roomId, wsToken]);
 
   // ── Debug console hooks: window.__brade ─────────────────────────────────────
   // state()  → client's view of the current room (turn/phase/canRoll/wsStatus)

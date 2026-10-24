@@ -95,6 +95,13 @@ describe("POST /api/client-log", () => {
     expect(out.warn).toHaveBeenCalledTimes(30);
   });
 
+  test("invalid bodies count toward the rate limit", async () => {
+    const ip = "10.9.9.10";
+    for (let i = 0; i < 30; i++) expect((await post({ level: "debug", msg: "x" }, undefined, ip)).status).toBe(400);
+    expect((await post({ level: "warn", msg: "valid" }, undefined, ip)).status).toBe(429);
+    expect(out.warn).not.toHaveBeenCalled();
+  });
+
   test("token-looking text and unsafe context keys do not reach the log", async () => {
     await post({
       level: "error", msg: "WebSocket failed: wss://h/ws?room=R&token=abc.def.ghi",
@@ -111,6 +118,7 @@ describe("POST /api/client-log", () => {
     ["a message over 500 chars",   { level: "warn", msg: "x".repeat(501) }],
     ["a malformed room id",        { level: "warn", msg: "x", roomId: "abc" }],
     ["a nested context value",     { level: "warn", msg: "x", context: { a: { b: 1 } } }],
+    ["a context string over 1000", { level: "warn", msg: "x", context: { s: "x".repeat(1001) } }],
     ["more than 20 context keys",  { level: "warn", msg: "x", context: Object.fromEntries([...Array(21)].map((_, i) => [`k${i}`, i])) }],
     ["an unknown field",           { level: "warn", msg: "x", extra: 1 }],
   ])("rejects %s with 400 and logs nothing", async (_name, body) => {
