@@ -6,7 +6,7 @@
 // so they count as AVAILABLE, exactly as in the engine's checkJan. See #35.
 
 import * as expectimax from "./expectimax.js";
-import { pathToIdx, checkWin, legalTurnSequences, getLegalMoves } from "./engine.js";
+import { pathToIdx, checkWin, legalTurnSequences } from "./engine.js";
 
 const { janThreat } = expectimax;
 
@@ -192,20 +192,16 @@ describe("opponent reply search (#62)", () => {
     });
   });
 
-  test("performance: a wide-open doubles position is searched well within budget", () => {
+  test("performance: a wide-open doubles position is searched in full quickly", () => {
     // Many blots and short stacks on both sides, white rolls 2-2: one of the
-    // heaviest positions found (about 170-220 ms measured after #75).
+    // heaviest positions found (about 170-220 ms measured after #75). Searched
+    // without the time budget (#106), so a slower search is not hidden by it.
     const board = [2, 2, -2, -2, 0, -2, -2, 0, 1, 2, 0, 1, 0, -2, -2, 1, 1, 2, 1, -2, 0, 0, 2, -1];
     const gs = { ...emptyGs("white"), board, dice: [2, 2, 2, 2] };
-    const legal = getLegalMoves(gs, "white");
-    expectimax.clearExpectimaxCache("perf-62");
     const t0 = Date.now();
-    const move = expectimax.getNextExpectimaxMove(gs, "white", legal, "perf-62");
+    const moves = expectimax.computeBestTurnSequence(gs, "white", Infinity);
     const elapsed = Date.now() - t0;
-    expectimax.clearExpectimaxCache("perf-62");
-    expect(legal).toContainEqual(move);
-    // Must finish clearly below the 5 s search timeout (so the search is not
-    // being cut short by it).
+    expect(legalTurnSequences(gs, "white").map(s => s.moves)).toContainEqual(moves);
     expect(elapsed).toBeLessThan(2500);
   });
 });

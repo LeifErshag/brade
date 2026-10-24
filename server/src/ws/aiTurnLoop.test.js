@@ -69,6 +69,14 @@ jest.unstable_mockModule("./server.js", () => ({
   broadcastState:  () => {},
 }));
 
+// The search worker answers in real time, which the fake timers here do not
+// wait for (#106); search on this thread instead.
+jest.unstable_mockModule("../game/expectimaxThread.js", () => ({
+  searchOffThread: async (gs, color) =>
+    (await import("../game/expectimax.js")).computeBestTurnSequence(gs, color),
+  stopSearchWorker: async () => {},
+}));
+
 const { triggerAiTurn } = await import("./handlers.js");
 const { initGame } = await import("../game/engine.js");
 const { AI_USER_ID } = await import("../game/ai.js");

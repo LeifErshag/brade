@@ -1,9 +1,10 @@
 // ── AI opponent move selection ─────────────────────────────────────────────────
 // The only AI opponent is Grandmaster, the expectimax search in expectimax.js
-// (#103). The tutorial alone plays random legal moves, so the learner usually
-// wins and gets to see the bearing-off and scoring explanations.
+// (#103), which runs in a worker thread (#106). The tutorial alone plays
+// random legal moves, so the learner usually wins and gets to see the
+// bearing-off and scoring explanations.
 
-import { getNextExpectimaxMove } from "./expectimax.js";
+import { getNextExpectimaxMoveOffThread } from "./expectimax.js";
 
 export const AI_USER_ID = "00000000-0000-0000-0000-000000000001";
 export const AI_DISPLAY  = { display_name: "Computer", avatar_url: null };
@@ -14,7 +15,7 @@ export const AI_DISPLAY  = { display_name: "Computer", avatar_url: null };
 export async function pickMove(gs, color, legalMoves, roomId, { random = false } = {}) {
   if (legalMoves.length === 0) return null;
   if (random) return pickMoveRandom(legalMoves);
-  return getNextExpectimaxMove(gs, color, legalMoves, roomId);
+  return getNextExpectimaxMoveOffThread(gs, color, legalMoves, roomId);
 }
 
 // ── Tutorial: random ──────────────────────────────────────────────────────────

@@ -413,8 +413,9 @@ export async function triggerAiTurn(roomId) {
 
 // The AI turn is split into short locked sections (the roll, then one section
 // per move) so the "thinking" delays and the move choice run without holding
-// the room's lock. Choosing a move can be slow (Grandmaster searches the
-// position), so it works on a snapshot taken by the previous section.
+// the room's lock. Choosing a move can take a while (Grandmaster searches the
+// position in a worker thread, so other rooms keep being served meanwhile;
+// #106), so it works on a snapshot taken by the previous section.
 // The section that applies the move re-reads the room and applies it only if
 // the position is unchanged (same game, turn, phase, dice and move sequence),
 // because other writers (e.g. a human RESIGN or a reconnect) may have run in

@@ -9,6 +9,9 @@
 import { jest } from "@jest/globals";
 import { getLegalMoves, pathToIdx } from "./engine.js";
 import { pickMove } from "./ai.js";
+import { stopSearchWorker } from "./expectimaxThread.js";
+
+afterAll(() => stopSearchWorker());
 
 // ── Fixture helpers ──────────────────────────────────────────────────────────
 
@@ -85,11 +88,7 @@ test("Grandmaster handles doubles without throwing", async () => {
   const legal = getLegalMoves(gs, "white");
   expect(legal.length).toBeGreaterThan(0);
 
-  let move;
-  await expect(async () => {
-    move = await pickMove(gs, "white", legal, "room7");
-  }).not.toThrow();
-
+  const move = await pickMove(gs, "white", legal, "room7");
   expect(legal).toContainEqual(move);
 });
 

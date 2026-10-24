@@ -1,10 +1,10 @@
 // Benchmark for Grandmaster's synchronous search (#106).
 //
-// Generates positions by seeded self-play from initGame(), then times
-// getNextExpectimaxMove on each one with a fresh roomId, so the cached turn
-// plan is never reused and every call runs the full search. The search runs
-// on the main thread, so these timings are how long one AI turn blocks the
-// Node event loop.
+// Generates positions by seeded self-play from initGame(), then times one
+// full search (computeBestTurnSequence) on each, without the time budget, so
+// a slow position is measured rather than cut short. The game server runs
+// this search in a worker thread with a 500 ms budget; here it runs on the
+// main thread, so these timings are how long a search blocks a thread.
 //
 // Usage (from server/):
 //   node scripts/bench-grandmaster.js [games] [seed] [mode]
@@ -17,7 +17,7 @@
 import { performance } from "node:perf_hooks";
 import os from "node:os";
 import { initGame, legalTurnSequences, getLegalMoves, applyMove, checkWin, checkJanOnPass } from "../src/game/engine.js";
-import { getNextExpectimaxMove, clearExpectimaxCache } from "../src/game/expectimax.js";
+import { getNextExpectimaxMove, clearExpectimaxCache, computeBestTurnSequence } from "../src/game/expectimax.js";
 
 const GAMES = Number(process.argv[2] ?? 40);
 const SEED  = Number(process.argv[3] ?? 1);
@@ -100,17 +100,11 @@ function generatePositions() {
 
 // ── Timing ──────────────────────────────────────────────────────────────────
 
-let roomCounter = 0;
 function timeSearch(p) {
   const gs = { ...p.gs, board: p.gs.board.slice(), bar: { ...p.gs.bar }, off: { ...p.gs.off }, dice: p.gs.dice.slice() };
-  const legalMoves = getLegalMoves(gs, p.color);
-  const roomId = "BENCH" + (roomCounter++);
   const t0 = performance.now();
-  getNextExpectimaxMove(gs, p.color, legalMoves, roomId);
-  const ms = performance.now() - t0;
-  // Drop the cached turn plan so the cache does not grow across calls.
-  clearExpectimaxCache(roomId);
-  return ms;
+  computeBestTurnSequence(gs, p.color, Infinity);
+  return performance.now() - t0;
 }
 
 function percentile(sorted, q) {
