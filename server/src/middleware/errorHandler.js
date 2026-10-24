@@ -1,10 +1,12 @@
+import { log } from "../log.js";
+
 // Final Express error middleware.
 //
 // Client errors that carry a 4xx `status` (e.g. body-parser's 400 for
 // malformed JSON or 413 for a body over the size limit) are passed through
 // with that status. Everything else becomes a generic 500. Stack traces and
 // internal messages are never sent to the client.
-export function errorHandler(logger = console) {
+export function errorHandler(logger = log) {
   return (err, req, res, next) => {
     const status = err?.status ?? err?.statusCode;
     const isClientError = Number.isInteger(status) && status >= 400 && status < 500;

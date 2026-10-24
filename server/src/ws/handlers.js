@@ -333,7 +333,9 @@ async function handleRoomMessage({ msg, userId, roomId, ws }) {
       if (room.status !== "playing") break;
       if (!color) break;
       const winner = opp(color);
-      if (!msg.forfeit) log.info("Player resigned", { roomId, userId, color });
+      // A disconnect forfeit (ws null) is logged by forfeitIfStillDisconnected.
+      // Not msg.forfeit: a client could send that flag itself.
+      if (ws) log.info("Player resigned", { roomId, userId, color });
       // Resign ends the whole match immediately.
       const result = { winner, winType: "resign", points: 1, monk: false };
       await handleGameOver(redis, roomId, room, result, true /* forceMatchOver */);

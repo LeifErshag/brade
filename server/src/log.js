@@ -59,7 +59,7 @@ function scrub(value, depth = 0) {
 function describe(value) {
   if (typeof value === "string") return value;
   if (isPlainObject(value) || Array.isArray(value)) {
-    try { return JSON.stringify(value); } catch { /* circular: fall through */ }
+    try { return JSON.stringify(scrub(value)); } catch { /* circular: fall through */ }
   }
   return String(value);
 }

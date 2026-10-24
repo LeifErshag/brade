@@ -51,6 +51,11 @@ describe("buildEntry", () => {
     expect(Object.keys(e).sort()).toEqual(["err", "level", "msg", "t"]);
   });
 
+  test("an err field that is a plain object has unsafe keys dropped", () => {
+    const e = buildEntry("error", "m", { err: { token: "abc", code: 1 } });
+    expect(e.err).toEqual({ message: '{"code":1}' });
+  });
+
   test("drops unsafe keys inside nested objects and arrays", () => {
     const e = buildEntry("info", "m", { ctx: { url: "/x", token: "t", deep: [{ email: "a@b.c", ok: 1 }] } });
     expect(e.ctx).toEqual({ url: "/x", deep: [{ ok: 1 }] });

@@ -50,7 +50,7 @@ export async function handleConnection(ws, req) {
   const roomId = url.searchParams.get("room");
 
   if (!token || !roomId) {
-    log.warn("WS rejected: missing token or room", { roomId: roomId ?? undefined });
+    log.warn("WS rejected: missing token or room", { roomId: roomId?.slice(0, 16) });
     ws.close(4001, "Missing token or room"); return;
   }
 
@@ -65,7 +65,7 @@ export async function handleConnection(ws, req) {
   } catch (err) {
     // Expired tokens are normal (the client refreshes and reconnects), so
     // only the reason is logged, not a stack.
-    log.warn("WS rejected: invalid token", { roomId, reason: err?.name });
+    log.warn("WS rejected: invalid token", { roomId: roomId.slice(0, 16), reason: err?.name });
     ws.close(4001, "Invalid token"); return;
   }
 
