@@ -18,8 +18,9 @@
 //
 // Never pass secrets or personal data. As a safety net, fields named like
 // tokens, cookies, passwords, secrets or emails are dropped (also inside
-// nested objects), and token-looking text in strings (`token=…`, `Bearer …`,
-// JWTs) is masked.
+// nested objects), token-looking text in strings (`token=…`, `Bearer …`,
+// JWTs) is masked, and the row values that pg quotes in an error's detail
+// are left out.
 
 const LEVELS = ["info", "warn", "error"];
 const UNSAFE_KEY = /token|cookie|password|secret|authorization|email/i;
@@ -46,15 +47,24 @@ function isPlainObject(v) {
   return v !== null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype;
 }
 
-// Masks token-looking text and drops unsafe keys, recursing into plain
-// objects and arrays (other objects are left to JSON.stringify).
+// Masks token-looking text and drops unsafe keys, recursing into objects and
+// arrays. Anything else that JSON.stringify would print is turned into plain
+// data first (toJSON's result, a Map's entries, a Set's values, an Error's
+// serialised form, a class instance's own fields), so it is checked too.
 function scrub(value, depth = 0) {
   if (typeof value === "string") return redact(value);
   if (value === null || typeof value !== "object") return value;
   // Too deep to check for unsafe keys: leave it out.
   if (depth >= MAX_DEPTH) return "[too deep]";
   if (Array.isArray(value)) return value.map(v => scrub(v, depth + 1));
-  if (!isPlainObject(value)) return value;
+  if (value instanceof Error) return serializeError(value);
+  if (typeof value.toJSON === "function") {
+    let json;
+    try { json = value.toJSON(); } catch { return "[unprintable]"; }
+    return scrub(json, depth + 1);
+  }
+  if (value instanceof Map) return scrub(Object.fromEntries(value), depth + 1);
+  if (value instanceof Set) return scrub([...value], depth + 1);
   const out = {};
   for (const [key, v] of Object.entries(value)) {
     if (v !== undefined && !UNSAFE_KEY.test(key)) out[key] = scrub(v, depth + 1);
@@ -71,12 +81,29 @@ function describe(value) {
   return safeString(value);
 }
 
-function serializeError(err) {
+// pg's detail quotes row values ("Key (room_id)=(…) already exists.",
+// "Failing row contains (…)."), which may be personal data: mask them.
+function maskDetail(detail) {
+  return redact(detail).replace(/=\(.*\)/g, "=(…)").replace(/contains \(.*\)/g, "contains (…)");
+}
+
+// How many causes deep err.cause is followed.
+const MAX_CAUSES = 3;
+
+function serializeError(err, causes = 0) {
   if (!(err instanceof Error)) return { message: redact(describe(err)) };
   const out = { message: redact(err.message) };
   if (typeof err.name === "string" && err.name !== "Error") out.name = err.name;
   if (typeof err.code === "string" || typeof err.code === "number") out.code = err.code;
+  // pg's DatabaseError fields: which constraint, table or column was involved.
+  if (typeof err.detail === "string") out.detail = maskDetail(err.detail);
+  for (const key of ["constraint", "table", "column"]) {
+    if (typeof err[key] === "string") out[key] = redact(err[key]);
+  }
   if (err.stack) out.stack = redact(err.stack);
+  if (err.cause !== undefined) {
+    out.cause = causes < MAX_CAUSES ? serializeError(err.cause, causes + 1) : "[too deep]";
+  }
   return out;
 }
 

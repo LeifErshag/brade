@@ -61,6 +61,77 @@ describe("buildEntry", () => {
     expect(e.ctx).toEqual({ url: "/x", deep: [{ ok: 1 }] });
   });
 
+  test("drops unsafe keys inside class instances, Maps and Sets", () => {
+    class Session { constructor() { this.userId = "u1"; this.accessToken = "tok-1"; } }
+    const e = buildEntry("info", "m", {
+      session: new Session(),
+      map: new Map([["roomId", "R"], ["cookie", "cookie-1"]]),
+      set: new Set([{ ok: 1, password: "pw-1" }]),
+    });
+    expect(e.session).toEqual({ userId: "u1" });
+    expect(e.map).toEqual({ roomId: "R" });
+    expect(e.set).toEqual([{ ok: 1 }]);
+    expect(JSON.stringify(e)).not.toMatch(/tok-1|cookie-1|pw-1/);
+  });
+
+  test("uses toJSON's result, scrubbed, for objects that have one", () => {
+    const at = new Date("2026-01-02T03:04:05.000Z");
+    const e = buildEntry("info", "m", {
+      at,
+      custom: { toJSON: () => ({ ok: 1, secret: "s" }) },
+      broken: { toJSON: () => { throw new Error("no"); } },
+    });
+    expect(e.at).toBe("2026-01-02T03:04:05.000Z");
+    expect(e.custom).toEqual({ ok: 1 });
+    expect(e.broken).toBe("[unprintable]");
+  });
+
+  test("an Error nested in a field is serialised, not printed as {}", () => {
+    const e = buildEntry("error", "m", { ctx: { last: new RangeError("bad") } });
+    expect(e.ctx.last).toMatchObject({ name: "RangeError", message: "bad" });
+  });
+
+  test("records err.cause, following a few levels", () => {
+    const root = new Error("ECONNRESET");
+    const err = new Error("query failed", { cause: new Error("socket closed", { cause: root }) });
+    const e = buildEntry("error", "m", { err });
+    expect(e.err.cause).toMatchObject({ message: "socket closed", cause: { message: "ECONNRESET" } });
+
+    const reason = new Error("outer", { cause: "plain reason" });
+    expect(buildEntry("error", "m", { err: reason }).err.cause).toEqual({ message: "plain reason" });
+
+    // A cause cycle stops at the limit.
+    const a = new Error("a");
+    a.cause = a;
+    const json = JSON.stringify(buildEntry("error", "m", { err: a }));
+    expect(json).toContain('"cause":"[too deep]"');
+  });
+
+  test("records pg's detail without the row values it quotes, and its constraint and table", () => {
+    const unique = Object.assign(new Error('duplicate key value violates unique constraint "users_provider_key"'), {
+      code: "23505",
+      detail: "Key (provider, provider_id)=(google, 123456789) already exists.",
+      constraint: "users_provider_key",
+      table: "users",
+    });
+    const e = buildEntry("error", "m", { err: unique });
+    expect(e.err).toMatchObject({
+      code: "23505",
+      detail: "Key (provider, provider_id)=(…) already exists.",
+      constraint: "users_provider_key",
+      table: "users",
+    });
+
+    const notNull = Object.assign(new Error("null value in column"), {
+      detail: "Failing row contains (id-1, Anna Svensson, null).",
+      column: "avatar_url",
+    });
+    const e2 = buildEntry("error", "m", { err: notNull });
+    expect(e2.err.detail).toBe("Failing row contains (…).");
+    expect(e2.err.column).toBe("avatar_url");
+    expect(JSON.stringify(e2)).not.toContain("Anna");
+  });
+
   test("masks token-looking text in the message, fields and errors", () => {
     const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1MSJ9.c2lnbmF0dXJl";
     const err = new Error(`failed to connect to wss://x/ws?room=R&token=${jwt}`);
