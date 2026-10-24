@@ -15,7 +15,7 @@ describe("installProcessErrorHandlers", () => {
     const { proc, logger } = setup();
     const reason = new Error("redis down");
     proc.emit("unhandledRejection", reason, Promise.resolve());
-    expect(logger.error).toHaveBeenCalledWith("Unhandled promise rejection:", reason);
+    expect(logger.error).toHaveBeenCalledWith("Unhandled promise rejection", { err: reason });
     expect(proc.exit).not.toHaveBeenCalled();
   });
 
@@ -23,7 +23,7 @@ describe("installProcessErrorHandlers", () => {
     const { proc, logger } = setup();
     const err = new Error("boom");
     proc.emit("uncaughtException", err, "uncaughtException");
-    expect(logger.error).toHaveBeenCalledWith("Uncaught exception (uncaughtException):", err);
+    expect(logger.error).toHaveBeenCalledWith("Uncaught exception", { origin: "uncaughtException", err });
     expect(proc.exit).toHaveBeenCalledWith(1);
   });
 });

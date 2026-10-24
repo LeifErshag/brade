@@ -70,7 +70,8 @@ export async function handleConnection(ws, req) {
   }
 
   if (!/^[A-Z0-9]{8}$/.test(roomId)) {
-    log.warn("WS rejected: invalid room", { userId });
+    // Truncated: the value is whatever the client sent.
+    log.warn("WS rejected: invalid room", { userId, roomId: roomId.slice(0, 16) });
     ws.close(4002, "Invalid room"); return;
   }
 

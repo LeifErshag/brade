@@ -5,12 +5,15 @@
 //
 // An uncaught exception leaves the process in an unknown state, so it is
 // logged and the process exits with a failure code; the host restarts it.
-export function installProcessErrorHandlers(proc = process, logger = console) {
+import { log } from "./log.js";
+
+export function installProcessErrorHandlers(proc = process, logger = log) {
   proc.on("unhandledRejection", (reason) => {
-    logger.error("Unhandled promise rejection:", reason);
+    // { err }: the reason may be any value, or undefined.
+    logger.error("Unhandled promise rejection", { err: reason });
   });
   proc.on("uncaughtException", (err, origin) => {
-    logger.error(`Uncaught exception (${origin}):`, err);
+    logger.error("Uncaught exception", { origin, err });
     proc.exit(1);
   });
 }

@@ -57,8 +57,8 @@ async function forfeitIfStillDisconnected(roomId, userId, key, token) {
   if (!raw) return;
   if (JSON.parse(raw).status !== "playing") return;
   // Force a resign for the disconnected player
-  log.info("Player forfeited after disconnect", { roomId, userId });
   await handleRoomMessage({ msg: { type: "RESIGN", forfeit: true }, userId, roomId, ws: null });
+  log.info("Player forfeited after disconnect", { roomId, userId });
 }
 
 export function cancelDisconnectForfeit(roomId, color) {

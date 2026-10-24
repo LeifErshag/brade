@@ -9,23 +9,31 @@
 // Elsewhere it prints a readable line instead (LOG_FORMAT=json|pretty overrides).
 //
 // The second argument may also be an Error on its own (log.error("msg", err)),
-// so `log` can stand in wherever a console-like logger is injected.
+// so `log` can stand in wherever a console-like logger is injected. A value
+// that may not be an Error (a rejection reason) belongs in { err }, which
+// records whatever it is, including undefined.
 //
 // Output goes through console.log / console.error looked up at call time, so
 // tests that spy on console keep silencing it.
 //
-// Never pass secrets or personal data: fields named like tokens, cookies,
-// passwords, secrets or emails are dropped.
+// Never pass secrets or personal data. As a safety net, fields named like
+// tokens, cookies, passwords, secrets or emails are dropped (also inside
+// nested objects), and token-looking text in strings (`token=…`, `Bearer …`,
+// JWTs) is masked.
 
 const LEVELS = ["info", "warn", "error"];
 const UNSAFE_KEY = /token|cookie|password|secret|authorization|email/i;
 
-function serializeError(err) {
-  if (!(err instanceof Error)) return { message: String(err) };
-  const out = { message: err.message };
-  if (err.name && err.name !== "Error") out.name = err.name;
-  if (err.code !== undefined) out.code = err.code;
-  if (err.stack) out.stack = err.stack;
+const SECRET_TEXT = [
+  [/([?&]token=)[^&\s"']+/gi, "$1[redacted]"],
+  [/(Bearer\s+)[\w.~+/=-]+/gi, "$1[redacted]"],
+  [/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, "[jwt]"],
+];
+const MAX_DEPTH = 4;
+
+export function redact(text) {
+  let out = text;
+  for (const [pattern, replacement] of SECRET_TEXT) out = out.replace(pattern, replacement);
   return out;
 }
 
@@ -33,22 +41,56 @@ function isPlainObject(v) {
   return v !== null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype;
 }
 
+// Masks token-looking text and drops unsafe keys, recursing into plain
+// objects and arrays (other objects are left to JSON.stringify).
+function scrub(value, depth = 0) {
+  if (typeof value === "string") return redact(value);
+  if (depth >= MAX_DEPTH) return value;
+  if (Array.isArray(value)) return value.map(v => scrub(v, depth + 1));
+  if (!isPlainObject(value)) return value;
+  const out = {};
+  for (const [key, v] of Object.entries(value)) {
+    if (v !== undefined && !UNSAFE_KEY.test(key)) out[key] = scrub(v, depth + 1);
+  }
+  return out;
+}
+
+// Anything can be thrown or rejected with, so a non-Error is kept as text.
+function describe(value) {
+  if (typeof value === "string") return value;
+  if (isPlainObject(value) || Array.isArray(value)) {
+    try { return JSON.stringify(value); } catch { /* circular: fall through */ }
+  }
+  return String(value);
+}
+
+function serializeError(err) {
+  if (!(err instanceof Error)) return { message: redact(describe(err)) };
+  const out = { message: redact(err.message) };
+  if (err.name && err.name !== "Error") out.name = err.name;
+  if (err.code !== undefined) out.code = err.code;
+  if (err.stack) out.stack = redact(err.stack);
+  return out;
+}
+
 // Builds the entry for one call. Exported for tests.
 export function buildEntry(level, msg, fields) {
   const entry = { t: new Date().toISOString(), level };
   if (msg instanceof Error) {
-    entry.msg = msg.message;
+    entry.msg = redact(msg.message);
     entry.err = serializeError(msg);
   } else {
-    entry.msg = String(msg);
+    entry.msg = redact(String(msg));
   }
   if (fields instanceof Error || (fields !== undefined && !isPlainObject(fields))) {
     entry.err = serializeError(fields);
   } else if (fields) {
     for (const [key, value] of Object.entries(fields)) {
-      if (value === undefined || UNSAFE_KEY.test(key)) continue;
+      // err is kept even when undefined: a rejection without a reason
+      // should still say so.
       if (key === "err") entry.err = serializeError(value);
-      else if (!(key in entry)) entry[key] = value;
+      else if (value === undefined || UNSAFE_KEY.test(key)) continue;
+      else if (!(key in entry)) entry[key] = scrub(value);
     }
   }
   return entry;

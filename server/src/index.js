@@ -19,7 +19,7 @@ import { errorHandler } from "./middleware/errorHandler.js";
 import { runStartup } from "./startup.js";
 import { log } from "./log.js";
 
-installProcessErrorHandlers(process, log);
+installProcessErrorHandlers();
 
 const app = express();
 const httpServer = createServer(app);
@@ -67,4 +67,4 @@ async function start() {
   });
 }
 
-runStartup(start, process, log);
+runStartup(start);

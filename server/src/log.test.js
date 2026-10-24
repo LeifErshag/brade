@@ -40,6 +40,37 @@ describe("buildEntry", () => {
     expect(Object.keys(e).sort()).toEqual(["level", "msg", "t", "userId"]);
   });
 
+  test.each([
+    ["a plain object", { code: 42, detail: "x" }, '{"code":42,"detail":"x"}'],
+    ["undefined",      undefined,                 "undefined"],
+    ["null",           null,                      "null"],
+    ["a number",       7,                         "7"],
+  ])("an err field that is %s is recorded as text", (_name, reason, message) => {
+    const e = buildEntry("error", "Unhandled promise rejection", { err: reason });
+    expect(e.err).toEqual({ message });
+    expect(Object.keys(e).sort()).toEqual(["err", "level", "msg", "t"]);
+  });
+
+  test("drops unsafe keys inside nested objects and arrays", () => {
+    const e = buildEntry("info", "m", { ctx: { url: "/x", token: "t", deep: [{ email: "a@b.c", ok: 1 }] } });
+    expect(e.ctx).toEqual({ url: "/x", deep: [{ ok: 1 }] });
+  });
+
+  test("masks token-looking text in the message, fields and errors", () => {
+    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1MSJ9.c2lnbmF0dXJl";
+    const err = new Error(`failed to connect to wss://x/ws?room=R&token=${jwt}`);
+    const e = buildEntry("error", `GET /ws?token=abc&room=R`, {
+      header: "Bearer abc.def", nested: { note: `jwt ${jwt}` }, err,
+    });
+    const text = JSON.stringify(e);
+    expect(text).not.toContain(jwt);
+    expect(text).not.toContain("token=abc");
+    expect(text).not.toContain("Bearer abc");
+    expect(e.msg).toBe("GET /ws?token=[redacted]&room=R");
+    expect(e.err.message).toBe("failed to connect to wss://x/ws?room=R&token=[redacted]");
+    expect(e.nested.note).toBe("jwt [jwt]");
+  });
+
   test("fields cannot overwrite the core keys", () => {
     const e = buildEntry("info", "m", { level: "error", msg: "x", t: "y" });
     expect(e.level).toBe("info");
