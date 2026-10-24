@@ -82,9 +82,10 @@ function describe(value) {
 }
 
 // pg's detail quotes row values ("Key (room_id)=(…) already exists.",
-// "Failing row contains (…)."), which may be personal data: mask them.
+// "Failing row contains (…)."), which may be personal data: mask them,
+// including values that span lines.
 function maskDetail(detail) {
-  return redact(detail).replace(/=\(.*\)/g, "=(…)").replace(/contains \(.*\)/g, "contains (…)");
+  return redact(detail).replace(/=\(.*\)/gs, "=(…)").replace(/contains \(.*\)/gs, "contains (…)");
 }
 
 // How many causes deep err.cause is followed.

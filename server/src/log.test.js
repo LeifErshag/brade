@@ -130,6 +130,15 @@ describe("buildEntry", () => {
     expect(e2.err.detail).toBe("Failing row contains (…).");
     expect(e2.err.column).toBe("avatar_url");
     expect(JSON.stringify(e2)).not.toContain("Anna");
+
+    // A value with a line break (e.g. a display name) is masked too.
+    const multiline = Object.assign(new Error("null value in column"), {
+      detail: "Failing row contains (id-1, Anna\nSvensson, null).",
+    });
+    const e3 = buildEntry("error", "m", { err: multiline });
+    expect(e3.err.detail).toBe("Failing row contains (…).");
+    const dup = Object.assign(new Error("duplicate key"), { detail: "Key (display_name)=(Anna\nSvensson) already exists." });
+    expect(buildEntry("error", "m", { err: dup }).err.detail).toBe("Key (display_name)=(…) already exists.");
   });
 
   test("masks token-looking text in the message, fields and errors", () => {
