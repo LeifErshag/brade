@@ -214,7 +214,8 @@ async function connectToRoom(ws, roomId, userId, isGuest, guestDisplayName) {
     try {
       await handleMessage({ msg, userId, roomId, ws });
     } catch (err) {
-      log.error("WS handler error", { roomId, userId, type: msg?.type, err });
+      // type is client input: keep it short.
+      log.error("WS handler error", { roomId, userId, type: String(msg?.type).slice(0, 32), err });
       send(ws, { type: "ERROR", message: "Server error" });
     }
   });

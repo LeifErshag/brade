@@ -126,4 +126,68 @@ describe("log", () => {
     expect(() => log.error("still here", { circular })).not.toThrow();
     expect(JSON.parse(error.mock.calls[0][0])).toMatchObject({ msg: "still here" });
   });
+
+  test.each([
+    ["an Error whose message is not a string", () => { const e = new Error("x"); e.message = 5; return [e]; }],
+    ["an Error whose stack is not a string",   () => { const e = new Error("x"); e.stack = { a: 1 }; return [e]; }],
+    ["a message that String() cannot convert", () => [Object.create(null)]],
+    ["an err that String() cannot convert",    () => ["m", { err: Object.create(null) }]],
+    ["a non-Error object thrown as message",   () => [{ code: 1, token: "t" }]],
+  ])("never throws for %s", (_name, args) => {
+    process.env.LOG_FORMAT = "json";
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    expect(() => log.error(...args())).not.toThrow();
+    const line = error.mock.calls[0][0];
+    expect(() => JSON.parse(line)).not.toThrow();
+    expect(line).not.toContain('"t":"t"');
+  });
+
+  test("null fields are ignored, not logged as an error", () => {
+    process.env.LOG_FORMAT = "json";
+    const info = jest.spyOn(console, "log").mockImplementation(() => {});
+    log.info("m", null);
+    expect(JSON.parse(info.mock.calls[0][0]).err).toBeUndefined();
+  });
+
+  test("objects nested deeper than the scrub limit are left out", () => {
+    const e = buildEntry("info", "m", { a: { b: { c: { d: { e: { token: "leak" } } } } } });
+    expect(JSON.stringify(e)).not.toContain("leak");
+    expect(e.a.b.c.d.e).toBe("[too deep]");
+  });
+});
+
+describe("default format", () => {
+  const saved = { ...process.env };
+  afterEach(() => {
+    jest.restoreAllMocks();
+    for (const k of ["LOG_FORMAT", "NODE_ENV", "RENDER"]) {
+      if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
+    }
+  });
+
+  function lineFor(env) {
+    for (const k of ["LOG_FORMAT", "NODE_ENV", "RENDER"]) delete process.env[k];
+    Object.assign(process.env, env);
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    log.error("boom", { err: new Error("bad") });
+    const [[line]] = error.mock.calls;
+    error.mockRestore();
+    return line;
+  }
+
+  test.each([
+    ["on Render",            { RENDER: "true" }],
+    ["in production",        { NODE_ENV: "production" }],
+    ["when forced",          { LOG_FORMAT: "json", NODE_ENV: "development" }],
+  ])("is JSON %s", (_name, env) => {
+    expect(JSON.parse(lineFor(env))).toMatchObject({ level: "error", msg: "boom" });
+  });
+
+  test("is readable elsewhere, with the stack on the following lines", () => {
+    const line = lineFor({ NODE_ENV: "development" });
+    const [first, ...rest] = line.split(/\r?\n/);
+    expect(first).toMatch(/ ERROR boom$/);
+    expect(rest.length).toBeGreaterThan(0);
+    expect(line).toContain("Error: bad");
+  });
 });

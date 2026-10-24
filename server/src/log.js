@@ -31,8 +31,13 @@ const SECRET_TEXT = [
 ];
 const MAX_DEPTH = 4;
 
+// String() itself throws for some values (e.g. Object.create(null)).
+function safeString(value) {
+  try { return String(value); } catch { return "[unprintable]"; }
+}
+
 export function redact(text) {
-  let out = text;
+  let out = typeof text === "string" ? text : safeString(text);
   for (const [pattern, replacement] of SECRET_TEXT) out = out.replace(pattern, replacement);
   return out;
 }
@@ -45,7 +50,9 @@ function isPlainObject(v) {
 // objects and arrays (other objects are left to JSON.stringify).
 function scrub(value, depth = 0) {
   if (typeof value === "string") return redact(value);
-  if (depth >= MAX_DEPTH) return value;
+  if (value === null || typeof value !== "object") return value;
+  // Too deep to check for unsafe keys: leave it out.
+  if (depth >= MAX_DEPTH) return "[too deep]";
   if (Array.isArray(value)) return value.map(v => scrub(v, depth + 1));
   if (!isPlainObject(value)) return value;
   const out = {};
@@ -61,14 +68,14 @@ function describe(value) {
   if (isPlainObject(value) || Array.isArray(value)) {
     try { return JSON.stringify(scrub(value)); } catch { /* circular: fall through */ }
   }
-  return String(value);
+  return safeString(value);
 }
 
 function serializeError(err) {
   if (!(err instanceof Error)) return { message: redact(describe(err)) };
   const out = { message: redact(err.message) };
-  if (err.name && err.name !== "Error") out.name = err.name;
-  if (err.code !== undefined) out.code = err.code;
+  if (typeof err.name === "string" && err.name !== "Error") out.name = err.name;
+  if (typeof err.code === "string" || typeof err.code === "number") out.code = err.code;
   if (err.stack) out.stack = redact(err.stack);
   return out;
 }
@@ -80,9 +87,9 @@ export function buildEntry(level, msg, fields) {
     entry.msg = redact(msg.message);
     entry.err = serializeError(msg);
   } else {
-    entry.msg = redact(String(msg));
+    entry.msg = redact(describe(msg));
   }
-  if (fields instanceof Error || (fields !== undefined && !isPlainObject(fields))) {
+  if (fields instanceof Error || (fields != null && !isPlainObject(fields))) {
     entry.err = serializeError(fields);
   } else if (fields) {
     for (const [key, value] of Object.entries(fields)) {
@@ -118,8 +125,14 @@ function write(level, msg, fields) {
   try {
     line = format(buildEntry(level, msg, fields));
   } catch {
-    // e.g. a circular field: still log something rather than throw.
-    line = format(buildEntry(level, msg));
+    // e.g. a circular field: still log something rather than throw. Logging
+    // runs in error handlers (the pg pool's, the process's), so it must
+    // never throw itself.
+    try {
+      line = format(buildEntry(level, msg));
+    } catch {
+      line = format({ t: new Date().toISOString(), level, msg: "[unloggable message]" });
+    }
   }
   if (level === "info") console.log(line);
   else if (level === "warn") console.warn(line);
