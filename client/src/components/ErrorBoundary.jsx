@@ -1,6 +1,6 @@
 import { Component } from "react";
 import { useI18n } from "../i18n/I18nContext.jsx";
-import { clientLog, describeError, firstReport, stackOf } from "../remoteLog.js";
+import { clientLog, describeError, noteBoundaryCatch, stackOf } from "../remoteLog.js";
 import ReportProblem from "./ReportProblem.jsx";
 
 // Catches a render crash anywhere below it, reports it to the server log
@@ -17,7 +17,7 @@ export default class ErrorBoundary extends Component {
 
   componentDidCatch(error, info) {
     // React already prints the error to the console.
-    if (!firstReport(error)) return;
+    noteBoundaryCatch(error);
     clientLog.error(`Render crash: ${describeError(error)}`, {
       stack:          stackOf(error),
       componentStack: info?.componentStack,

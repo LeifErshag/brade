@@ -170,26 +170,37 @@ export function stackOf(err) {
 }
 
 // In development builds React also hands an error that an error boundary
-// catches to window's "error" handlers, so the same crash would be reported
-// both as uncaught and by the boundary. Each error object is reported once,
-// by whichever sees it first.
-const reported = new WeakSet();
+// catches to window's "error" handlers. It re-renders the failing component
+// to do so, so the window sees a different error object with the same
+// message. In development the window handler therefore waits a moment and
+// drops its line if a boundary reported the same message meanwhile; the
+// boundary's line is the one kept, as it has the component stack. Production
+// builds do not do this, so there the window line is sent at once.
+const BOUNDARY_WAIT_MS = 1000;
+const boundaryCaught   = new Map();   // message → when a boundary caught it
 
-export function firstReport(err) {
-  if (err === null || (typeof err !== "object" && typeof err !== "function")) return true;
-  if (reported.has(err)) return false;
-  reported.add(err);
-  return true;
+export function noteBoundaryCatch(err) {
+  if (!import.meta.env.DEV) return;
+  boundaryCaught.set(describeError(err), Date.now());
+  if (boundaryCaught.size > 20) boundaryCaught.delete(boundaryCaught.keys().next().value);
 }
 
 // Uncaught errors and unhandled rejections. The browser already prints them,
 // so they are only recorded and sent.
 export function installGlobalErrorHandlers() {
   window.addEventListener("error", (e) => {
-    if (!firstReport(e.error)) return;
-    clientLog.error(`Uncaught error: ${describeError(e)}`, {
-      file: e.filename, line: e.lineno, col: e.colno, stack: stackOf(e.error),
-    }, { echo: false });
+    const msg = `Uncaught error: ${describeError(e)}`;
+    const ctx = { file: e.filename, line: e.lineno, col: e.colno, stack: stackOf(e.error) };
+    if (!import.meta.env.DEV) {
+      clientLog.error(msg, ctx, { echo: false });
+      return;
+    }
+    const message = describeError(e.error ?? e);
+    const seenAt  = Date.now();
+    setTimeout(() => {
+      if ((boundaryCaught.get(message) ?? -Infinity) >= seenAt) return;
+      clientLog.error(msg, ctx, { echo: false });
+    }, BOUNDARY_WAIT_MS);
   });
   window.addEventListener("unhandledrejection", (e) => {
     const reason = e.reason;
