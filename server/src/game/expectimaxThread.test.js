@@ -4,7 +4,9 @@
 //   2. the main thread's event loop keeps running while it searches;
 //   3. a search that throws in the worker rejects, and the worker goes on;
 //   4. if the worker exits, pending searches reject and the next search
-//      starts a new worker.
+//      starts a new worker;
+//   5. a worker exiting after a new one started rejects only its own
+//      searches, not the new worker's.
 
 import { setInterval, clearInterval } from "node:timers";
 import { searchOffThread, stopSearchWorker } from "./expectimaxThread.js";
@@ -70,5 +72,23 @@ test("pending searches reject when the worker exits; the next search starts a ne
   const settled = expect(pending).rejects.toThrow(/exited/);
   await stopSearchWorker();
   await settled;
+  expect(await searchOffThread(gs, "white")).toEqual(computeBestTurnSequence(gs, "white"));
+});
+
+test("an old worker exiting does not reject the new worker's searches", async () => {
+  const gs = midGame();
+  await searchOffThread(gs, "white"); // the worker is up
+  const old = searchOffThread(gs, "white");
+  const oldSettled = expect(old).rejects.toThrow(/exited/);
+  const stopping = stopSearchWorker(); // not awaited: the old worker exits later
+  const fresh = searchOffThread(gs, "white"); // starts a new worker
+  await stopping;
+  await oldSettled;
+  expect(await fresh).toEqual(computeBestTurnSequence(gs, "white"));
+});
+
+test("a game state that cannot be cloned rejects, and the worker goes on", async () => {
+  const gs = midGame();
+  await expect(searchOffThread({ ...gs, extra: () => {} }, "white")).rejects.toThrow();
   expect(await searchOffThread(gs, "white")).toEqual(computeBestTurnSequence(gs, "white"));
 });

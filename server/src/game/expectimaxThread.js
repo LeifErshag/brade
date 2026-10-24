@@ -6,29 +6,31 @@
 
 import { Worker } from "node:worker_threads";
 
-let worker  = null;
-let nextId  = 1;
-const pending = new Map(); // id → { resolve, reject }
+let worker = null; // { thread, pending: Map<id, { resolve, reject }> }
+let nextId = 1;
 
+// Each worker has its own pending searches, so a worker that dies (or is
+// stopped) after a new one has started rejects only its own searches.
 function getWorker() {
   if (worker) return worker;
-  const w = new Worker(new URL("./expectimaxWorker.js", import.meta.url));
-  w.on("message", ({ id, moves, error }) => {
-    const p = pending.get(id);
+  const thread = new Worker(new URL("./expectimaxWorker.js", import.meta.url));
+  const w = { thread, pending: new Map() };
+  thread.on("message", ({ id, moves, error }) => {
+    const p = w.pending.get(id);
     if (!p) return;
-    pending.delete(id);
+    w.pending.delete(id);
     if (error) p.reject(new Error(error));
     else p.resolve(moves);
     // An idle worker must not keep the process alive.
-    if (pending.size === 0) w.unref();
+    if (w.pending.size === 0) thread.unref();
   });
   const fail = (err) => {
     if (worker === w) worker = null;
-    for (const p of pending.values()) p.reject(err);
-    pending.clear();
+    for (const p of w.pending.values()) p.reject(err);
+    w.pending.clear();
   };
-  w.on("error", fail);
-  w.on("exit", code => fail(new Error(`Grandmaster worker exited with code ${code}`)));
+  thread.on("error", fail);
+  thread.on("exit", code => fail(new Error(`Grandmaster worker exited with code ${code}`)));
   worker = w;
   return w;
 }
@@ -39,9 +41,10 @@ export function searchOffThread(gs, color) {
   const w = getWorker();
   const id = nextId++;
   return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    w.ref();
-    w.postMessage({ id, gs, color });
+    // Throws (and rejects) before anything is recorded if gs cannot be cloned.
+    w.thread.postMessage({ id, gs, color });
+    w.pending.set(id, { resolve, reject });
+    w.thread.ref();
   });
 }
 
@@ -49,5 +52,5 @@ export function searchOffThread(gs, color) {
 export async function stopSearchWorker() {
   const w = worker;
   worker = null;
-  if (w) await w.terminate();
+  if (w) await w.thread.terminate();
 }
