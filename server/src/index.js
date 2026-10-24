@@ -14,6 +14,7 @@ import guestRoutes       from "./routes/guest.js";
 import matchmakingRoutes  from "./routes/matchmaking.js";
 import tournamentRoutes   from "./routes/tournaments.js";
 import clientLogRoutes    from "./routes/clientLog.js";
+import supportReportRoutes, { pruneSupportReports } from "./routes/supportReports.js";
 import { rateLimitApi } from "./middleware/ratelimit.js";
 import { installProcessErrorHandlers } from "./processErrors.js";
 import { errorHandler } from "./middleware/errorHandler.js";
@@ -36,6 +37,9 @@ app.use(cors({
   credentials: true,               // allow httpOnly cookies cross-origin
 }));
 app.use(cookieParser(process.env.COOKIE_SECRET));
+// A problem report carries recent client log lines, so it gets a larger
+// limit. Parsed first; the general parser then skips the parsed body.
+app.use("/api/support-reports", express.json({ limit: "64kb" }));
 app.use(express.json({ limit: "10kb" })); // limit body size
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────
@@ -49,6 +53,7 @@ app.use("/api/guest", guestRoutes);
 app.use("/api/matchmaking",  matchmakingRoutes);
 app.use("/api/tournaments",  tournamentRoutes);
 app.use("/api/client-log",   clientLogRoutes);
+app.use("/api/support-reports", supportReportRoutes);
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
@@ -60,6 +65,8 @@ app.use(errorHandler(log));
 // ── Startup ───────────────────────────────────────────────────────────────────
 async function start() {
   await connectPostgres();
+  // Best effort: an old report left behind must not stop the server.
+  await pruneSupportReports().catch(err => log.error("Support report cleanup failed", { err }));
   await connectRedis();
   initWebSocketServer(httpServer);
 

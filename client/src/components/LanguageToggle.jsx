@@ -1,5 +1,6 @@
 import { LANGUAGES } from "../i18n/core.js";
 import { useI18n } from "../i18n/I18nContext.jsx";
+import ReportProblem from "./ReportProblem.jsx";
 
 // Inline SVG flags: Windows renders flag emoji as plain letters ("SE", "GB").
 function FlagSE() {
@@ -42,7 +43,7 @@ const S = {
   },
   active: { background: "#6b3a10", borderColor: "#a06030", opacity: 1 },
   row: {
-    display: "flex", justifyContent: "flex-end", width: "100%",
+    display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, width: "100%",
     boxSizing: "border-box", padding: "10px 12px 0",
   },
 };
@@ -76,10 +77,12 @@ export default function LanguageToggle({ style }) {
   );
 }
 
-/** The toggle in its own right-aligned row, for the top of a page. */
+/** The toggle in its own right-aligned row, for the top of a page, with the
+ *  "Report a problem" link beside it. */
 export function LanguageBar({ style }) {
   return (
     <div style={{ ...S.row, ...style }}>
+      <ReportProblem />
       <LanguageToggle />
     </div>
   );

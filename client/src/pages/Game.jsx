@@ -9,6 +9,7 @@ import { OFFICIAL_RULES_URL } from "../components/RulesContent.jsx";
 import LanguageToggle, { LanguageBar } from "../components/LanguageToggle.jsx";
 import { useI18n } from "../i18n/I18nContext.jsx";
 import { setLogContext } from "../remoteLog.js";
+import ReportProblem from "../components/ReportProblem.jsx";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -292,6 +293,8 @@ export default function Game() {
       };
     };
     const serverUrl = () => `${API}/api/games/${debugRef.current.roomId}/debug`;
+    // Problem reports attach the same summary (issue #141).
+    setLogContext({ state: summarize });
 
     window.__brade = {
       state() {
@@ -337,7 +340,10 @@ export default function Game() {
     };
     console.info("[brade] debug hooks ready — run __brade.help()");
 
-    return () => { delete window.__brade; };
+    return () => {
+      delete window.__brade;
+      setLogContext({ state: null });
+    };
   }, []);
 
   async function handleCopyInvite() {
@@ -444,6 +450,7 @@ export default function Game() {
           >
             {t("game.rules")}
           </button>
+          <ReportProblem />
         </div>
 
         {!room ? (

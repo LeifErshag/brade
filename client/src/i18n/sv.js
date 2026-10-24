@@ -30,6 +30,18 @@ export default {
     reload: "Ladda om",
   },
 
+  report: {
+    link: "Rapportera ett problem",
+    title: "Rapportera ett problem",
+    intro: "Beskriv vad som hände. Tekniska uppgifter om sidan och ditt pågående parti skickas med för att hjälpa oss att felsöka.",
+    placeholder: "Vad gick fel?",
+    send: "Skicka rapport",
+    sending: "Skickar…",
+    cancel: "Avbryt",
+    sent: "Tack! Ditt rapport-ID är {id}. Ange det om du kontaktar oss om det här.",
+    close: "Stäng",
+  },
+
   common: {
     home: "Hem",
     backHome: "← Hem",

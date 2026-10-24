@@ -30,6 +30,18 @@ export default {
     reload: "Reload",
   },
 
+  report: {
+    link: "Report a problem",
+    title: "Report a problem",
+    intro: "Describe what happened. Technical details about this page and your current game are attached to help us investigate.",
+    placeholder: "What went wrong?",
+    send: "Send report",
+    sending: "Sending…",
+    cancel: "Cancel",
+    sent: "Thank you! Your report ID is {id}. Mention it if you contact us about this.",
+    close: "Close",
+  },
+
   common: {
     home: "Home",
     backHome: "← Home",
