@@ -69,7 +69,7 @@ function watchHead(w) {
   const ms = options.answerTimeoutMs ?? 2 * SEARCH_TIMEOUT_MS;
   w.timer = setTimeout(() => {
     const err = new Error(`Grandmaster worker did not answer within ${ms} ms`);
-    console.error(`${err.message}; stopping it`);
+    console.error(`${err.message}; stopping it (or the main thread was blocked that long)`);
     const [[, hung], ...queued] = w.pending;
     w.pending.clear();
     fail(w, err); // nothing pending is left to reject; this stops the timer
