@@ -149,9 +149,9 @@ console.log(`Positions: ${positions.length}`);
 
 // Warm up the JIT so the first timings are not inflated. Spread the warm-up
 // over all positions, not only game 0's cheap openings.
-const WARMUP = Math.min(50, positions.length);
-for (let i = 0; i < WARMUP; i++) {
-  timeSearch(positions[Math.floor(i * positions.length / WARMUP)]);
+const warmupCount = Math.min(50, positions.length);
+for (let i = 0; i < warmupCount; i++) {
+  timeSearch(positions[Math.floor(i * positions.length / warmupCount)]);
 }
 
 for (const p of positions) p.ms = timeSearch(p);
