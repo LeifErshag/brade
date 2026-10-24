@@ -3,7 +3,9 @@
 // position at a time; searches from other rooms queue behind it. If the worker
 // dies, its pending searches are rejected and the next search starts a new
 // worker. A worker that takes longer than the answer timeout over one search
-// is treated as hung (#124): it is stopped, which rejects its searches too.
+// is treated as hung (#124): it is stopped, that search rejects, and the
+// searches queued behind it move to a new worker, so a position that hangs
+// every time does not use up other rooms' retries.
 
 import { Worker } from "node:worker_threads";
 import { SEARCH_TIMEOUT_MS } from "./expectimax.js";
@@ -14,7 +16,7 @@ const WORKER_URL = new URL("./expectimaxWorker.js", import.meta.url);
 // so its constants are not initialised yet while this module loads.
 let options = { workerUrl: WORKER_URL, answerTimeoutMs: null };
 
-let worker = null; // { thread, pending: Map<id, { resolve, reject }>, timer }
+let worker = null; // { thread, pending: Map<id, { msg, resolve, reject }>, timer }
 let nextId = 1;
 
 // Each worker has its own pending searches, so a worker that dies (or is
@@ -22,9 +24,6 @@ let nextId = 1;
 function getWorker() {
   if (worker) return worker;
   const thread = new Worker(options.workerUrl);
-  // An idle worker must not keep the process alive; searchOffThread refs it
-  // while a search is pending.
-  thread.unref();
   const w = { thread, pending: new Map(), timer: null };
   thread.on("message", ({ id, moves, error }) => {
     const p = w.pending.get(id);
@@ -37,6 +36,10 @@ function getWorker() {
   });
   thread.on("error", err => fail(w, err));
   thread.on("exit", code => fail(w, new Error(`Grandmaster worker exited with code ${code}`)));
+  // An idle worker must not keep the process alive; post() refs it while a
+  // search is pending. Only after the listeners: adding a "message" listener
+  // refs the worker again.
+  thread.unref();
   worker = w;
   return w;
 }
@@ -50,7 +53,10 @@ function fail(w, err) {
 
 // Times the search the worker is on: the oldest pending one, since the worker
 // answers them in order. Searches queued behind it are not timed until it
-// answers, so a long queue is not mistaken for a hang.
+// answers, so a long queue is not mistaken for a hang. The first search's
+// time includes starting the worker (a few tens of ms). A main thread blocked
+// for longer than the timeout can also look like a hung worker, since timers
+// run before a waiting answer is handled.
 function watchHead(w) {
   clearTimeout(w.timer);
   w.timer = null;
@@ -59,8 +65,14 @@ function watchHead(w) {
   w.timer = setTimeout(() => {
     const err = new Error(`Grandmaster worker did not answer within ${ms} ms`);
     console.error(`${err.message}; stopping it`);
-    fail(w, err);
+    const [[, hung], ...queued] = w.pending;
+    w.pending.clear();
+    fail(w, err); // nothing pending is left to reject; this stops the timer
     w.thread.terminate();
+    hung.reject(err);
+    for (const [, search] of queued) {
+      try { post(search); } catch (e) { search.reject(e); }
+    }
   }, ms);
   w.timer.unref();
 }
@@ -68,15 +80,18 @@ function watchHead(w) {
 // The moves of the best turn for `color` in `gs` (as computeBestTurnSequence),
 // searched in the worker.
 export function searchOffThread(gs, color) {
+  const msg = { id: nextId++, gs, color };
+  return new Promise((resolve, reject) => post({ msg, resolve, reject }));
+}
+
+// Sends a search to the worker, starting one if needed. Throws before
+// anything is recorded if the search cannot be cloned.
+function post(search) {
   const w = getWorker();
-  const id = nextId++;
-  return new Promise((resolve, reject) => {
-    // Throws (and rejects) before anything is recorded if gs cannot be cloned.
-    w.thread.postMessage({ id, gs, color });
-    w.pending.set(id, { resolve, reject });
-    w.thread.ref();
-    if (w.pending.size === 1) watchHead(w);
-  });
+  w.thread.postMessage(search.msg);
+  w.pending.set(search.msg.id, search);
+  w.thread.ref();
+  if (w.pending.size === 1) watchHead(w);
 }
 
 // Stops the worker (tests); the next search starts a new one.
