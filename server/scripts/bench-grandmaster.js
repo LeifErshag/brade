@@ -22,6 +22,14 @@ import { getNextExpectimaxMove, clearExpectimaxCache, computeBestTurnSequence } 
 const GAMES = Number(process.argv[2] ?? 40);
 const SEED  = Number(process.argv[3] ?? 1);
 const MODE  = process.argv[4] ?? "random";
+if (!Number.isInteger(GAMES) || GAMES < 1) {
+  console.error(`Invalid games "${process.argv[2]}" (use a positive integer)`);
+  process.exit(1);
+}
+if (!Number.isInteger(SEED)) {
+  console.error(`Invalid seed "${process.argv[3]}" (use an integer)`);
+  process.exit(1);
+}
 if (MODE !== "random" && MODE !== "grandmaster") {
   console.error(`Unknown mode "${MODE}" (use "random" or "grandmaster")`);
   process.exit(1);
