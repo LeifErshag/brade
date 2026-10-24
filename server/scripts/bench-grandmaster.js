@@ -149,8 +149,8 @@ console.log(`Positions: ${positions.length}`);
 
 // Warm up the JIT so the first timings are not inflated. Spread the warm-up
 // over all positions, not only game 0's cheap openings.
-const WARMUP = 50;
-for (let i = 0; i < Math.min(WARMUP, positions.length); i++) {
+const WARMUP = Math.min(50, positions.length);
+for (let i = 0; i < WARMUP; i++) {
   timeSearch(positions[Math.floor(i * positions.length / WARMUP)]);
 }
 
@@ -181,7 +181,7 @@ summarize("non-doubles", positions.filter(p => !isDouble(p)).map(p => p.ms));
 summarize("on bar",    positions.filter(isBar).map(p => p.ms));
 summarize("doubles+bar", positions.filter(p => isDouble(p) && isBar(p)).map(p => p.ms));
 
-console.log(`max before re-timing: ${rawMax.toFixed(1)} ms (includes GC pauses)`);
+console.log(`max before re-timing: ${rawMax.toFixed(1)} ms (may include GC pauses)`);
 
 const total = positions.reduce((a, p) => a + p.ms, 0);
 console.log(`\nTotal search time: ${(total / 1000).toFixed(1)} s, mean ${(total / positions.length).toFixed(1)} ms`);
