@@ -7,7 +7,7 @@ export default [
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "module",
-      globals: globals.node,
+      globals: globals.nodeBuiltin,
     },
     rules: {
       "no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
