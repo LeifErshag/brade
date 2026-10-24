@@ -9,27 +9,30 @@
 // Usage (from server/):
 //   node scripts/bench-grandmaster.js [games] [seed] [mode]
 // Defaults: 40 games, seed 1, mode "random". games must be a positive
-// integer and seed an integer from 0 to 2^32 - 1 (the PRNG keeps 32 bits of
-// state, so a wider seed would wrap around). The same arguments give the
-// same positions. Mode "random" plays a uniformly random legal turn for both
-// sides (many hits, bar and jan positions); mode "grandmaster" lets
-// Grandmaster play both sides (positions closer to real AI games: more
-// bands and primes).
+// decimal integer and seed a decimal integer from 0 to 2^32 - 1 (the PRNG
+// keeps 32 bits of state, so a wider seed would wrap around). The same
+// arguments give the same positions. Mode "random" plays a uniformly
+// random legal turn for both sides (many hits, bar and jan positions); mode
+// "grandmaster" lets Grandmaster play both sides (positions closer to real
+// AI games: more bands and primes).
 
 import { performance } from "node:perf_hooks";
 import os from "node:os";
 import { initGame, legalTurnSequences, getLegalMoves, applyMove, checkWin, checkJanOnPass } from "../src/game/engine.js";
 import { getNextExpectimaxMove, clearExpectimaxCache, computeBestTurnSequence } from "../src/game/expectimax.js";
 
-const GAMES = Number(process.argv[2] ?? 40);
-const SEED  = Number(process.argv[3] ?? 1);
+// Only plain decimal digits count as a number: Number() would also take ""
+// (as 0), "0x10" (as 16), "1e3" and " 5".
+const parseCount = (arg, fallback) => (arg === undefined ? fallback : /^\d+$/.test(arg) ? Number(arg) : NaN);
+const GAMES = parseCount(process.argv[2], 40);
+const SEED  = parseCount(process.argv[3], 1);
 const MODE  = process.argv[4] ?? "random";
 if (!Number.isInteger(GAMES) || GAMES < 1) {
-  console.error(`Invalid games "${process.argv[2]}" (use a positive integer)`);
+  console.error(`Invalid games "${process.argv[2]}" (use a positive decimal integer)`);
   process.exit(1);
 }
 if (!Number.isInteger(SEED) || SEED < 0 || SEED > 0xFFFFFFFF) {
-  console.error(`Invalid seed "${process.argv[3]}" (use an integer from 0 to 4294967295)`);
+  console.error(`Invalid seed "${process.argv[3]}" (use a decimal integer from 0 to 4294967295)`);
   process.exit(1);
 }
 if (MODE !== "random" && MODE !== "grandmaster") {
