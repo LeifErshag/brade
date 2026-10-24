@@ -45,7 +45,9 @@ router.get("/leaderboard", asyncHandler(async (_req, res) => {
 // ── GET /api/users/search?q=name — find users by display name ────────────────
 // q must be a single string: a repeated ?q= or ?q[]= is parsed as an array/object and rejected.
 const searchQuerySchema = z.object({
-  q: z.string({ required_error: "Query is required", invalid_type_error: "Query must be a single string" })
+  q: z.string({
+    error: (iss) => (iss.input === undefined ? "Query is required" : "Query must be a single string"),
+  })
     .trim()
     .min(2, "Query must be at least 2 characters")
     .max(50, "Query too long"),

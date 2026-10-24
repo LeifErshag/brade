@@ -50,6 +50,7 @@ describe("GET /api/users/search", () => {
   test("repeated ?q= parameter is rejected with 400, not a crash", async () => {
     const res = await search("?q=ab&q=cd");
     expect(res.status).toBe(400);
+    expect((await res.json()).issues[0].message).toBe("Query must be a single string");
     expect(query).not.toHaveBeenCalled();
   });
 
@@ -62,12 +63,14 @@ describe("GET /api/users/search", () => {
   test("missing q is rejected with 400", async () => {
     const res = await search("");
     expect(res.status).toBe(400);
+    expect((await res.json()).issues[0].message).toBe("Query is required");
     expect(query).not.toHaveBeenCalled();
   });
 
   test("q shorter than 2 characters after trimming is rejected with 400", async () => {
     const res = await search("?q=%20a%20");
     expect(res.status).toBe(400);
+    expect((await res.json()).issues[0].message).toBe("Query must be at least 2 characters");
     expect(query).not.toHaveBeenCalled();
   });
 
