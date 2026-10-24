@@ -24,6 +24,12 @@ export default {
     couldNotStart: "Could not start game. Please try again.",
   },
 
+  crash: {
+    title: "Something went wrong",
+    body: "The page crashed. The problem has been reported; reloading usually helps.",
+    reload: "Reload",
+  },
+
   common: {
     home: "Home",
     backHome: "← Home",

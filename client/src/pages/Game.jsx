@@ -8,6 +8,7 @@ import TutorialCoach from "../components/TutorialCoach.jsx";
 import { OFFICIAL_RULES_URL } from "../components/RulesContent.jsx";
 import LanguageToggle, { LanguageBar } from "../components/LanguageToggle.jsx";
 import { useI18n } from "../i18n/I18nContext.jsx";
+import { setLogContext } from "../remoteLog.js";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -253,6 +254,12 @@ export default function Game() {
       onOpenRules={openRulesAt}
     />
   );
+
+  // Tag client log lines sent to the server with this room and token.
+  useEffect(() => {
+    setLogContext({ roomId, token: wsToken ?? null });
+    return () => setLogContext({ roomId: null, token: null });
+  }, [roomId, wsToken]);
 
   // ── Debug console hooks: window.__brade ─────────────────────────────────────
   // state()  → client's view of the current room (turn/phase/canRoll/wsStatus)

@@ -13,6 +13,7 @@ import userRoutes        from "./routes/users.js";
 import guestRoutes       from "./routes/guest.js";
 import matchmakingRoutes  from "./routes/matchmaking.js";
 import tournamentRoutes   from "./routes/tournaments.js";
+import clientLogRoutes    from "./routes/clientLog.js";
 import { rateLimitApi } from "./middleware/ratelimit.js";
 import { installProcessErrorHandlers } from "./processErrors.js";
 import { errorHandler } from "./middleware/errorHandler.js";
@@ -47,6 +48,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/guest", guestRoutes);
 app.use("/api/matchmaking",  matchmakingRoutes);
 app.use("/api/tournaments",  tournamentRoutes);
+app.use("/api/client-log",   clientLogRoutes);
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ status: "ok" }));

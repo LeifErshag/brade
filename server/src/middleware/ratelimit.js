@@ -17,3 +17,14 @@ export const rateLimitAuth = rateLimit({
   legacyHeaders: false,
   message: { error: "Too many login attempts" },
 });
+
+// Client error reports: 30 per minute per IP. The client sends at most a few
+// lines per minute (see client/src/remoteLog.js); this caps a misbehaving or
+// hostile sender so it cannot flood the logs.
+export const rateLimitClientLog = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests" },
+});

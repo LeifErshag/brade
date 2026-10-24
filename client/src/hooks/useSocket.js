@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback } from "react";
+import { clientLog, describeError } from "../remoteLog.js";
 
 // Reconnect backoff: 1s, 2s, 4s, 8s, 16s, then capped at 30s (plus jitter).
 // The cap stays well under the server's 60s disconnect-forfeit grace, so a
@@ -30,7 +31,7 @@ export function useSocket({ roomId, token, onMessage, onOpen, onClose, onReconne
       ws.current.send(JSON.stringify(msg));
       return true;
     }
-    console.warn(`[ws] send dropped — socket not open (readyState=${ws.current?.readyState ?? "null"}, type=${msg?.type})`);
+    clientLog.warn("[ws] send dropped — socket not open", { readyState: ws.current?.readyState ?? null, type: msg?.type });
     return false;
   }, []);
 
@@ -44,7 +45,8 @@ export function useSocket({ roomId, token, onMessage, onOpen, onClose, onReconne
       const delay  = Math.min(BASE_DELAY * 2 ** (attempts.current - 1), MAX_DELAY);
       const jitter = Math.round(delay * 0.25 * Math.random());
       const wait   = delay + jitter;
-      console.warn(`[ws] reconnecting in ${wait}ms (next attempt ${attempts.current + 1})`);
+      // Info only: the close that caused it is already reported.
+      clientLog.info(`[ws] reconnecting in ${wait}ms (next attempt ${attempts.current + 1})`);
       onReconnRef.current?.();
       reconnectTimer.current = setTimeout(connect, wait);
     }
@@ -53,13 +55,13 @@ export function useSocket({ roomId, token, onMessage, onOpen, onClose, onReconne
       attempts.current += 1;
       const attempt   = attempts.current;
       const startedAt = Date.now();
-      console.info(`[ws] connecting — attempt ${attempt}, room ${roomId}, ${new Date().toISOString()}`);
+      clientLog.info(`[ws] connecting — attempt ${attempt}, room ${roomId}, ${new Date().toISOString()}`);
 
       let socket;
       try {
         socket = new WebSocket(url);
       } catch (err) {
-        console.error(`[ws] WebSocket constructor threw (attempt ${attempt}):`, err?.message ?? err);
+        clientLog.error("[ws] WebSocket constructor threw", { attempt, message: err?.message ?? String(err) });
         scheduleReconnect();
         return;
       }
@@ -67,7 +69,7 @@ export function useSocket({ roomId, token, onMessage, onOpen, onClose, onReconne
 
       socket.onopen = () => {
         connectedAt.current = Date.now();
-        console.info(`[ws] connected in ${connectedAt.current - startedAt}ms (attempt ${attempt})`);
+        clientLog.info(`[ws] connected in ${connectedAt.current - startedAt}ms (attempt ${attempt})`);
         attempts.current = 0; // reset backoff after a successful connection
         onOpenRef.current?.();
       };
@@ -76,24 +78,27 @@ export function useSocket({ roomId, token, onMessage, onOpen, onClose, onReconne
         try {
           onMsgRef.current(JSON.parse(e.data));
         } catch (err) {
-          console.error(`[ws] could not parse message:`, err?.message ?? err, String(e.data).slice(0, 200));
+          // The start of the message goes to the server log. Messages carry
+          // room state only (no tokens or chat); remoteLog masks token-like text.
+          clientLog.error("[ws] could not handle message", { message: describeError(err), data: String(e.data).slice(0, 200) });
         }
       };
 
       socket.onerror = () => {
         // Browsers expose almost no detail on the error event; the close event
         // that follows carries the code/reason, logged in onclose below.
-        console.error(`[ws] socket error (attempt ${attempt}, room ${roomId}) — see following close event for code/reason`);
+        // Not sent: the close that follows is.
+        clientLog.error(`[ws] socket error (attempt ${attempt}, room ${roomId}) — see following close event for code/reason`, undefined, { remote: false });
       };
 
       socket.onclose = (e) => {
         const liveMs = connectedAt.current ? Date.now() - connectedAt.current : 0;
         connectedAt.current = null;
-        console.warn(`[ws] closed — code=${e.code} reason="${e.reason || "(none)"}" wasClean=${e.wasClean} liveMs=${liveMs} attempt=${attempt}`);
+        clientLog.warn("[ws] closed", { code: e.code, reason: e.reason || null, wasClean: e.wasClean, liveMs, attempt });
         onCloseRef.current?.();
 
         if (TERMINAL_CODES.has(e.code)) {
-          console.error(`[ws] giving up — server rejected with terminal code ${e.code} (${e.reason || "no reason"})`);
+          clientLog.error("[ws] giving up — server rejected the connection", { code: e.code, reason: e.reason || null });
           return;
         }
         scheduleReconnect();
