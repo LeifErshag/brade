@@ -9,6 +9,7 @@
 
 import { Worker } from "node:worker_threads";
 import { SEARCH_TIMEOUT_MS } from "./expectimax.js";
+import { log } from "../log.js";
 
 const WORKER_URL = new URL("./expectimaxWorker.js", import.meta.url);
 // Overridden by tests (configureSearchWorker). A null answerTimeoutMs means
@@ -69,7 +70,7 @@ function watchHead(w) {
   const ms = options.answerTimeoutMs ?? 2 * SEARCH_TIMEOUT_MS;
   w.timer = setTimeout(() => {
     const err = new Error(`Grandmaster worker did not answer within ${ms} ms`);
-    console.error(`${err.message} (or the main thread was blocked that long); stopping it`);
+    log.error(`${err.message} (or the main thread was blocked that long); stopping it`);
     const [[, hung], ...queued] = w.pending;
     w.pending.clear();
     fail(w, err); // nothing pending is left to reject; this stops the timer

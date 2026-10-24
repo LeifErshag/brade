@@ -12,7 +12,7 @@ describe("runStartup", () => {
     const { proc, logger } = setup();
     const err = new Error("postgres unreachable");
     await runStartup(async () => { throw err; }, proc, logger);
-    expect(logger.error).toHaveBeenCalledWith("Server failed to start:", err);
+    expect(logger.error).toHaveBeenCalledWith("Server failed to start", { err });
     expect(proc.exit).toHaveBeenCalledWith(1);
   });
 
@@ -20,7 +20,7 @@ describe("runStartup", () => {
     const { proc, logger } = setup();
     const err = new Error("sync boom");
     await runStartup(() => { throw err; }, proc, logger);
-    expect(logger.error).toHaveBeenCalledWith("Server failed to start:", err);
+    expect(logger.error).toHaveBeenCalledWith("Server failed to start", { err });
     expect(proc.exit).toHaveBeenCalledWith(1);
   });
 

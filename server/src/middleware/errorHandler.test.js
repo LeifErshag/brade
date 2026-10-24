@@ -90,11 +90,11 @@ describe("errorHandler unit", () => {
     const res = fakeRes(true);
     const next = jest.fn();
     const err = new Error("mid-stream failure");
-    errorHandler(logger)(err, {}, res, next);
+    errorHandler(logger)(err, { method: "GET", path: "/api/games", url: "/api/games?token=x", userId: "u1" }, res, next);
     expect(next).toHaveBeenCalledWith(err);
     expect(res.status).not.toHaveBeenCalled();
     expect(res.json).not.toHaveBeenCalled();
-    expect(logger.error).toHaveBeenCalledWith(err);
+    expect(logger.error).toHaveBeenCalledWith(err, { method: "GET", path: "/api/games", userId: "u1" });
   });
 
   test("a 5xx status on the error is not passed through", () => {

@@ -8,6 +8,7 @@ import { clearExpectimaxCache } from "../game/expectimax.js";
 import { advanceTournament } from "../game/tournament.js";
 import { compareMatch } from "../game/scoring.js";
 import { withRoomLock } from "./roomLock.js";
+import { log } from "../log.js";
 
 // ── Disconnect forfeit timers ─────────────────────────────────────────────────
 // key: `${roomId}:${color}` → { timer, token }. Each schedule gets a fresh
@@ -31,7 +32,7 @@ export function scheduleDisconnectForfeit(roomId, color, userId, delayMs = DISCO
     try {
       await withRoomLock(roomId, () => forfeitIfStillDisconnected(roomId, userId, key, token));
     } catch (err) {
-      console.error(`Disconnect forfeit error [${roomId}]:`, err);
+      log.error("Disconnect forfeit error", { roomId, userId, err });
     }
   }, Math.max(0, delayMs));
   forfeitTimers.set(key, { timer, token });
@@ -57,6 +58,7 @@ async function forfeitIfStillDisconnected(roomId, userId, key, token) {
   if (JSON.parse(raw).status !== "playing") return;
   // Force a resign for the disconnected player
   await handleRoomMessage({ msg: { type: "RESIGN", forfeit: true }, userId, roomId, ws: null });
+  log.info("Player forfeited after disconnect", { roomId, userId });
 }
 
 export function cancelDisconnectForfeit(roomId, color) {
@@ -149,7 +151,7 @@ async function handleRoomMessage({ msg, userId, roomId, ws }) {
         `SELECT id FROM games WHERE room_id = $1`, [roomId]
       );
       if (!gameRow) {
-        console.error(`START_GAME: no games row for room ${roomId}`);
+        log.error("START_GAME: no games row", { roomId, userId });
         ws && send(ws, { type: "ERROR", message: "Game record not found" }); break;
       }
 
@@ -176,6 +178,7 @@ async function handleRoomMessage({ msg, userId, roomId, ws }) {
 
       await saveRoom(redis, roomId, room);
       broadcastState(roomId, room);
+      log.info("Game started", { roomId, white: room.players.white, black: room.players.black, guest: room.hasGuest === true });
       break;
     }
 
@@ -231,7 +234,7 @@ async function handleRoomMessage({ msg, userId, roomId, ws }) {
 
       // Trigger AI if turn switched to it
       if (room.isAi && gs.turn === "black" && gs.phase === "rolling") {
-        triggerAiTurn(roomId).catch(e => console.error("AI turn error:", e));
+        triggerAiTurn(roomId).catch(err => log.error("AI turn error", { roomId, err }));
       }
       break;
     }
@@ -290,7 +293,7 @@ async function handleRoomMessage({ msg, userId, roomId, ws }) {
 
       // Trigger AI if turn switched to it
       if (room.isAi && newGs.turn === "black" && newGs.phase === "rolling") {
-        triggerAiTurn(roomId).catch(e => console.error("AI turn error:", e));
+        triggerAiTurn(roomId).catch(err => log.error("AI turn error", { roomId, err }));
       }
       break;
     }
@@ -321,7 +324,7 @@ async function handleRoomMessage({ msg, userId, roomId, ws }) {
 
       // Trigger AI if turn switched to it
       if (room.isAi && gs.turn === "black" && gs.phase === "rolling") {
-        triggerAiTurn(roomId).catch(e => console.error("AI turn error:", e));
+        triggerAiTurn(roomId).catch(err => log.error("AI turn error", { roomId, err }));
       }
       break;
     }
@@ -330,6 +333,9 @@ async function handleRoomMessage({ msg, userId, roomId, ws }) {
       if (room.status !== "playing") break;
       if (!color) break;
       const winner = opp(color);
+      // A disconnect forfeit (ws null) is logged by forfeitIfStillDisconnected.
+      // Not msg.forfeit: a client could send that flag itself.
+      if (ws) log.info("Player resigned", { roomId, userId, color });
       // Resign ends the whole match immediately.
       const result = { winner, winType: "resign", points: 1, monk: false };
       await handleGameOver(redis, roomId, room, result, true /* forceMatchOver */);
@@ -393,7 +399,7 @@ export async function triggerAiTurn(roomId) {
         await _triggerAiTurn(roomId);
         failures = 0;
       } catch (err) {
-        console.error("AI turn error:", err);
+        log.error("AI turn error", { roomId, failures: failures + 1, err });
         failed = true;
         failures++;
       }
@@ -401,7 +407,7 @@ export async function triggerAiTurn(roomId) {
       if (turn.rerun) continue;
       if (!failed) break;
       if (failures > AI_RETRY_DELAYS_MS.length) {
-        console.error(`AI turn in room ${roomId} failed ${failures} times; giving up until the next trigger`);
+        log.error("AI turn gave up until the next trigger", { roomId, failures });
         break;
       }
       await wakeableSleep(turn, AI_RETRY_DELAYS_MS[failures - 1]);
@@ -447,12 +453,12 @@ async function chooseAiMove(gs, random, roomId) {
     try {
       const move = await pickMove(gs, "black", gs.legalMoves, roomId, { random });
       if (move) return move;
-      console.error(`AI pickMove returned no move in room ${roomId} (attempt ${attempt})`);
+      log.error("AI pickMove returned no move", { roomId, attempt });
     } catch (err) {
-      console.error(`AI pickMove error in room ${roomId} (attempt ${attempt}):`, err);
+      log.error("AI pickMove error", { roomId, attempt, err });
     }
   }
-  console.error(`AI playing the first legal move in room ${roomId}`);
+  log.error("AI playing the first legal move", { roomId });
   return gs.legalMoves[0];
 }
 
@@ -535,7 +541,7 @@ async function aiMove(redis, roomId, expected, chosen) {
   const gs = room.gameState;
   let move = chosen;
   if (!gs.legalMoves.some(m => m.from === move.from && m.to === move.to && m.die === move.die)) {
-    console.error(`AI chose an illegal move in room ${roomId}; playing the first legal move`, move);
+    log.error("AI chose an illegal move; playing the first legal move", { roomId, move });
     move = gs.legalMoves[0];
   }
 
@@ -611,7 +617,7 @@ function logMove(room, seq, color, from, to, die) {
     `INSERT INTO moves (game_id, seq, color, from_pt, to_pt, die)
      VALUES ($1, $2, $3, $4, $5, $6)`,
     [room.gameDbId, seq, color, fromPt, toPt, die]
-  ).catch(err => console.error("Move log error:", err.message));
+  ).catch(err => log.error("Move log error", { gameId: room.gameDbId, seq, err }));
 }
 
 async function loadRoom(redis, roomId) {
@@ -668,6 +674,10 @@ async function handleGameOver(redis, roomId, room, result, forceMatchOver = fals
   const { winner, winType, points, monk } = result;
 
   room.score[winner] += points ?? 1;
+  log.info("Game over", {
+    roomId, gameNum: room.gameNum, winner, winType, points: points ?? 1, score: room.score,
+    white: room.players.white, black: room.players.black, forced: forceMatchOver,
+  });
 
   // Accumulate per-game result for §14 tie-break
   if (!room.gameResults) room.gameResults = [];
@@ -803,7 +813,7 @@ async function handleGameOver(redis, roomId, room, result, forceMatchOver = fals
       const winnerId = room.players[matchWinner];
       const loserId  = room.players[matchLoser];
       advanceTournament(room.tournamentId, room.tournamentMatchId, winnerId, loserId)
-        .catch(err => console.error("Tournament advance error:", err.message));
+        .catch(err => log.error("Tournament advance error", { roomId, tournamentId: room.tournamentId, err }));
     }
   } else {
     // Start next game in match — loser goes first (§1)
@@ -823,7 +833,7 @@ async function handleGameOver(redis, roomId, room, result, forceMatchOver = fals
     });
 
     if (room.isAi && gs.turn === "black" && gs.phase === "rolling") {
-      triggerAiTurn(roomId).catch(e => console.error("AI turn error:", e));
+      triggerAiTurn(roomId).catch(err => log.error("AI turn error", { roomId, err }));
     }
   }
 }
