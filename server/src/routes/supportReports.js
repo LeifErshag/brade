@@ -28,18 +28,23 @@ const LogLine = z.object({
 // first. Anything nested deeper than MAX_DEPTH becomes null (the client's
 // state summary is flat). Two keys that differ only by NULs would collapse
 // into one, so that is an issue instead: {"note": …, "note\u0000": …} must be
-// rejected like any unknown key, not quietly merged.
+// rejected like any unknown key, not quietly merged. The issue's path names
+// the key, so a 400 says which one collided.
 const MAX_DEPTH = 10;
-function stripNul(value, ctx, depth = 0) {
+function stripNul(value, ctx, path = []) {
   if (typeof value === "string") return value.replaceAll("\u0000", "");
   if (value === null || typeof value !== "object") return value;
-  if (depth >= MAX_DEPTH) return null;
-  if (Array.isArray(value)) return value.map(v => stripNul(v, ctx, depth + 1));
-  const entries = Object.entries(value)
-    .map(([k, v]) => [k.replaceAll("\u0000", ""), stripNul(v, ctx, depth + 1)]);
-  if (new Set(entries.map(([k]) => k)).size < entries.length) {
-    ctx.addIssue({ code: "custom", message: "Keys may not differ only by NUL characters" });
-  }
+  if (path.length >= MAX_DEPTH) return null;
+  if (Array.isArray(value)) return value.map((v, i) => stripNul(v, ctx, [...path, i]));
+  const seen = new Set();
+  const entries = Object.entries(value).map(([rawKey, v]) => {
+    const k = rawKey.replaceAll("\u0000", "");
+    if (seen.has(k)) {
+      ctx.addIssue({ code: "custom", path: [...path, k], message: `Keys may not differ only by NUL characters: "${k}"` });
+    }
+    seen.add(k);
+    return [k, stripNul(v, ctx, [...path, k])];
+  });
   return Object.fromEntries(entries);
 }
 
