@@ -25,7 +25,8 @@ const ClientLogSchema = z.object({
 // POST /api/client-log — a client-side warning or error, written to the
 // server log so a player's problem can be traced (see server/src/log.js).
 // Signed-out players may send too; the userId is attached when the Bearer
-// token is valid.
+// token is valid. The roomId is whatever the client says: a line without a
+// userId may name any room, so treat its roomId as unverified.
 router.post("/", rateLimitClientLog, optionalAuth, validate(ClientLogSchema), (req, res) => {
   const { level, msg, roomId, page, context } = req.body;
   log[level](`client: ${msg}`, {
