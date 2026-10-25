@@ -84,7 +84,7 @@ jest.unstable_mockModule("../game/ai.js", () => ({
 
 const { triggerAiTurn } = await import("./handlers.js");
 const { pendingRoomLockCount } = await import("./roomLock.js");
-const { initGame, rollDice, getLegalMoves } = await import("../game/engine.js");
+const { initGame, getLegalMoves } = await import("../game/engine.js");
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -98,15 +98,14 @@ const SHORTEST_BACKOFF_MS = 1_000;
 // up to one step.
 const STEP_MS = 100;
 
-// moving: the AI has already rolled (the dice are in the saved state).
-function makeRoom(roomId, { moving = false } = {}) {
+// dice: the AI has already rolled these (they are in the saved state).
+function makeRoom(roomId, { dice = null } = {}) {
   const gs = initGame();
   gs.turn      = "black";
   gs.phase     = "rolling";
   gs.firstMove = false;
   gs.moveSeq   = START_SEQ;
-  if (moving) {
-    const dice    = rollDice();
+  if (dice) {
     gs.dice       = dice.slice();
     gs.rolledDice = dice.slice();
     gs.phase      = "moving";
@@ -325,7 +324,12 @@ describe("a trigger arriving during a backoff sleep", () => {
 
   test("with dice rolled before the loop started: a trigger during a backoff sleep resumes the turn without re-rolling", async () => {
     const roomId = "WAKEUP04";
-    const room = putRoom(roomId, { moving: true });
+    // Fixed dice with two moves to play, so the resumed pass saves a black
+    // state before its last move. A random roll made this flaky (#192): on
+    // 6-6 black has a single legal move from the start position, which ends
+    // the turn, so no black state was ever saved.
+    const dice = [3, 1];
+    putRoom(roomId, { dice });
     let recovered = false;
     failRead = () => !recovered; // every read fails until Redis is back
 
@@ -347,7 +351,9 @@ describe("a trigger arriving during a backoff sleep", () => {
     expect(turn.settled).toBe(true);
     expectTurnFinished(roomId);
     expectOneRoll(roomId);
-    expect(savesOf(roomId)[0].gameState.rolledDice).toEqual(room.gameState.rolledDice);
+    // Never re-rolled: every state saved, the finished turn included, keeps
+    // the dice rolled before the loop started.
+    for (const r of savesOf(roomId)) expect(r.gameState.rolledDice).toEqual(dice);
     expect(pendingRoomLockCount()).toBe(0);
   }, 180_000);
 
