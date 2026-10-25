@@ -135,12 +135,25 @@ describe("POST /api/support-reports", () => {
     });
   });
 
+  test("anything nested deeper than 10 levels is stored as null", async () => {
+    // nest(n) is n objects deep: { a: { a: … "leaf" } }.
+    const nest = (n) => (n === 0 ? "leaf" : { a: nest(n - 1) });
+    expect((await post({ note: "deep", state: { a: nest(12) } })).status).toBe(201);
+    // The body is level 0 and state level 1, so state.a is level 2 and the
+    // object at level 10 (state.a nested 8 deep) becomes null.
+    const stored = () => { let o = null; for (let i = 0; i < 8; i++) o = { a: o }; return o; };
+    expect(insertParams()[6].state).toEqual({ a: stored() });
+  });
+
   test.each([
-    ["at the top level",   { note: "a", "note\u0000": "b" }],
-    ["in the state",       { note: "a", state: { phase: "x", "pha\u0000se": "y" } }],
-    ["in a log line's ctx", { note: "a", logs: [{ t: "t", level: "info", msg: "m", ctx: { k: 1, "\u0000k": 2 } }] }],
-  ])("rejects keys that differ only by NULs %s", async (_name, body) => {
-    expect((await post(body)).status).toBe(400);
+    ["at the top level",    { note: "a", "note\u0000": "b" },                                               ["note"]],
+    ["in the state",        { note: "a", state: { phase: "x", "pha\u0000se": "y" } },                       ["state", "phase"]],
+    ["in a log line's ctx", { note: "a", logs: [{ t: "t", level: "info", msg: "m", ctx: { k: 1, "\u0000k": 2 } }] }, ["logs", 0, "ctx", "k"]],
+  ])("rejects keys that differ only by NULs %s, naming the key", async (_name, body, path) => {
+    const res = await post(body);
+    expect(res.status).toBe(400);
+    expect((await res.json()).issues).toContainEqual(
+      { path, message: `Keys may not differ only by NUL characters: "${path.at(-1)}"` });
     expect(query).not.toHaveBeenCalled();
   });
 

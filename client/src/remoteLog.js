@@ -54,7 +54,9 @@ export function clearLogContext() {
 
 // Called by the error boundary while it renders the crash screen, which is
 // before the crashed page's effects are cleaned up. The crash screen is only
-// left by reloading, so this is never undone.
+// left by reloading, so this is never undone. Root boundary only: a nested
+// boundary that recovered without a reload would stop clearLogContext from
+// ever clearing again.
 export function noteCrash() {
   crashed = true;
 }
