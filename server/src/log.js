@@ -19,8 +19,8 @@
 // Never pass secrets or personal data. As a safety net, fields named like
 // tokens, cookies, passwords, secrets or emails are dropped (also inside
 // nested objects), token-looking text in strings (`token=…`, `Bearer …`,
-// JWTs) is masked, and the row values that pg quotes in an error's detail
-// are left out.
+// JWTs) is masked, and the input values that pg quotes in an error's
+// message and detail are left out (see maskPg for which ones).
 
 const LEVELS = ["info", "warn", "error"];
 const UNSAFE_KEY = /token|cookie|password|secret|authorization|email/i;
@@ -63,7 +63,13 @@ function scrub(value, depth = 0) {
     try { json = value.toJSON(); } catch { return "[unprintable]"; }
     return scrub(json, depth + 1);
   }
-  if (value instanceof Map) return scrub(Object.fromEntries(value), depth + 1);
+  if (value instanceof Map) {
+    if ([...value.keys()].every(k => typeof k === "string")) return scrub(Object.fromEntries(value), depth + 1);
+    // Other keys would collapse into "[object Object]" and overwrite each
+    // other, so keep the [key, value] pairs instead.
+    const pairs = [...value].filter(([k]) => typeof k !== "string" || !UNSAFE_KEY.test(k));
+    return scrub(pairs, depth + 1);
+  }
   if (value instanceof Set) return scrub([...value], depth + 1);
   const out = {};
   for (const [key, v] of Object.entries(value)) {
@@ -81,11 +87,24 @@ function describe(value) {
   return safeString(value);
 }
 
-// pg's detail quotes row values ("Key (room_id)=(…) already exists.",
-// "Failing row contains (…)."), which may be personal data: mask them,
-// including values that span lines.
-function maskDetail(detail) {
-  return redact(detail).replace(/=\(.*\)/gs, "=(…)").replace(/contains \(.*\)/gs, "contains (…)");
+// pg quotes input values, which may be personal data, in an error's detail
+// ("Key (room_id)=(…) already exists.", "Failing row contains (…).",
+// 'Token "…" is invalid.') and, for codes like 22P02, in its message
+// ('invalid input syntax for type uuid: "…"'). Mask those, including values
+// that span lines. This covers the forms pg uses for constraint and input
+// errors; a value quoted some other way would still be logged, so user text
+// should be validated before it reaches the database.
+function maskPg(text) {
+  return redact(text)
+    .replace(/=\(.*\)/gs, "=(…)")
+    .replace(/contains \(.*\)/gs, "contains (…)")
+    .replace(/Token ".*" is invalid/gs, 'Token "…" is invalid')
+    .replace(/: ".*"/gs, ': "…"');
+}
+
+// pg's DatabaseError carries the server's severity ("ERROR", "FATAL", …).
+function isPgError(err) {
+  return typeof err.severity === "string";
 }
 
 // How many causes deep err.cause is followed.
@@ -93,15 +112,21 @@ const MAX_CAUSES = 3;
 
 function serializeError(err, causes = 0) {
   if (!(err instanceof Error)) return { message: redact(describe(err)) };
-  const out = { message: redact(err.message) };
+  const pg = isPgError(err);
+  const out = { message: pg ? maskPg(err.message) : redact(err.message) };
   if (typeof err.name === "string" && err.name !== "Error") out.name = err.name;
   if (typeof err.code === "string" || typeof err.code === "number") out.code = err.code;
   // pg's DatabaseError fields: which constraint, table or column was involved.
-  if (typeof err.detail === "string") out.detail = maskDetail(err.detail);
+  if (typeof err.detail === "string") out.detail = maskPg(err.detail);
   for (const key of ["constraint", "table", "column"]) {
     if (typeof err[key] === "string") out[key] = redact(err[key]);
   }
-  if (err.stack) out.stack = redact(err.stack);
+  if (err.stack) {
+    // The stack starts with the message, so mask it the same way.
+    const stack = redact(err.stack);
+    const message = redact(err.message);
+    out.stack = pg && message ? stack.split(message).join(out.message) : stack;
+  }
   if (err.cause !== undefined) {
     out.cause = causes < MAX_CAUSES ? serializeError(err.cause, causes + 1) : "[too deep]";
   }
@@ -112,8 +137,8 @@ function serializeError(err, causes = 0) {
 export function buildEntry(level, msg, fields) {
   const entry = { t: new Date().toISOString(), level };
   if (msg instanceof Error) {
-    entry.msg = redact(msg.message);
     entry.err = serializeError(msg);
+    entry.msg = entry.err.message;
   } else {
     entry.msg = redact(describe(msg));
   }
@@ -139,13 +164,43 @@ function useJson() {
   return process.env.NODE_ENV === "production" || process.env.RENDER === "true";
 }
 
+function pairs(fields) {
+  return Object.entries(fields).map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`);
+}
+
+// A serialised error as indented lines: its stack (or message), its other
+// fields (code, detail, …), then its cause.
+function prettyError(err, indent = "  ") {
+  if (typeof err !== "object") return `${indent}${err}`;
+  const { message, stack, cause, ...fields } = err;
+  delete fields.name; // already at the start of the stack
+  const lines = String(stack ?? message).split("\n").map(l => `${indent}${l}`);
+  if (Object.keys(fields).length) lines.push(`${indent}${pairs(fields).join(" ")}`);
+  if (cause !== undefined) lines.push(`${indent}Caused by:`, prettyError(cause, `${indent}  `));
+  return lines.join("\n");
+}
+
 export function format(entry, json = useJson()) {
   if (json) return JSON.stringify(entry);
   const { t, level, msg, err, ...rest } = entry;
-  const extras = Object.entries(rest).map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`);
+  const extras = pairs(rest);
   let line = `${t} ${level.toUpperCase()} ${msg}${extras.length ? ` ${extras.join(" ")}` : ""}`;
-  if (err) line += `\n  ${err.stack ?? err.message}`;
+  if (err) line += `\n${prettyError(err)}`;
   return line;
+}
+
+// The string, number and boolean fields that can be read without throwing,
+// for the fallback line.
+function plainFields(fields) {
+  if (!isPlainObject(fields)) return undefined;
+  const out = {};
+  for (const key of Object.keys(fields)) {
+    try {
+      const value = fields[key];
+      if (["string", "number", "boolean"].includes(typeof value)) out[key] = value;
+    } catch { /* a throwing getter: leave it out */ }
+  }
+  return out;
 }
 
 function write(level, msg, fields) {
@@ -155,9 +210,9 @@ function write(level, msg, fields) {
   } catch {
     // e.g. a circular field: still log something rather than throw. Logging
     // runs in error handlers (the pg pool's, the process's), so it must
-    // never throw itself.
+    // never throw itself. Keep the plain fields (roomId, userId) if possible.
     try {
-      line = format(buildEntry(level, msg));
+      line = format(buildEntry(level, msg, plainFields(fields)));
     } catch {
       line = format({ t: new Date().toISOString(), level, msg: "[unloggable message]" });
     }

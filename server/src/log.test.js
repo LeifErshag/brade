@@ -141,6 +141,34 @@ describe("buildEntry", () => {
     expect(buildEntry("error", "m", { err: dup }).err.detail).toBe("Key (display_name)=(…) already exists.");
   });
 
+  test("masks the input pg quotes in an error's message, stack and detail", () => {
+    const badUuid = Object.assign(new Error('invalid input syntax for type uuid: "Anna\nSvensson"'), {
+      severity: "ERROR", code: "22P02",
+    });
+    const e = buildEntry("error", "m", { err: badUuid });
+    expect(e.err.message).toBe('invalid input syntax for type uuid: "…"');
+    expect(e.err.stack.split("\n")[0]).toBe('Error: invalid input syntax for type uuid: "…"');
+    expect(JSON.stringify(e)).not.toMatch(/Anna|Svensson/);
+
+    const badJson = Object.assign(new Error("invalid input syntax for type json"), {
+      severity: "ERROR", code: "22P02", detail: 'Token "Anna" is invalid.',
+    });
+    expect(buildEntry("error", "m", { err: badJson }).err.detail).toBe('Token "…" is invalid.');
+
+    // As the message itself, too.
+    expect(buildEntry("error", badUuid).msg).toBe('invalid input syntax for type uuid: "…"');
+
+    // Messages from anything other than pg are left alone.
+    expect(buildEntry("error", "m", { err: new Error('bad value: "x"') }).err.message).toBe('bad value: "x"');
+  });
+
+  test("keeps object keys of a Map apart", () => {
+    const e = buildEntry("info", "m", {
+      map: new Map([[{ id: 1 }, "a"], [{ id: 2 }, "b"], ["token", "tok-1"], ["roomId", "R"]]),
+    });
+    expect(e.map).toEqual([[{ id: 1 }, "a"], [{ id: 2 }, "b"], ["roomId", "R"]]);
+  });
+
   test("masks token-looking text in the message, fields and errors", () => {
     const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1MSJ9.c2lnbmF0dXJl";
     const err = new Error(`failed to connect to wss://x/ws?room=R&token=${jwt}`);
@@ -176,6 +204,18 @@ describe("format", () => {
     const line = format(buildEntry("warn", "WS rejected", { roomId: "R", code: 4001 }), false);
     expect(line.split("\n")[0]).toMatch(/ WARN WS rejected roomId=R code=4001$/);
   });
+
+  test("pretty shows an error's pg fields and its cause", () => {
+    const cause = new Error("socket closed");
+    const err = Object.assign(new Error("query failed", { cause }), {
+      code: "23505", detail: "Key (room_id)=(R) already exists.", table: "games",
+    });
+    const lines = format(buildEntry("error", "m", { err }), false).split("\n");
+    expect(lines).toContain("  code=23505 detail=Key (room_id)=(…) already exists. table=games");
+    const at = lines.indexOf("  Caused by:");
+    expect(at).toBeGreaterThan(0);
+    expect(lines[at + 1]).toBe("    Error: socket closed");
+  });
 });
 
 describe("log", () => {
@@ -205,6 +245,21 @@ describe("log", () => {
     circular.self = circular;
     expect(() => log.error("still here", { circular })).not.toThrow();
     expect(JSON.parse(error.mock.calls[0][0])).toMatchObject({ msg: "still here" });
+  });
+
+  test("the fallback line keeps the plain fields", () => {
+    process.env.LOG_FORMAT = "json";
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    const fields = {
+      roomId: "R", userId: "u1", tries: 2, token: "tok-1",
+      get broken() { throw new Error("no"); },
+      ctx: { get deep() { throw new Error("no"); } },
+    };
+    expect(() => log.error("still here", fields)).not.toThrow();
+    const entry = JSON.parse(error.mock.calls[0][0]);
+    expect(entry).toMatchObject({ msg: "still here", roomId: "R", userId: "u1", tries: 2 });
+    expect(entry).not.toHaveProperty("ctx");
+    expect(JSON.stringify(entry)).not.toContain("tok-1");
   });
 
   test.each([
