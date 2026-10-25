@@ -189,17 +189,14 @@ export function noteBoundaryCatch(err) {
 // so they are only recorded and sent.
 export function installGlobalErrorHandlers() {
   window.addEventListener("error", (e) => {
-    const msg = `Uncaught error: ${describeError(e)}`;
-    const ctx = { file: e.filename, line: e.lineno, col: e.colno, stack: stackOf(e.error) };
-    if (!import.meta.env.DEV) {
-      clientLog.error(msg, ctx, { echo: false });
-      return;
-    }
+    const text = describeError(e);
+    const ctx  = { file: e.filename, line: e.lineno, col: e.colno, stack: stackOf(e.error) };
+    const report = () => clientLog.error(`Uncaught error: ${text}`, ctx, { echo: false });
+    if (!import.meta.env.DEV) { report(); return; }
     const message = describeError(e.error ?? e);
     const seenAt  = Date.now();
     setTimeout(() => {
-      if ((boundaryCaught.get(message) ?? -Infinity) >= seenAt) return;
-      clientLog.error(msg, ctx, { echo: false });
+      if ((boundaryCaught.get(message) ?? -Infinity) < seenAt) report();
     }, BOUNDARY_WAIT_MS);
   });
   window.addEventListener("unhandledrejection", (e) => {
