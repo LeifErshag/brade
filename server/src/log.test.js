@@ -172,14 +172,27 @@ describe("buildEntry", () => {
     expect(e.err.stack.split("\n")[0]).toBe('Error: invalid input syntax for type uuid: "…"');
     expect(e.err.stack).toMatch(/\n\s+at /);
     expect(JSON.stringify(e)).not.toMatch(/Anna|Svensson|Bertil/);
+  });
 
-    // A new message that still appears in the stack (shortened, or "Error").
-    for (const shorter of ["invalid input syntax for type uuid", "Error"]) {
+  // A new message that still appears in the stack (shortened, or "Error").
+  test.each(["invalid input syntax for type uuid", "Error"])(
+    "masks a pg stack whose message was shortened to %j",
+    shorter => {
       const short = Object.assign(new Error('invalid input syntax for type uuid: "Anna"'), { severity: "ERROR" });
       void short.stack;
       short.message = shorter;
       expect(buildEntry("error", "m", { err: short }).err.stack).not.toContain("Anna");
-    }
+    },
+  );
+
+  test("masks an old pg message with a line that looks like a stack frame", () => {
+    const err = Object.assign(new Error('x: "Anna\n    at Bertil\nCecilia"'), { severity: "ERROR" });
+    const frames = err.stack.split("\n").slice(3);
+    err.message = "q";
+    const stack = buildEntry("error", "m", { err }).err.stack;
+    expect(stack).not.toMatch(/Anna|Bertil|Cecilia/);
+    // The real frames are kept as they were.
+    expect(stack.split("\n").slice(1)).toEqual(frames);
   });
 
   test("keeps object keys of a Map apart", () => {
