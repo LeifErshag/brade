@@ -131,6 +131,9 @@ function maskStackHead(stack) {
 // changed after the stack was captured) the whole head is masked. The text
 // before the message must be just the name and every line after it a frame,
 // or the current message may be the tail or the start of the old one.
+// The current message may also be a middle slice of the old one, ending in
+// lines that look like frames, so those lines are kept as frames; where it
+// still appears afterwards it is swapped for the masked one too.
 function maskPgStack(stack, message, masked) {
   const at = message ? stack.indexOf(message) : -1;
   if (at >= 0 && /^(?:[\w$.]*: )?$/.test(stack.slice(0, at))) {
@@ -139,7 +142,8 @@ function maskPgStack(stack, message, masked) {
       return stack.slice(0, at) + masked + rest;
     }
   }
-  return maskStackHead(stack);
+  const head = maskStackHead(stack);
+  return message ? head.split(message).join(masked) : head;
 }
 
 // pg's DatabaseError carries the server's severity ("ERROR", "FATAL", …).

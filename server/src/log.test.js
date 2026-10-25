@@ -261,6 +261,15 @@ describe("buildEntry", () => {
     expect(buildEntry("error", "m", { err }).err.stack).not.toMatch(/Anna|Svensson/);
   });
 
+  test("masks a pg stack whose message was cut to a middle slice ending in frame-like lines", () => {
+    const err = Object.assign(new Error("Key (a)=(q\n    at Anna (y:1:2)\n    at x (y:1:2)"), { severity: "ERROR" });
+    void err.stack;
+    err.message = "ey (a)=(q\n    at Anna (y:1:2)\n  ";
+    const stack = buildEntry("error", "m", { err }).err.stack;
+    expect(stack).not.toContain("Anna");
+    expect(stack).toMatch(/\n\s+at /);
+  });
+
   test("masks only the message in a pg stack whose message is unchanged", () => {
     const err = Object.assign(new Error('"games" is not a sequence'), { severity: "ERROR", code: "42809" });
     const e = buildEntry("error", "m", { err });
@@ -271,6 +280,14 @@ describe("buildEntry", () => {
     const frames = bad.stack.slice(bad.stack.indexOf("\n"));
     expect(buildEntry("error", "m", { err: bad }).err.stack)
       .toBe(`Error: invalid input syntax for type uuid: "…"${frames}`);
+
+    // pg sets name = "error" and then captures the stack, so its header is "error: ".
+    const pg = Object.assign(new Error('invalid input syntax for type uuid: "Anna"'), { name: "error", severity: "ERROR" });
+    Error.captureStackTrace(pg);
+    expect(pg.stack.startsWith("error: ")).toBe(true);
+    const pgFrames = pg.stack.slice(pg.stack.indexOf("\n"));
+    expect(buildEntry("error", "m", { err: pg }).err.stack)
+      .toBe(`error: invalid input syntax for type uuid: "…"${pgFrames}`);
   });
 
   test("keeps object keys of a Map apart", () => {
