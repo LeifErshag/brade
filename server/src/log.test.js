@@ -196,9 +196,14 @@ describe("buildEntry", () => {
     },
   );
 
-  test("masks an old pg message with a line that looks like a stack frame", () => {
-    const err = Object.assign(new Error('x: "Anna\n    at Bertil\nCecilia"'), { severity: "ERROR" });
-    const frames = err.stack.split("\n").slice(3);
+  // The second message ends in a whole frame with a location; only the
+  // closing " keeps that line out of the frames.
+  test.each([
+    'x: "Anna\n    at Bertil\nCecilia"',
+    'x: "Anna\n    at Bertil (a:1:2)"',
+  ])("masks an old pg message %j with a line that looks like a stack frame", (old) => {
+    const err = Object.assign(new Error(old), { severity: "ERROR" });
+    const frames = err.stack.split("\n").slice(old.split("\n").length);
     err.message = "q";
     const stack = buildEntry("error", "m", { err }).err.stack;
     expect(stack).not.toMatch(/Anna|Bertil|Cecilia/);
