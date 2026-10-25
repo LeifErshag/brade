@@ -8,7 +8,7 @@ import TutorialCoach from "../components/TutorialCoach.jsx";
 import { OFFICIAL_RULES_URL } from "../components/RulesContent.jsx";
 import LanguageToggle, { LanguageBar } from "../components/LanguageToggle.jsx";
 import { useI18n } from "../i18n/I18nContext.jsx";
-import { setLogContext } from "../remoteLog.js";
+import { clearLogContext, setLogContext } from "../remoteLog.js";
 import ReportProblem from "../components/ReportProblem.jsx";
 
 const API = import.meta.env.VITE_API_URL ?? "";
@@ -199,14 +199,14 @@ export default function Game() {
     clearTimeout(junkerTimer.current);
   }, []);
 
-  // Tag client log lines sent to the server with this room and token. Not
-  // cleared on unmount: a report from the crash screen still needs them, and
-  // remoteLog only uses them while the address is this room's page. Declared
-  // before useSocket so that it runs first and lines from the very first
-  // connect attempt are tagged too.
+  // Tag client log lines sent to the server with this room and token.
+  // Declared before useSocket so that it runs first and lines from the very
+  // first connect attempt are tagged too. Cleared on leaving the page (kept
+  // after a crash, for a report from the crash screen).
   useEffect(() => {
     setLogContext({ roomId, token: wsToken ?? null });
   }, [roomId, wsToken]);
+  useEffect(() => clearLogContext, []);
 
   const { send } = useSocket({
     roomId: (wsToken && !loading) ? roomId : null,

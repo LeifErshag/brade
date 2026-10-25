@@ -27,6 +27,7 @@ const ROOM_ID              = /^[A-Z0-9]{8}$/;
 // bytes, as the server counts it.
 const MAX_REPORT_BYTES     = 60_000;
 
+const encoder  = new TextEncoder();
 const recent   = [];
 const sentAt   = [];          // timestamps of sends in the last minute
 const lastSent = new Map();   // msg → when it was last sent
@@ -35,13 +36,27 @@ const lastSent = new Map();   // msg → when it was last sent
 // guest token is not in sessionStorage under access_token) and a function
 // returning a summary of what the page shows, for problem reports.
 //
-// It is kept when the page unmounts, so a report sent from the crash screen
-// after Game crashed still has its room, state and token, but it is only used
-// while the address is still that room's page.
-let current = { roomId: null, token: null, state: null };
+// It is only used while the address is still that room's page. Leaving the
+// page clears it (clearLogContext), so coming back to the same room after
+// signing in does not reuse an old guest token. After a crash it is kept, so
+// a report sent from the crash screen still has its room, state and token.
+const NO_CONTEXT = { roomId: null, token: null, state: null };
+let current = NO_CONTEXT;
+let crashed = false;
 
 export function setLogContext(next) {
   current = { ...current, ...next };
+}
+
+export function clearLogContext() {
+  if (!crashed) current = NO_CONTEXT;
+}
+
+// Called by the error boundary while it renders the crash screen, which is
+// before the crashed page's effects are cleaned up. The crash screen is only
+// left by reloading, so this is never undone.
+export function noteCrash() {
+  crashed = true;
 }
 
 const GAME_PAGE = /^\/game\/([^/]+)\/?$/;
@@ -231,7 +246,7 @@ export async function sendProblemReport(note) {
     t, level, msg: msg.slice(0, 600), ...(ctx ? { ctx } : {}),
   }));
   // The server accepts 64 kB; drop the oldest lines until the report fits.
-  const bytes = (text) => new TextEncoder().encode(text).length;
+  const bytes = (text) => encoder.encode(text).length;
   let json = JSON.stringify(body);
   while (bytes(json) > MAX_REPORT_BYTES && body.logs.length) {
     body.logs.shift();
