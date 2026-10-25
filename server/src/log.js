@@ -104,10 +104,12 @@ function describe(value) {
 // frame-like lines of a changed message). A ': "' value is the end of
 // pg's message, so it is masked to the end of the text even if it holds a
 // '"' itself. A message that starts with an identifier ('"games" is not a
-// sequence', 'relation "games" does not exist') is kept, as is a stack's
-// "Error: " header. A value whose closing quote is missing, or a message cut
-// off after a value that starts it (only our own code can cut one off), is
-// masked too. This covers the forms pg uses for constraint, input and range
+// sequence', 'relation "games" does not exist') is kept. No header is
+// spared here: maskStackHead splits a stack's "Name: " header off when it
+// can tell one, so a text that starts with something like "Name: " (a
+// renamed error's stack head) is masked from its first ': "'. A value whose
+// closing quote is missing, or a message cut off after a value that starts
+// it (only our own code can cut one off), is masked too. This covers the forms pg uses for constraint, input and range
 // errors and the ones above; a value quoted some other way would still be
 // logged, so user text should be validated before it reaches the database.
 function maskPg(text) {
@@ -122,15 +124,14 @@ function maskPg(text) {
     .replace(/invalid value ".*" for "/gs, 'invalid value "…" for "')
     .replace(/Unexpected ".*" character/gs, 'Unexpected "…" character')
     .replace(/but found ".*"/gs, 'but found "…"')
-    .replace(/(?<!^[\w$.]*[Ee]rror): ".*?("?)$/s, ': "…$1'));
+    .replace(/: ".*?("?)$/s, ': "…$1'));
 }
 
 // What follows a value that starts pg's message.
 const AFTER_LEADING_VALUE = [" is out of range for type ", " is not a valid binary digit", " is not a valid hexadecimal digit"];
 
-// A message (after a stack's "Error: " header) that starts with a value and
-// was cut off inside it ('"Anna', '"Anna "Bo') or inside the text after it
-// ('"Anna" is out of ra'). A quote right before a letter or digit opens a
+// A message that starts with a value and was cut off inside it ('"Anna',
+// '"Anna "Bo') or inside the text after it ('"Anna" is out of ra'). A quote right before a letter or digit opens a
 // quote inside the value rather than closing it, so the value is still open.
 // pg follows a closing quote with a space or punctuation, so an identifier
 // that starts the message ('"games" is not a sequence') is kept. One followed
@@ -139,13 +140,12 @@ const AFTER_LEADING_VALUE = [" is out of range for type ", " is not a valid bina
 // message whose stack still holds the whole one is masked from that instead
 // (see maskPgMessage), so this guess only covers a message without one.
 function maskLeadingValue(text) {
-  const m = /^((?:[\w$.]*[Ee]rror: )?)"(.*)$/s.exec(text);
-  if (!m) return text;
-  const close = m[2].lastIndexOf('"');
-  if (close < 0) return `${m[1]}"…`;
-  const rest = m[2].slice(close + 1);
-  if (/^[\p{L}\p{N}]/u.test(rest)) return `${m[1]}"…`;
-  return AFTER_LEADING_VALUE.some(after => rest.startsWith(after) || after.startsWith(rest)) ? `${m[1]}"…"${rest}` : text;
+  if (!text.startsWith('"')) return text;
+  const close = text.lastIndexOf('"');
+  if (close === 0) return '"…';
+  const rest = text.slice(close + 1);
+  if (/^[\p{L}\p{N}]/u.test(rest)) return '"…';
+  return AFTER_LEADING_VALUE.some(after => rest.startsWith(after) || after.startsWith(rest)) ? `"…"${rest}` : text;
 }
 
 // A V8 stack frame: "    at fn (file:1:2)", "    at file:1:2",
@@ -156,11 +156,22 @@ const STACK_FRAME = /^\s+at .*(?::\d+:\d+\)?|\(?<anonymous>\)?|\(native\)|\(inde
 // was captured with. The frames are the lines at the end that look like
 // frames, so a line of the message that looks like one ("    at …") is still
 // masked as long as a line after it doesn't (pg's quoted values end in '"').
-// A frame-like line the engine wrote some other way is masked too.
-function maskStackHead(stack) {
+// A frame-like line the engine wrote some other way is masked too. The
+// stack's "Name: " header is kept and the message after it masked on its
+// own. If the name was changed since the stack was captured, only an
+// "…Error: " header is taken for one; with any other name the whole head is
+// masked as a message, so a value after its first ': ' is masked to the end
+// ('Database Error: "…'), because a guessed header may really be the start
+// of a message that a ': "' value follows. This is stricter on purpose than
+// stackHeader's guess, which only locates a message and never keeps text
+// that maskPg would mask; splitting off that looser guess here would leave
+// a ': "' value after it to maskLeadingValue's weaker rules.
+function maskStackHead(stack, name) {
   const lines = stack.split("\n");
   const first = firstFrame(lines);
-  return [maskPg(lines.slice(0, first).join("\n")), ...lines.slice(first)].join("\n");
+  const head = lines.slice(0, first).join("\n");
+  const header = namedHeader(head, name) ?? /^[\w$.]*[Ee]rror: /.exec(head)?.[0] ?? "";
+  return [header + maskPg(head.slice(header.length)), ...lines.slice(first)].join("\n");
 }
 
 // The index of a stack's first frame line (see maskStackHead).
@@ -170,21 +181,33 @@ function firstFrame(lines) {
   return first;
 }
 
-// The "Name: " header a stack starts with. V8 writes err.name there, which
-// may hold any character ("Database Error"), so that is tried first; a name
-// changed since the stack was captured falls back to a name-like header.
+// The "Name: " header a stack starts with, if it is the error's current
+// name. V8 writes err.name there, which may hold any character
+// ("Database Error").
+function namedHeader(stack, name) {
+  return typeof name === "string" && name && stack.startsWith(`${name}: `) ? `${name}: ` : undefined;
+}
+
+// The "Name: " header a stack starts with. A name changed since the stack
+// was captured falls back to a guess: the text up to the first ': ', if it
+// holds no '"' or '(' (which start the values maskPg masks), so the text a
+// wrong guess leaves out holds no value.
 function stackHeader(stack, name) {
-  if (typeof name === "string" && name && stack.startsWith(`${name}: `)) return `${name}: `;
-  return /^[\w$.]*: /.exec(stack)?.[0] ?? "";
+  return namedHeader(stack, name) ?? /^[^"(\n]*?: /.exec(stack)?.[0] ?? "";
 }
 
 // The message a stack was captured with, if the current message is a cut
-// of it (a proper prefix).
+// of it (a proper prefix). A guessed header may really be part of the
+// message (or the stack may have none), so the whole head is tried too.
 function cutFrom(stack, message, name) {
+  if (!message) return undefined;
   const lines = stack.split("\n");
   const head = lines.slice(0, firstFrame(lines)).join("\n");
-  const old = head.slice(stackHeader(head, name).length);
-  return message && old.length > message.length && old.startsWith(message) ? old : undefined;
+  const named = namedHeader(head, name);
+  const headers = named === undefined ? [stackHeader(head), ""] : [named];
+  return headers
+    .map(header => head.slice(header.length))
+    .find(old => old.length > message.length && old.startsWith(message));
 }
 
 // Masks a pg error's message. One our own code cut off from the message its
@@ -240,7 +263,7 @@ function maskPgStack(stack, message, masked, name) {
       return stack.slice(0, at) + masked + rest;
     }
   }
-  const head = maskStackHead(stack);
+  const head = maskStackHead(stack, name);
   const swapped = message ? head.split(message).join(masked) : head;
   return swapped.split("\n").map(line => (STACK_FRAME.test(line) ? maskPg(line) : line)).join("\n");
 }

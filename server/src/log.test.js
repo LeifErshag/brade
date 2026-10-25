@@ -265,15 +265,46 @@ describe("buildEntry", () => {
   });
 
   // The stack's header is "Name: ", whatever characters the name holds.
-  test("masks a pg message cut from its stack when the error name holds a space", () => {
+  // These tests read err.stack before changing the message or name: V8
+  // builds the stack text on first read, so reading it later would give a
+  // stack that already holds the changed message or name.
+  test.each(["Database Error", "error"])("masks a pg message cut from its stack when the error name is %j", name => {
+    const err = Object.assign(new Error('"Anna "Bo" Svensson" is out of range for type real'), {
+      name, severity: "ERROR", code: "22003",
+    });
+    Error.captureStackTrace(err);
+    expect(err.stack.startsWith(`${name}: `)).toBe(true);
+    err.message = '"Anna "Bo" Svens';
+    const e = buildEntry("error", err);
+    expect(e.err.message).toBe('"…');
+    // The header is kept and only the value after it masked.
+    expect(e.err.stack.split("\n")[0]).toBe(`${name}: "…" is out of range for type real`);
+    expect(JSON.stringify(e)).not.toMatch(/Anna|Bo\b|Sv/);
+  });
+
+  test("masks a pg message cut from its stack when the error was renamed", () => {
     const err = Object.assign(new Error('"Anna "Bo" Svensson" is out of range for type real'), {
       name: "Database Error", severity: "ERROR", code: "22003",
     });
     Error.captureStackTrace(err);
     expect(err.stack.startsWith("Database Error: ")).toBe(true);
+    err.name = "Other Thing";
     err.message = '"Anna "Bo" Svens';
     const e = buildEntry("error", err);
     expect(e.err.message).toBe('"…');
+    // The old header isn't known for one, so the head is masked from it.
+    expect(e.err.stack.split("\n")[0]).toBe('Database Error: "…');
+    expect(JSON.stringify(e)).not.toMatch(/Anna|Bo\b|Sv/);
+  });
+
+  // V8 leaves the header out for an empty name (Jest's stack formatting
+  // doesn't, so the stack is set here).
+  test("masks a cut pg message whose stack has no header", () => {
+    const err = Object.assign(new Error("x"), { name: "", severity: "ERROR", code: "22P02" });
+    err.stack = 'invalid input syntax for type uuid: "Anna "Bo" Svensson"\n    at f (file.js:1:2)';
+    err.message = 'invalid input syntax for type uuid: "Anna "Bo" Sv';
+    const e = buildEntry("error", err);
+    expect(e.err.message).toBe('invalid input syntax for type uuid: "…');
     expect(JSON.stringify(e)).not.toMatch(/Anna|Bo\b|Sv/);
   });
 
