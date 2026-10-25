@@ -62,9 +62,9 @@ export default [
     },
   },
   {
-    // CommonJS tooling config, e.g. postcss.config.cjs. globals.node is
+    // CommonJS tooling and scripts, e.g. postcss.config.cjs. globals.node is
     // nodeBuiltin plus the module-wrapper names (__dirname, __filename).
-    files: ["*.config.cjs"],
+    files: ["*.cjs", "scripts/**/*.cjs"],
     languageOptions: {
       globals: globals.node,
     },
