@@ -76,7 +76,7 @@ jest.unstable_mockModule("../game/ai.js", () => ({
 
 const { triggerAiTurn } = await import("./handlers.js");
 const { pendingRoomLockCount } = await import("./roomLock.js");
-const { initGame, rollDice, getLegalMoves } = await import("../game/engine.js");
+const { initGame, getLegalMoves } = await import("../game/engine.js");
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -84,14 +84,14 @@ const ROOM_ID   = "RETRY001";
 const HUMAN_ID  = "11111111-1111-1111-1111-111111111111";
 const START_SEQ = 10;
 
-function makeRoom({ moving = false } = {}) {
+// dice: the AI has already rolled these (they are in the saved state).
+function makeRoom({ dice = null } = {}) {
   const gs = initGame();
   gs.turn      = "black";
   gs.phase     = "rolling";
   gs.firstMove = false;
   gs.moveSeq   = START_SEQ;
-  if (moving) {
-    const dice    = rollDice();
+  if (dice) {
     gs.dice       = dice.slice();
     gs.rolledDice = dice.slice();
     gs.phase      = "moving";
@@ -189,7 +189,10 @@ describe("AI turn retry", () => {
   });
 
   test("a trigger finding the AI already moving continues with the same dice", async () => {
-    const room = makeRoom({ moving: true });
+    // Fixed dice with two moves to play, so a black state is saved before
+    // the last move. A random roll can be 6-6, which from the start position
+    // leaves black a single legal move and saves no black state (#192).
+    const room = makeRoom({ dice: [3, 1] });
     store.set(`room:${ROOM_ID}`, JSON.stringify(room));
 
     const t = track(triggerAiTurn(ROOM_ID));
@@ -198,7 +201,8 @@ describe("AI turn retry", () => {
     expect(t.settled).toBe(true);
     expectTurnFinished(stored());
     expectOneRoll();
-    expect(saves[0].gameState.rolledDice).toEqual(room.gameState.rolledDice);
+    expect(saves[0].gameState.turn).toBe("black");
+    expect(saves[0].gameState.rolledDice).toEqual([3, 1]);
   });
 
   test.each([
