@@ -264,6 +264,27 @@ describe("buildEntry", () => {
     expect(JSON.stringify(e)).not.toMatch(/Anna|Bo\b|Sv/);
   });
 
+  // The stack's header is "Name: ", whatever characters the name holds.
+  test("masks a pg message cut from its stack when the error name holds a space", () => {
+    const err = Object.assign(new Error('"Anna "Bo" Svensson" is out of range for type real'), {
+      name: "Database Error", severity: "ERROR", code: "22003",
+    });
+    Error.captureStackTrace(err);
+    expect(err.stack.startsWith("Database Error: ")).toBe(true);
+    err.message = '"Anna "Bo" Svens';
+    const e = buildEntry("error", err);
+    expect(e.err.message).toBe('"…');
+    expect(JSON.stringify(e)).not.toMatch(/Anna|Bo\b|Sv/);
+  });
+
+  test("keeps an unchanged pg stack when the error name holds a space", () => {
+    const err = Object.assign(new Error('"games" is not a sequence'), {
+      name: "Database Error", severity: "ERROR", code: "42809",
+    });
+    Error.captureStackTrace(err);
+    expect(buildEntry("error", "m", { err }).err.stack).toBe(err.stack);
+  });
+
   test("masks a pg stack whose message was changed after it was captured", () => {
     const err = Object.assign(new Error('invalid input syntax for type uuid: "Anna\nSvensson"'), {
       severity: "ERROR", code: "22P02",

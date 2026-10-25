@@ -170,12 +170,20 @@ function firstFrame(lines) {
   return first;
 }
 
+// The "Name: " header a stack starts with. V8 writes err.name there, which
+// may hold any character ("Database Error"), so that is tried first; a name
+// changed since the stack was captured falls back to a name-like header.
+function stackHeader(stack, name) {
+  if (typeof name === "string" && name && stack.startsWith(`${name}: `)) return `${name}: `;
+  return /^[\w$.]*: /.exec(stack)?.[0] ?? "";
+}
+
 // The message a stack was captured with, if the current message is a cut
 // of it (a proper prefix).
-function cutFrom(stack, message) {
+function cutFrom(stack, message, name) {
   const lines = stack.split("\n");
   const head = lines.slice(0, firstFrame(lines)).join("\n");
-  const old = head.slice(/^[\w$.]*: /.exec(head)?.[0].length ?? 0);
+  const old = head.slice(stackHeader(head, name).length);
   return message && old.length > message.length && old.startsWith(message) ? old : undefined;
 }
 
@@ -185,8 +193,8 @@ function cutFrom(stack, message) {
 // masked text that differs from the old one sits between their common start
 // and common end: a cut in the common end keeps the masked text up to it, and
 // a cut inside the masked part ends in "…" right after the common start.
-function maskPgMessage(message, stack) {
-  const old = stack ? cutFrom(stack, message) : undefined;
+function maskPgMessage(message, stack, name) {
+  const old = stack ? cutFrom(stack, message, name) : undefined;
   if (old === undefined) return maskPg(message);
   const masked = maskPg(old);
   let start = 0;
@@ -224,9 +232,9 @@ function maskPgMessage(message, stack) {
 // '    at f contains (…)' and '    at g, Bo) (y:3:4)'), also when it starts on
 // the line before the frames. That needs our own code to change a pg message
 // whose value spans such lines.
-function maskPgStack(stack, message, masked) {
+function maskPgStack(stack, message, masked, name) {
   const at = message ? stack.indexOf(message) : -1;
-  if (at >= 0 && /^(?:[\w$.]*: )?$/.test(stack.slice(0, at))) {
+  if (at === 0 || (at > 0 && at === stackHeader(stack, name).length)) {
     const rest = stack.slice(at + message.length);
     if (rest.split("\n").slice(1).every(line => STACK_FRAME.test(line)) && /^(?:\n|$)/.test(rest)) {
       return stack.slice(0, at) + masked + rest;
@@ -250,7 +258,7 @@ function serializeError(err, causes = 0) {
   const pg = isPgError(err);
   const message = redact(err.message);
   const stack = err.stack ? redact(err.stack) : undefined;
-  const out = { message: pg ? maskPgMessage(message, stack) : message };
+  const out = { message: pg ? maskPgMessage(message, stack, err.name) : message };
   if (typeof err.name === "string" && err.name !== "Error") out.name = err.name;
   if (typeof err.code === "string" || typeof err.code === "number") out.code = err.code;
   // pg's DatabaseError fields: which constraint, table or column was involved.
@@ -260,7 +268,7 @@ function serializeError(err, causes = 0) {
   }
   if (stack !== undefined) {
     // The stack starts with the message, so mask it the same way.
-    out.stack = pg ? maskPgStack(stack, message, out.message) : stack;
+    out.stack = pg ? maskPgStack(stack, message, out.message, err.name) : stack;
   }
   if (err.cause !== undefined) {
     out.cause = causes < MAX_CAUSES ? serializeError(err.cause, causes + 1) : "[too deep]";
