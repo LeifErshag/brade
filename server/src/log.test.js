@@ -158,6 +158,17 @@ describe("buildEntry", () => {
     // As the message itself, too.
     expect(buildEntry("error", badUuid).msg).toBe('invalid input syntax for type uuid: "…"');
 
+    // A value quoted mid-message (22003), in the message and the stack.
+    const outOfRange = Object.assign(new Error('value "1234\n5678901234" is out of range for type integer'), {
+      severity: "ERROR", code: "22003",
+    });
+    const e2 = buildEntry("error", "m", { err: outOfRange });
+    expect(e2.err.message).toBe('value "…" is out of range for type integer');
+    expect(e2.err.stack.split("\n")[0]).toBe('Error: value "…" is out of range for type integer');
+    expect(JSON.stringify(e2)).not.toMatch(/1234|5678901234/);
+    const badReal = Object.assign(new Error('"1e999" is out of range for type real'), { severity: "ERROR", code: "22003" });
+    expect(buildEntry("error", "m", { err: badReal }).err.message).toBe('"…" is out of range for type real');
+
     // Messages from anything other than pg are left alone.
     expect(buildEntry("error", "m", { err: new Error('bad value: "x"') }).err.message).toBe('bad value: "x"');
   });
