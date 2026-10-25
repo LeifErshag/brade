@@ -196,6 +196,15 @@ export function stackOf(err) {
 const BOUNDARY_WAIT_MS = 1000;
 const boundaryCaught   = new Map();   // message → when a boundary caught it
 
+// A cross-origin error reaches window's handlers as "Script error." with no
+// error object at line 0, column 0. React's development build then hands the
+// boundary this Error instead (react-dom's invokeGuardedCallbackDev). React 19
+// no longer does this, so after an upgrade the constant matches nothing (and
+// does no harm). React's own text, not UI text, so not translated.
+const REACT_CROSS_ORIGIN_MESSAGE =
+  "A cross-origin error was thrown. React doesn't have access to the actual error object in development. " + // i18n-ignore
+  "See https://reactjs.org/link/crossorigin-error for more information.";
+
 export function noteBoundaryCatch(err) {
   if (!import.meta.env.DEV) return;
   boundaryCaught.set(describeError(err), Date.now());
@@ -211,8 +220,11 @@ export function installGlobalErrorHandlers() {
     const report = () => clientLog.error(`Uncaught error: ${text}`, ctx, { echo: false });
     if (!import.meta.env.DEV) { report(); return; }
     // Keyed by the thrown value, as the boundary keys it, also when that value
-    // is null or undefined (`throw null`).
-    const message = describeError(e.error);
+    // is null or undefined (`throw null`). A cross-origin error is keyed by
+    // the message React gives the boundary for it, using React's own test, so
+    // it is neither reported twice nor mistaken for a `throw null`.
+    const crossOrigin = e.error === null && e.lineno === 0 && e.colno === 0;
+    const message = crossOrigin ? REACT_CROSS_ORIGIN_MESSAGE : describeError(e.error);
     const seenAt  = Date.now();
     setTimeout(() => {
       if ((boundaryCaught.get(message) ?? -Infinity) < seenAt) report();
