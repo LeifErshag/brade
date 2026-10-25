@@ -23,23 +23,7 @@ export default [
     // The app itself runs in the browser.
     files: ["src/**"],
     languageOptions: {
-      globals: {
-        window:          "readonly",
-        document:        "readonly",
-        navigator:       "readonly",
-        console:         "readonly",
-        setTimeout:      "readonly",
-        clearTimeout:    "readonly",
-        setInterval:     "readonly",
-        clearInterval:   "readonly",
-        URL:             "readonly",
-        WebSocket:       "readonly",
-        fetch:           "readonly",
-        sessionStorage:  "readonly",
-        localStorage:    "readonly",
-        URLSearchParams: "readonly",
-        TextEncoder:     "readonly",
-      },
+      globals: globals.browser,
     },
   },
   {
