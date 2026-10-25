@@ -242,6 +242,28 @@ describe("buildEntry", () => {
     expect(JSON.stringify(e)).not.toContain("Anna");
   });
 
+  // A cut message is masked from the message its stack was captured with, so
+  // a quote inside the value isn't taken for its end, whatever follows it.
+  test.each([
+    ['"Anna "Bo" Svensson" is out of range for type real', '"Anna "Bo" Svens', '"…'],
+    ['"Anna "Bo", Svensson" is out of range for type real', '"Anna "Bo", Sv', '"…'],
+    ['"Anna " Bo" is out of range for type real', '"Anna " Bo', '"…'],
+    ['"Anna "_Bo" is out of range for type real', '"Anna "_Bo', '"…'],
+    ['"Anna "😀Bo" is out of range for type real', '"Anna "😀Bo', '"…'],
+    ['"Anna "Bo" Svensson" is out of range for type real', '"Anna "Bo" Svensson" is out', '"…" is out'],
+    ['invalid input syntax for type uuid: "Anna "Bo" Svensson"', 'invalid input syntax for type uuid: "Anna "Bo" Sv', 'invalid input syntax for type uuid: "…'],
+    ['Key (a)=(Anna) already exists.', 'Key (a)=(Anna) alr', 'Key (a)=(…) alr'],
+    ['Key (a)=(Anna) already exists.', 'Key (a)=', 'Key (a)='],
+  ])("masks a pg message %j cut to %j from its stack", (old, cut, masked) => {
+    const err = Object.assign(new Error(old), { severity: "ERROR", code: "22003" });
+    void err.stack;
+    err.message = cut;
+    const e = buildEntry("error", err);
+    expect(e.msg).toBe(masked);
+    expect(e.err.message).toBe(masked);
+    expect(JSON.stringify(e)).not.toMatch(/Anna|Bo\b|Sv/);
+  });
+
   test("masks a pg stack whose message was changed after it was captured", () => {
     const err = Object.assign(new Error('invalid input syntax for type uuid: "Anna\nSvensson"'), {
       severity: "ERROR", code: "22P02",
