@@ -1,6 +1,6 @@
 import { Component } from "react";
 import { useI18n } from "../i18n/I18nContext.jsx";
-import { clientLog, describeError, noteBoundaryCatch, stackOf } from "../remoteLog.js";
+import { clientLog, describeError, noteBoundaryCatch, noteCrash, stackOf } from "../remoteLog.js";
 import ReportProblem from "./ReportProblem.jsx";
 
 // Catches a render crash anywhere below it, reports it to the server log
@@ -12,6 +12,8 @@ export default class ErrorBoundary extends Component {
   }
 
   static getDerivedStateFromError() {
+    // Keeps the crashed page's log context for a report from the crash screen.
+    noteCrash();
     return { crashed: true };
   }
 

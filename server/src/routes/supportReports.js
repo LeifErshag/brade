@@ -26,18 +26,24 @@ const LogLine = z.object({
 // Postgres rejects NUL characters in text and JSONB, so a report containing
 // one would fail with a 500. They are removed from every string and key
 // first. Anything nested deeper than MAX_DEPTH becomes null (the client's
-// state summary is flat).
+// state summary is flat). Two keys that differ only by NULs would collapse
+// into one, so that is an issue instead: {"note": …, "note\u0000": …} must be
+// rejected like any unknown key, not quietly merged.
 const MAX_DEPTH = 10;
-function stripNul(value, depth = 0) {
+function stripNul(value, ctx, depth = 0) {
   if (typeof value === "string") return value.replaceAll("\u0000", "");
   if (value === null || typeof value !== "object") return value;
   if (depth >= MAX_DEPTH) return null;
-  if (Array.isArray(value)) return value.map(v => stripNul(v, depth + 1));
-  return Object.fromEntries(Object.entries(value)
-    .map(([k, v]) => [k.replaceAll("\u0000", ""), stripNul(v, depth + 1)]));
+  if (Array.isArray(value)) return value.map(v => stripNul(v, ctx, depth + 1));
+  const entries = Object.entries(value)
+    .map(([k, v]) => [k.replaceAll("\u0000", ""), stripNul(v, ctx, depth + 1)]);
+  if (new Set(entries.map(([k]) => k)).size < entries.length) {
+    ctx.addIssue({ code: "custom", message: "Keys may not differ only by NUL characters" });
+  }
+  return Object.fromEntries(entries);
 }
 
-const SupportReportSchema = z.preprocess(stripNul, z.object({
+const SupportReportSchema = z.preprocess((value, ctx) => stripNul(value, ctx), z.object({
   note:   z.string().trim().min(1).max(2000),
   roomId: z.string().regex(ROOM_ID).optional(),
   page:   z.string().max(200).optional(),

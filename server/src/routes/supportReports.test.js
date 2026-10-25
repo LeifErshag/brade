@@ -135,6 +135,15 @@ describe("POST /api/support-reports", () => {
     });
   });
 
+  test.each([
+    ["at the top level",   { note: "a", "note\u0000": "b" }],
+    ["in the state",       { note: "a", state: { phase: "x", "pha\u0000se": "y" } }],
+    ["in a log line's ctx", { note: "a", logs: [{ t: "t", level: "info", msg: "m", ctx: { k: 1, "\u0000k": 2 } }] }],
+  ])("rejects keys that differ only by NULs %s", async (_name, body) => {
+    expect((await post(body)).status).toBe(400);
+    expect(query).not.toHaveBeenCalled();
+  });
+
   test("a note that is only NUL characters is rejected", async () => {
     expect((await post({ note: "\u0000\u0000" })).status).toBe(400);
     expect(query).not.toHaveBeenCalled();

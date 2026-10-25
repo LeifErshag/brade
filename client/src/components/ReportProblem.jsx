@@ -13,8 +13,6 @@ const S = {
     padding: 0, width: "min(440px, calc(100vw - 32px))", boxSizing: "border-box",
     fontFamily: "Georgia, serif",
   },
-  // The padding is on the content, so a click on the dialog element itself
-  // is a click on the backdrop.
   body:    { padding: "20px 22px" },
   title:   { margin: "0 0 8px", fontSize: 20 },
   intro:   { margin: "0 0 12px", color: "#a07840", fontSize: 14, lineHeight: 1.4 },
@@ -92,12 +90,18 @@ export default function ReportProblem({ style }) {
 
   // Closes on a click on the backdrop. Only when the press started there too:
   // a text selection dragged out of the textarea also ends in a click on the
-  // dialog element.
+  // dialog element. A click on the dialog element can also be on its border
+  // or its scrollbar (a short screen), so it must be outside its box as well.
+  function onBackdrop(e) {
+    if (e.target !== e.currentTarget) return false;
+    const box = e.currentTarget.getBoundingClientRect();
+    return e.clientX < box.left || e.clientX >= box.right || e.clientY < box.top || e.clientY >= box.bottom;
+  }
   function onBackdropPointerDown(e) {
-    pressedBackdropRef.current = e.target === e.currentTarget;
+    pressedBackdropRef.current = onBackdrop(e);
   }
   function onBackdropClick(e) {
-    if (pressedBackdropRef.current && e.target === e.currentTarget) setOpen(false);
+    if (pressedBackdropRef.current && onBackdrop(e)) setOpen(false);
     pressedBackdropRef.current = false;
   }
 
