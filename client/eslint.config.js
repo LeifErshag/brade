@@ -44,7 +44,7 @@ export default [
   },
   {
     // Build tooling and scripts run in Node, not the browser.
-    files: ["scripts/**", "vite.config.js", "eslint.config.js"],
+    files: ["scripts/**", "*.config.{js,mjs}"],
     languageOptions: {
       globals: globals.nodeBuiltin,
     },
