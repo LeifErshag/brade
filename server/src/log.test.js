@@ -169,6 +169,18 @@ describe("buildEntry", () => {
     const badReal = Object.assign(new Error('"1e999" is out of range for type real'), { severity: "ERROR", code: "22003" });
     expect(buildEntry("error", "m", { err: badReal }).err.message).toBe('"…" is out of range for type real');
 
+    // A value that starts the message (bit strings, 22P02), but not an
+    // identifier that does.
+    for (const kind of ["binary", "hexadecimal"]) {
+      const badBit = Object.assign(new Error(`"Ö" is not a valid ${kind} digit`), { severity: "ERROR", code: "22P02" });
+      const e4 = buildEntry("error", badBit);
+      expect(e4.msg).toBe(`"…" is not a valid ${kind} digit`);
+      expect(e4.err.stack.split("\n")[0]).toBe(`Error: "…" is not a valid ${kind} digit`);
+      expect(JSON.stringify(e4)).not.toContain("Ö");
+    }
+    const notSeq = Object.assign(new Error('"games" is not a sequence'), { severity: "ERROR", code: "42809" });
+    expect(buildEntry("error", notSeq).msg).toBe('"games" is not a sequence');
+
     // Messages from anything other than pg are left alone.
     expect(buildEntry("error", "m", { err: new Error('bad value: "x"') }).err.message).toBe('bad value: "x"');
   });
@@ -183,6 +195,30 @@ describe("buildEntry", () => {
     expect(e.err.stack.split("\n")[0]).toBe('Error: invalid input syntax for type uuid: "…"');
     expect(e.err.stack).toMatch(/\n\s+at /);
     expect(JSON.stringify(e)).not.toMatch(/Anna|Svensson|Bertil/);
+  });
+
+  // Only our own code can leave a value's closing quote out.
+  test.each([
+    ['invalid input syntax for type uuid: "Anna Svensson"', 'invalid input syntax for type uuid: "An'],
+    ['invalid input syntax for type uuid: "Anna Svensson"', 'invalid input syntax for type uuid: "Anna\nSvensson'],
+    ['x: "a"', 'x: "a" y: "Anna Svensson'],
+  ])("masks a pg message %j changed to end inside a value, %j", (old, cut) => {
+    const err = Object.assign(new Error(old), { severity: "ERROR" });
+    void err.stack;
+    err.message = cut;
+    const e = buildEntry("error", "m", { err });
+    expect(e.err.message).toMatch(/…$/);
+    expect(JSON.stringify(e)).not.toMatch(/Anna|Svensson/);
+  });
+
+  test("masks a value without a closing quote in a pg stack and detail", () => {
+    const err = Object.assign(new Error('invalid input syntax for type uuid: "Anna'), {
+      severity: "ERROR", detail: 'x: "Svensson',
+    });
+    const e = buildEntry("error", "m", { err });
+    expect(e.err.message).toBe('invalid input syntax for type uuid: "…');
+    expect(e.err.stack.split("\n")[0]).toBe('Error: invalid input syntax for type uuid: "…');
+    expect(e.err.detail).toBe('x: "…');
   });
 
   // A new message that still appears in the stack (shortened, or "Error").
