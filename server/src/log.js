@@ -162,6 +162,10 @@ function maskStackHead(stack) {
 // runs over the frames as well, not just the head: a line of the old message
 // that looks like a frame may hold the current message, and a real frame
 // whose file path holds it is rewritten too, which only ever masks more.
+// A frame-like line of the old message may also quote a value the current
+// message doesn't hold, so every frame is then masked like a message line
+// too. A real frame holds none of the forms maskPg masks, so it reads the
+// same (a function named "contains" would lose its location).
 function maskPgStack(stack, message, masked) {
   const at = message ? stack.indexOf(message) : -1;
   if (at >= 0 && /^(?:[\w$.]*: )?$/.test(stack.slice(0, at))) {
@@ -171,7 +175,8 @@ function maskPgStack(stack, message, masked) {
     }
   }
   const head = maskStackHead(stack);
-  return message ? head.split(message).join(masked) : head;
+  const swapped = message ? head.split(message).join(masked) : head;
+  return swapped.split("\n").map(line => (STACK_FRAME.test(line) ? maskPg(line) : line)).join("\n");
 }
 
 // pg's DatabaseError carries the server's severity ("ERROR", "FATAL", …).

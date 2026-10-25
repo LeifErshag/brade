@@ -313,13 +313,20 @@ describe("buildEntry", () => {
     expect(stack).toMatch(/\n\s+at /);
   });
 
-  // Only swapping the current message in the frames, too, masks this one.
-  test("masks a pg stack whose message was cut to a slice inside a frame-like line", () => {
-    const err = Object.assign(new Error('q\n    at f: "Anna" (y:1:2)'), { severity: "ERROR" });
-    void err.stack;
-    err.message = ': "Anna"';
+  // The old message ends in a line that looks like a frame, so only masking
+  // the frames, too, masks it, whether or not the current message holds the value.
+  test.each([
+    ['q\n    at f: "Anna" (y:1:2)', ': "Anna"', '    at f: "…'],
+    ['q\n    at f: "Anna" (y:1:2)', "Anna", '    at f: "…'],
+    ["q\n    at f contains (Anna, Bo) (y:1:2)", "contains (Anna", "    at f contains (…)"],
+  ])("masks a pg stack whose old message %j ends in a frame-like line, changed to %j", (old, current, line) => {
+    const err = Object.assign(new Error(old), { severity: "ERROR" });
+    const frames = err.stack.split("\n").slice(2);
+    err.message = current;
     const stack = buildEntry("error", "m", { err }).err.stack;
-    expect(stack.split("\n").slice(0, 2)).toEqual(["Error: q", '    at f: "…" (y:1:2)']);
+    expect(stack).not.toMatch(/Anna|Bo\b/);
+    // The real frames are kept as they were.
+    expect(stack.split("\n")).toEqual(["Error: q", line, ...frames]);
   });
 
   test("masks only the message in a pg stack whose message is unchanged", () => {
