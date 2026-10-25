@@ -90,15 +90,17 @@ function describe(value) {
 // pg quotes input values, which may be personal data, in an error's detail
 // ("Key (room_id)=(…) already exists.", "Failing row contains (…).",
 // 'Token "…" is invalid.') and, for codes like 22P02, in its message
-// ('invalid input syntax for type uuid: "…"'). Mask those, including values
-// that span lines. This covers the forms pg uses for constraint and input
-// errors; a value quoted some other way would still be logged, so user text
-// should be validated before it reaches the database.
+// ('invalid input syntax for type uuid: "…"'), or mid-message for 22003
+// ('value "…" is out of range for type integer'). Mask those, including values
+// that span lines. This covers the forms pg uses for constraint, input and
+// range errors; a value quoted some other way would still be logged, so user
+// text should be validated before it reaches the database.
 function maskPg(text) {
   return redact(text)
     .replace(/=\(.*\)/gs, "=(…)")
     .replace(/contains \(.*\)/gs, "contains (…)")
     .replace(/Token ".*" is invalid/gs, 'Token "…" is invalid')
+    .replace(/".*" is out of range/gs, '"…" is out of range')
     .replace(/: ".*"/gs, ': "…"');
 }
 
