@@ -183,9 +183,11 @@ const boundaryCaught   = new Map();   // message → when a boundary caught it
 
 // A cross-origin error reaches window's handlers as "Script error." with no
 // error object at line 0, column 0. React's development build then hands the
-// boundary this Error instead (react-dom's invokeGuardedCallbackDev).
+// boundary this Error instead (react-dom's invokeGuardedCallbackDev). React 19
+// no longer does this, so after an upgrade the constant matches nothing (and
+// does no harm). React's own text, not UI text, so not translated.
 const REACT_CROSS_ORIGIN_MESSAGE =
-  "A cross-origin error was thrown. React doesn't have access to the actual error object in development. " +
+  "A cross-origin error was thrown. React doesn't have access to the actual error object in development. " + // i18n-ignore
   "See https://reactjs.org/link/crossorigin-error for more information.";
 
 export function noteBoundaryCatch(err) {
