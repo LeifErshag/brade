@@ -91,16 +91,21 @@ function describe(value) {
 // ("Key (room_id)=(…) already exists.", "Failing row contains (…).",
 // 'Token "…" is invalid.') and, for codes like 22P02, in its message
 // ('invalid input syntax for type uuid: "…"'), or mid-message for 22003
-// ('value "…" is out of range for type integer'). Mask those, including values
-// that span lines. This covers the forms pg uses for constraint, input and
-// range errors; a value quoted some other way would still be logged, so user
-// text should be validated before it reaches the database.
+// ('value "…" is out of range for type integer'), or at its start
+// ('"…" is out of range for type real', '"…" is not a valid binary digit').
+// Mask those, including values that span lines. A message that starts with an
+// identifier ('"games" is not a sequence') is kept. A value whose closing
+// quote is missing (only our own code can cut one off) is masked to the end.
+// This covers the forms pg uses for constraint, input and range errors; a
+// value quoted some other way would still be logged, so user text should be
+// validated before it reaches the database.
 function maskPg(text) {
   return redact(text)
     .replace(/=\(.*\)/gs, "=(…)")
     .replace(/contains \(.*\)/gs, "contains (…)")
     .replace(/Token ".*" is invalid/gs, 'Token "…" is invalid')
-    .replace(/".*" is out of range/gs, '"…" is out of range')
+    .replace(/".*" is (out of range|not a valid (?:binary|hexadecimal) digit)/gs, '"…" is $1')
+    .replace(/: "[^"]*$/, ': "…')
     .replace(/: ".*"/gs, ': "…"');
 }
 
