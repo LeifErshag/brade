@@ -40,7 +40,7 @@ function stripNul(value, ctx, path = []) {
   const entries = Object.entries(value).map(([rawKey, v]) => {
     const k = rawKey.replaceAll("\u0000", "");
     if (seen.has(k)) {
-      ctx.addIssue({ code: "custom", path: [...path, k], message: `Keys may not differ only by NUL characters: "${k}"` });
+      ctx.addIssue({ code: "custom", path: [...path, k], message: "Keys may not differ only by NUL characters" });
     }
     seen.add(k);
     return [k, stripNul(v, ctx, [...path, k])];

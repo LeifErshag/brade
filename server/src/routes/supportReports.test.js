@@ -139,8 +139,9 @@ describe("POST /api/support-reports", () => {
     // nest(n) is n objects deep: { a: { a: … "leaf" } }.
     const nest = (n) => (n === 0 ? "leaf" : { a: nest(n - 1) });
     expect((await post({ note: "deep", state: { a: nest(12) } })).status).toBe(201);
-    // The body is level 0 and state level 1, so state.a is level 2 and the
-    // object at level 10 (state.a nested 8 deep) becomes null.
+    // A value's level is the number of keys on its path: the body is level 0,
+    // state level 1 and state.a level 2. Eight more .a steps reach level 10,
+    // so state.a.a.a.a.a.a.a.a.a becomes null.
     const stored = () => { let o = null; for (let i = 0; i < 8; i++) o = { a: o }; return o; };
     expect(insertParams()[6].state).toEqual({ a: stored() });
   });
@@ -153,7 +154,7 @@ describe("POST /api/support-reports", () => {
     const res = await post(body);
     expect(res.status).toBe(400);
     expect((await res.json()).issues).toContainEqual(
-      { path, message: `Keys may not differ only by NUL characters: "${path.at(-1)}"` });
+      { path, message: "Keys may not differ only by NUL characters" });
     expect(query).not.toHaveBeenCalled();
   });
 
