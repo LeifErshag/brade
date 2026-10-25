@@ -133,7 +133,10 @@ function maskStackHead(stack) {
 // or the current message may be the tail or the start of the old one.
 // The current message may also be a middle slice of the old one, ending in
 // lines that look like frames, so those lines are kept as frames; where it
-// still appears afterwards it is swapped for the masked one too.
+// still appears afterwards it is swapped for the masked one too. That swap
+// runs over the frames as well, not just the head: a line of the old message
+// that looks like a frame may hold the current message, and a real frame
+// whose file path holds it is rewritten too, which only ever masks more.
 function maskPgStack(stack, message, masked) {
   const at = message ? stack.indexOf(message) : -1;
   if (at >= 0 && /^(?:[\w$.]*: )?$/.test(stack.slice(0, at))) {

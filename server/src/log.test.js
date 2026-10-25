@@ -270,6 +270,15 @@ describe("buildEntry", () => {
     expect(stack).toMatch(/\n\s+at /);
   });
 
+  // Only swapping the current message in the frames, too, masks this one.
+  test("masks a pg stack whose message was cut to a slice inside a frame-like line", () => {
+    const err = Object.assign(new Error('q\n    at f: "Anna" (y:1:2)'), { severity: "ERROR" });
+    void err.stack;
+    err.message = ': "Anna"';
+    const stack = buildEntry("error", "m", { err }).err.stack;
+    expect(stack.split("\n").slice(0, 2)).toEqual(["Error: q", '    at f: "…" (y:1:2)']);
+  });
+
   test("masks only the message in a pg stack whose message is unchanged", () => {
     const err = Object.assign(new Error('"games" is not a sequence'), { severity: "ERROR", code: "42809" });
     const e = buildEntry("error", "m", { err });
