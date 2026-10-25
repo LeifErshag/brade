@@ -102,8 +102,8 @@ function maskPg(text) {
     .replace(/: ".*"/gs, ': "…"');
 }
 
-// For a stack that no longer contains the current message (it was changed
-// after the stack was captured): masks the part before the first frame.
+// Masks the part of a stack before its first frame, i.e. the message the
+// stack was captured with.
 function maskStackHead(stack) {
   const frames = stack.search(/\n\s+at /);
   return frames < 0 ? maskPg(stack) : maskPg(stack.slice(0, frames)) + stack.slice(frames);
@@ -133,8 +133,9 @@ function serializeError(err, causes = 0) {
     const stack = redact(err.stack);
     const message = redact(err.message);
     if (!pg) out.stack = stack;
-    else if (message && stack.includes(message)) out.stack = stack.split(message).join(out.message);
-    else out.stack = maskStackHead(stack);
+    // The head is masked as well, in case the message was changed after the
+    // stack was captured and the stack still holds the old one.
+    else out.stack = maskStackHead(message ? stack.split(message).join(out.message) : stack);
   }
   if (err.cause !== undefined) {
     out.cause = causes < MAX_CAUSES ? serializeError(err.cause, causes + 1) : "[too deep]";
