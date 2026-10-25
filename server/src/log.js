@@ -118,6 +118,23 @@ function maskStackHead(stack) {
   return [maskPg(lines.slice(0, first).join("\n")), ...lines.slice(first)].join("\n");
 }
 
+// A stack is "Name: message" and then its frames. If it still holds the
+// error's current message, only that is swapped for the masked one, so an
+// unchanged message reads the same in the stack. Otherwise (the message was
+// changed after the stack was captured) the whole head is masked. The text
+// before the message must be just the name and every line after it a frame,
+// or the current message may be the tail or the start of the old one.
+function maskPgStack(stack, message, masked) {
+  const at = message ? stack.indexOf(message) : -1;
+  if (at >= 0 && /^(?:[\w$.]*: )?$/.test(stack.slice(0, at))) {
+    const rest = stack.slice(at + message.length);
+    if (rest.split("\n").slice(1).every(line => STACK_FRAME.test(line)) && /^(?:\n|$)/.test(rest)) {
+      return stack.slice(0, at) + masked + rest;
+    }
+  }
+  return maskStackHead(stack);
+}
+
 // pg's DatabaseError carries the server's severity ("ERROR", "FATAL", …).
 function isPgError(err) {
   return typeof err.severity === "string";
@@ -140,11 +157,7 @@ function serializeError(err, causes = 0) {
   if (err.stack) {
     // The stack starts with the message, so mask it the same way.
     const stack = redact(err.stack);
-    const message = redact(err.message);
-    if (!pg) out.stack = stack;
-    // The head is masked as well, in case the message was changed after the
-    // stack was captured and the stack still holds the old one.
-    else out.stack = maskStackHead(message ? stack.split(message).join(out.message) : stack);
+    out.stack = pg ? maskPgStack(stack, redact(err.message), out.message) : stack;
   }
   if (err.cause !== undefined) {
     out.cause = causes < MAX_CAUSES ? serializeError(err.cause, causes + 1) : "[too deep]";
