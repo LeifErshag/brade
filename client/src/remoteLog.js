@@ -175,7 +175,9 @@ export function stackOf(err) {
 // message. In development the window handler therefore waits a moment and
 // drops its line if a boundary reported the same message meanwhile; the
 // boundary's line is the one kept, as it has the component stack. Production
-// builds do not do this, so there the window line is sent at once.
+// builds do not do this, so there the window line is sent at once. (So in
+// development an uncaught error reaches the server a second late, and not at
+// all if the page is closed or reloaded in that second.)
 const BOUNDARY_WAIT_MS = 1000;
 const boundaryCaught   = new Map();   // message → when a boundary caught it
 
@@ -193,7 +195,9 @@ export function installGlobalErrorHandlers() {
     const ctx  = { file: e.filename, line: e.lineno, col: e.colno, stack: stackOf(e.error) };
     const report = () => clientLog.error(`Uncaught error: ${text}`, ctx, { echo: false });
     if (!import.meta.env.DEV) { report(); return; }
-    const message = describeError(e.error ?? e);
+    // Keyed by the thrown value, as the boundary keys it, also when that value
+    // is null or undefined (`throw null`).
+    const message = describeError(e.error);
     const seenAt  = Date.now();
     setTimeout(() => {
       if ((boundaryCaught.get(message) ?? -Infinity) < seenAt) report();
