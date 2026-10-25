@@ -102,11 +102,20 @@ function maskPg(text) {
     .replace(/: ".*"/gs, ': "…"');
 }
 
-// Masks the part of a stack before its first frame, i.e. the message the
-// stack was captured with.
+// A V8 stack frame: "    at fn (file:1:2)", "    at file:1:2",
+// "    at new Promise (<anonymous>)", "    at async Promise.all (index 0)".
+const STACK_FRAME = /^\s+at .*(?::\d+:\d+\)?|\(?<anonymous>\)?|\(native\)|\(index \d+\))$/;
+
+// Masks the part of a stack before its frames, i.e. the message the stack
+// was captured with. The frames are the lines at the end that look like
+// frames, so a line of the message that looks like one ("    at …") is still
+// masked as long as a line after it doesn't (pg's quoted values end in '"').
+// A frame-like line the engine wrote some other way is masked too.
 function maskStackHead(stack) {
-  const frames = stack.search(/\n\s+at /);
-  return frames < 0 ? maskPg(stack) : maskPg(stack.slice(0, frames)) + stack.slice(frames);
+  const lines = stack.split("\n");
+  let first = lines.length;
+  while (first > 1 && STACK_FRAME.test(lines[first - 1])) first--;
+  return [maskPg(lines.slice(0, first).join("\n")), ...lines.slice(first)].join("\n");
 }
 
 // pg's DatabaseError carries the server's severity ("ERROR", "FATAL", …).
