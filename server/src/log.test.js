@@ -185,6 +185,47 @@ describe("buildEntry", () => {
     expect(buildEntry("error", "m", { err: new Error('bad value: "x"') }).err.message).toBe('bad value: "x"');
   });
 
+  test.each([
+    ['time zone "Anna" not recognized', 'time zone "…" not recognized'],
+    ['invalid value "Anna" for "MON"', 'invalid value "…" for "MON"'],
+  ])("masks the value in the pg message %j", (message, masked) => {
+    const e = buildEntry("error", Object.assign(new Error(message), { severity: "ERROR", code: "22023" }));
+    expect(e.msg).toBe(masked);
+    expect(e.err.stack.split("\n")[0]).toBe(`Error: ${masked}`);
+    expect(JSON.stringify(e)).not.toContain("Anna");
+  });
+
+  test.each([
+    ['Unexpected "Ö" character.', 'Unexpected "…" character.'],
+    ['Expected ":", but found "Anna".', 'Expected ":", but found "…".'],
+    ['Expected JSON value, but found "Anna\nSvensson".', 'Expected JSON value, but found "…".'],
+    ['Escape sequence "\\Anna" is invalid.', 'Escape sequence "…" is invalid.'],
+  ])("masks the value in the pg detail %j", (detail, masked) => {
+    const err = Object.assign(new Error("invalid input syntax for type json"), { severity: "ERROR", code: "22P02", detail });
+    expect(buildEntry("error", "m", { err }).err.detail).toBe(masked);
+  });
+
+  test.each([
+    'relation "games" does not exist',
+    'column "room_id" of relation "games" does not exist',
+    '"games" is not a sequence',
+  ])("keeps the identifier in the pg message %j", message => {
+    const err = Object.assign(new Error(message), { severity: "ERROR", code: "42P01" });
+    const e = buildEntry("error", err);
+    expect(e.msg).toBe(message);
+    expect(e.err.stack).toBe(err.stack);
+  });
+
+  test("masks a pg message cut off after a value that starts it", () => {
+    const err = Object.assign(new Error('"Anna" is out of range for type real'), { severity: "ERROR", code: "22003" });
+    void err.stack;
+    err.message = '"Anna" is out of ra';
+    const e = buildEntry("error", "m", { err });
+    expect(e.err.message).toBe('"…" is out of ra');
+    expect(e.err.stack.split("\n")[0]).toBe('Error: "…" is out of range for type real');
+    expect(JSON.stringify(e)).not.toContain("Anna");
+  });
+
   test("masks a pg stack whose message was changed after it was captured", () => {
     const err = Object.assign(new Error('invalid input syntax for type uuid: "Anna\nSvensson"'), {
       severity: "ERROR", code: "22P02",
@@ -202,6 +243,8 @@ describe("buildEntry", () => {
     ['invalid input syntax for type uuid: "Anna Svensson"', 'invalid input syntax for type uuid: "An'],
     ['invalid input syntax for type uuid: "Anna Svensson"', 'invalid input syntax for type uuid: "Anna\nSvensson'],
     ['x: "a"', 'x: "a" y: "Anna Svensson'],
+    ['invalid input syntax for type uuid: "Anna "Svensson"', 'invalid input syntax for type uuid: "Anna "Svensson'],
+    ['"Anna Svensson" is out of range for type real', '"Anna Svensson'],
   ])("masks a pg message %j changed to end inside a value, %j", (old, cut) => {
     const err = Object.assign(new Error(old), { severity: "ERROR" });
     void err.stack;
