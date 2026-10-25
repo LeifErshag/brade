@@ -178,11 +178,13 @@ function maskStackHead(stack) {
 // message doesn't hold, so every frame is then masked like a message line
 // too. A real frame holds none of the forms maskPg masks, so it reads the
 // same (a function named "contains" would lose its location). Each frame is
-// masked on its own, since the ': "' rule would swallow every frame after
-// one that holds it, so a value that spans two frame-like lines of the old
-// message keeps its second half ('    at f contains (Anna (y:1:2)' and
-// '    at g, Bo) (y:3:4)' → '    at f contains (…)' and '    at g, Bo) (y:3:4)').
-// That needs our own code to change a pg message whose value spans such lines.
+// masked on its own, because the ': "', '=(' and 'contains (' rules would
+// otherwise swallow the real frames after it. So a value of the old message
+// that continues onto a frame-like line keeps the part on that line
+// ('    at f contains (Anna (y:1:2)' and '    at g, Bo) (y:3:4)' →
+// '    at f contains (…)' and '    at g, Bo) (y:3:4)'), also when it starts on
+// the line before the frames. That needs our own code to change a pg message
+// whose value spans such lines.
 function maskPgStack(stack, message, masked) {
   const at = message ? stack.indexOf(message) : -1;
   if (at >= 0 && /^(?:[\w$.]*: )?$/.test(stack.slice(0, at))) {
