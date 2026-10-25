@@ -100,7 +100,8 @@ function describe(value) {
 // 'Unexpected "…" character.' (arrays), 'Expected …, but found "…".' and
 // 'Escape sequence "…" is invalid.' (JSON) and '… for time zone
 // abbreviation "…".' (time zones).
-// Mask those, including values that span lines. A ': "' value is the end of
+// Mask those, including values that span lines (but see maskPgStack for the
+// frame-like lines of a changed message). A ': "' value is the end of
 // pg's message, so it is masked to the end of the text even if it holds a
 // '"' itself. A message that starts with an identifier ('"games" is not a
 // sequence', 'relation "games" does not exist') is kept, as is a stack's
@@ -215,7 +216,14 @@ function maskPgMessage(message, stack) {
 // A frame-like line of the old message may also quote a value the current
 // message doesn't hold, so every frame is then masked like a message line
 // too. A real frame holds none of the forms maskPg masks, so it reads the
-// same (a function named "contains" would lose its location).
+// same (a function named "contains" would lose its location). Each frame is
+// masked on its own, because the ': "', '=(' and 'contains (' rules would
+// otherwise swallow the real frames after it. So a value of the old message
+// that continues onto a frame-like line keeps the part on that line
+// ('    at f contains (Anna (y:1:2)' and '    at g, Bo) (y:3:4)' →
+// '    at f contains (…)' and '    at g, Bo) (y:3:4)'), also when it starts on
+// the line before the frames. That needs our own code to change a pg message
+// whose value spans such lines.
 function maskPgStack(stack, message, masked) {
   const at = message ? stack.indexOf(message) : -1;
   if (at >= 0 && /^(?:[\w$.]*: )?$/.test(stack.slice(0, at))) {
