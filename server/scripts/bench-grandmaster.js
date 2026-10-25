@@ -8,9 +8,11 @@
 //
 // Usage (from server/):
 //   node scripts/bench-grandmaster.js [games] [seed] [mode]
-// Defaults: 40 games, seed 1, mode "random". games must be a positive
-// decimal integer and seed a decimal integer from 0 to 2^32 - 1 (the PRNG
-// keeps 32 bits of state, so a wider seed would wrap around). The same
+// Defaults: 40 games, seed 1, mode "random". games must be a decimal
+// integer from 1 to 10000 (every position is generated and kept in memory
+// before any timing starts, so a huge count would never get there) and
+// seed a decimal integer from 0 to 2^32 - 1 (the PRNG keeps 32 bits of
+// state, so a wider seed would wrap around). The same
 // arguments give the same positions. Mode "random" plays a uniformly
 // random legal turn for both sides (many hits, bar and jan positions); mode
 // "grandmaster" lets Grandmaster play both sides (positions closer to real
@@ -27,8 +29,9 @@ const parseCount = (arg, fallback) => (arg === undefined ? fallback : /^\d+$/.te
 const GAMES = parseCount(process.argv[2], 40);
 const SEED  = parseCount(process.argv[3], 1);
 const MODE  = process.argv[4] ?? "random";
-if (!Number.isInteger(GAMES) || GAMES < 1) {
-  console.error(`Invalid games "${process.argv[2]}" (use a positive decimal integer)`);
+const MAX_GAMES = 10000;
+if (!Number.isInteger(GAMES) || GAMES < 1 || GAMES > MAX_GAMES) {
+  console.error(`Invalid games "${process.argv[2]}" (use a decimal integer from 1 to ${MAX_GAMES})`);
   process.exit(1);
 }
 if (!Number.isInteger(SEED) || SEED < 0 || SEED > 0xFFFFFFFF) {
