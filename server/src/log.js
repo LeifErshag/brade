@@ -93,20 +93,45 @@ function describe(value) {
 // ('invalid input syntax for type uuid: "…"'), or mid-message for 22003
 // ('value "…" is out of range for type integer'), or at its start
 // ('"…" is out of range for type real', '"…" is not a valid binary digit').
-// Mask those, including values that span lines. A message that starts with an
-// identifier ('"games" is not a sequence') is kept. A value whose closing
-// quote is missing (only our own code can cut one off) is masked to the end.
-// This covers the forms pg uses for constraint, input and range errors; a
-// value quoted some other way would still be logged, so user text should be
-// validated before it reaches the database.
+// Some other errors quote one too: 'time zone "…" not recognized',
+// 'invalid value "…" for "MON"' (to_date), and the details
+// 'Unexpected "…" character.' (arrays), 'Expected …, but found "…".' and
+// 'Escape sequence "…" is invalid.' (JSON).
+// Mask those, including values that span lines. A ': "' value is the end of
+// pg's message, so it is masked to the end of the text even if it holds a
+// '"' itself. A message that starts with an identifier ('"games" is not a
+// sequence', 'relation "games" does not exist') is kept, as is a stack's
+// "Error: " header. A value whose closing quote is missing, or a message cut
+// off after a value that starts it (only our own code can cut one off), is
+// masked too. This covers the forms pg uses for constraint, input and range
+// errors and the ones above; a value quoted some other way would still be
+// logged, so user text should be validated before it reaches the database.
 function maskPg(text) {
-  return redact(text)
+  return maskLeadingValue(redact(text)
     .replace(/=\(.*\)/gs, "=(…)")
     .replace(/contains \(.*\)/gs, "contains (…)")
-    .replace(/Token ".*" is invalid/gs, 'Token "…" is invalid')
+    .replace(/(Token|Escape sequence) ".*" is invalid/gs, '$1 "…" is invalid')
     .replace(/".*" is (out of range|not a valid (?:binary|hexadecimal) digit)/gs, '"…" is $1')
-    .replace(/: "[^"]*$/, ': "…')
-    .replace(/: ".*"/gs, ': "…"');
+    .replace(/time zone ".*" not recognized/gs, 'time zone "…" not recognized')
+    .replace(/invalid value ".*" for "/gs, 'invalid value "…" for "')
+    .replace(/Unexpected ".*" character/gs, 'Unexpected "…" character')
+    .replace(/but found ".*"/gs, 'but found "…"')
+    .replace(/(?<!^[\w$.]*[Ee]rror): ".*?("?)$/s, ': "…$1'));
+}
+
+// What follows a value that starts pg's message.
+const AFTER_LEADING_VALUE = [" is out of range for type ", " is not a valid binary digit", " is not a valid hexadecimal digit"];
+
+// A message (after a stack's "Error: " header) that starts with a value and
+// was cut off inside it ('"Anna') or inside the text after it
+// ('"Anna" is out of ra').
+function maskLeadingValue(text) {
+  const m = /^((?:[\w$.]*[Ee]rror: )?)"(.*)$/s.exec(text);
+  if (!m) return text;
+  const close = m[2].lastIndexOf('"');
+  if (close < 0) return `${m[1]}"…`;
+  const rest = m[2].slice(close + 1);
+  return AFTER_LEADING_VALUE.some(after => rest.startsWith(after) || after.startsWith(rest)) ? `${m[1]}"…"${rest}` : text;
 }
 
 // A V8 stack frame: "    at fn (file:1:2)", "    at file:1:2",
