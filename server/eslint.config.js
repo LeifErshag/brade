@@ -11,7 +11,7 @@ export default [
       globals: globals.nodeBuiltin,
     },
     rules: {
-      "no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
+      "no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
     },
   },
   {
