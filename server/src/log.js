@@ -134,7 +134,9 @@ const AFTER_LEADING_VALUE = [" is out of range for type ", " is not a valid bina
 // pg follows a closing quote with a space or punctuation, so an identifier
 // that starts the message ('"games" is not a sequence') is kept. One followed
 // by nothing or by the start of a value's text is masked ('"games"' →
-// '"…"', '"games" is ' → '"…" is '), which only ever masks more.
+// '"…"', '"games" is ' → '"…" is '), which only ever masks more. A cut
+// message whose stack still holds the whole one is masked from that instead
+// (see maskPgMessage), so this guess only covers a message without one.
 function maskLeadingValue(text) {
   const m = /^((?:[\w$.]*[Ee]rror: )?)"(.*)$/s.exec(text);
   if (!m) return text;
@@ -156,9 +158,46 @@ const STACK_FRAME = /^\s+at .*(?::\d+:\d+\)?|\(?<anonymous>\)?|\(native\)|\(inde
 // A frame-like line the engine wrote some other way is masked too.
 function maskStackHead(stack) {
   const lines = stack.split("\n");
+  const first = firstFrame(lines);
+  return [maskPg(lines.slice(0, first).join("\n")), ...lines.slice(first)].join("\n");
+}
+
+// The index of a stack's first frame line (see maskStackHead).
+function firstFrame(lines) {
   let first = lines.length;
   while (first > 1 && STACK_FRAME.test(lines[first - 1])) first--;
-  return [maskPg(lines.slice(0, first).join("\n")), ...lines.slice(first)].join("\n");
+  return first;
+}
+
+// The message a stack was captured with, if the current message is a cut
+// of it (a proper prefix).
+function cutFrom(stack, message) {
+  const lines = stack.split("\n");
+  const head = lines.slice(0, firstFrame(lines)).join("\n");
+  const old = head.slice(/^[\w$.]*: /.exec(head)?.[0].length ?? 0);
+  return message && old.length > message.length && old.startsWith(message) ? old : undefined;
+}
+
+// Masks a pg error's message. One our own code cut off from the message its
+// stack was captured with is masked from that whole message instead, so a cut
+// inside a value isn't taken for the value's end ('"Anna "Bo" Svens'). The
+// masked text that differs from the old one sits between their common start
+// and common end: a cut in the common end keeps the masked text up to it, and
+// a cut inside the masked part ends in "…" right after the common start.
+function maskPgMessage(message, stack) {
+  const old = stack ? cutFrom(stack, message) : undefined;
+  if (old === undefined) return maskPg(message);
+  const masked = maskPg(old);
+  let start = 0;
+  while (start < old.length && old[start] === masked[start]) start++;
+  if (message.length <= start) return maskPg(message);
+  let end = 0;
+  while (
+    end < Math.min(old.length, masked.length) - start
+    && old[old.length - 1 - end] === masked[masked.length - 1 - end]
+  ) end++;
+  const kept = message.length - (old.length - end);
+  return kept < 0 ? `${masked.slice(0, start)}…` : masked.slice(0, masked.length - end + kept);
 }
 
 // A stack is "Name: message" and then its frames. If it still holds the
@@ -201,7 +240,9 @@ const MAX_CAUSES = 3;
 function serializeError(err, causes = 0) {
   if (!(err instanceof Error)) return { message: redact(describe(err)) };
   const pg = isPgError(err);
-  const out = { message: pg ? maskPg(err.message) : redact(err.message) };
+  const message = redact(err.message);
+  const stack = err.stack ? redact(err.stack) : undefined;
+  const out = { message: pg ? maskPgMessage(message, stack) : message };
   if (typeof err.name === "string" && err.name !== "Error") out.name = err.name;
   if (typeof err.code === "string" || typeof err.code === "number") out.code = err.code;
   // pg's DatabaseError fields: which constraint, table or column was involved.
@@ -209,10 +250,9 @@ function serializeError(err, causes = 0) {
   for (const key of ["constraint", "table", "column"]) {
     if (typeof err[key] === "string") out[key] = redact(err[key]);
   }
-  if (err.stack) {
+  if (stack !== undefined) {
     // The stack starts with the message, so mask it the same way.
-    const stack = redact(err.stack);
-    out.stack = pg ? maskPgStack(stack, redact(err.message), out.message) : stack;
+    out.stack = pg ? maskPgStack(stack, message, out.message) : stack;
   }
   if (err.cause !== undefined) {
     out.cause = causes < MAX_CAUSES ? serializeError(err.cause, causes + 1) : "[too deep]";
