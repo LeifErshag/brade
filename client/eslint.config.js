@@ -23,7 +23,7 @@ export default [
   { ignores: ["dist/"] },
   js.configs.recommended,
   {
-    files: ["**/*.{js,jsx,mjs}"],
+    files: ["**/*.{js,jsx,mjs,cjs}"],
     plugins: { react },
     languageOptions: {
       ecmaVersion: 2022,
@@ -34,6 +34,14 @@ export default [
     },
     rules: {
       "no-unused-vars": ["warn", { argsIgnorePattern: "^_", varsIgnorePattern: "^[A-Z]" }],
+    },
+  },
+  {
+    // *.cjs files are CommonJS. This must come after the block above, which
+    // sets sourceType "module" for every file.
+    files: ["**/*.cjs"],
+    languageOptions: {
+      sourceType: "commonjs",
     },
   },
   {
@@ -58,7 +66,6 @@ export default [
     // nodeBuiltin plus the module-wrapper names (__dirname, __filename).
     files: ["*.config.cjs"],
     languageOptions: {
-      sourceType: "commonjs",
       globals: globals.node,
     },
   },
