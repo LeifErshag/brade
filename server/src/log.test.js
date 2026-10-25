@@ -188,6 +188,9 @@ describe("buildEntry", () => {
   test.each([
     ['time zone "Anna" not recognized', 'time zone "…" not recognized'],
     ['invalid value "Anna" for "MON"', 'invalid value "…" for "MON"'],
+    ['interval time zone "Anna" must not include months or days', 'interval time zone "…" must not include months or days'],
+    ['unit "Anna" not recognized', 'unit "…" not recognized'],
+    ['unit "Anna" not supported for type interval', 'unit "…" not supported for type interval'],
   ])("masks the value in the pg message %j", (message, masked) => {
     const e = buildEntry("error", Object.assign(new Error(message), { severity: "ERROR", code: "22023" }));
     expect(e.msg).toBe(masked);
@@ -200,6 +203,10 @@ describe("buildEntry", () => {
     ['Expected ":", but found "Anna".', 'Expected ":", but found "…".'],
     ['Expected JSON value, but found "Anna\nSvensson".', 'Expected JSON value, but found "…".'],
     ['Escape sequence "\\Anna" is invalid.', 'Escape sequence "…" is invalid.'],
+    [
+      'This time zone name appears in the configuration file for time zone abbreviation "Anna".',
+      'This time zone name appears in the configuration file for time zone abbreviation "…".',
+    ],
   ])("masks the value in the pg detail %j", (detail, masked) => {
     const err = Object.assign(new Error("invalid input syntax for type json"), { severity: "ERROR", code: "22P02", detail });
     expect(buildEntry("error", "m", { err }).err.detail).toBe(masked);
@@ -214,6 +221,15 @@ describe("buildEntry", () => {
     const e = buildEntry("error", err);
     expect(e.msg).toBe(message);
     expect(e.err.stack).toBe(err.stack);
+  });
+
+  test("keeps the stack header of a pg message that starts with an identifier", () => {
+    const err = Object.assign(new Error('"games" is not a sequence'), { severity: "ERROR", code: "42809" });
+    void err.stack;
+    // A changed message makes the whole head go through maskPg.
+    err.message = "changed";
+    const stack = buildEntry("error", "m", { err }).err.stack;
+    expect(stack.split("\n")[0]).toBe('Error: "games" is not a sequence');
   });
 
   test("masks a pg message cut off after a value that starts it", () => {
@@ -245,6 +261,7 @@ describe("buildEntry", () => {
     ['x: "a"', 'x: "a" y: "Anna Svensson'],
     ['invalid input syntax for type uuid: "Anna "Svensson"', 'invalid input syntax for type uuid: "Anna "Svensson'],
     ['"Anna Svensson" is out of range for type real', '"Anna Svensson'],
+    ['"Anna "Svensson" is out of range for type real', '"Anna "Svensson'],
   ])("masks a pg message %j changed to end inside a value, %j", (old, cut) => {
     const err = Object.assign(new Error(old), { severity: "ERROR" });
     void err.stack;

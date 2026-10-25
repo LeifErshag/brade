@@ -94,9 +94,12 @@ function describe(value) {
 // ('value "…" is out of range for type integer'), or at its start
 // ('"…" is out of range for type real', '"…" is not a valid binary digit').
 // Some other errors quote one too: 'time zone "…" not recognized',
+// 'interval time zone "…" must not include months or days',
+// 'unit "…" not recognized', 'unit "…" not supported for type …',
 // 'invalid value "…" for "MON"' (to_date), and the details
 // 'Unexpected "…" character.' (arrays), 'Expected …, but found "…".' and
-// 'Escape sequence "…" is invalid.' (JSON).
+// 'Escape sequence "…" is invalid.' (JSON) and '… for time zone
+// abbreviation "…".' (time zones).
 // Mask those, including values that span lines. A ': "' value is the end of
 // pg's message, so it is masked to the end of the text even if it holds a
 // '"' itself. A message that starts with an identifier ('"games" is not a
@@ -112,7 +115,9 @@ function maskPg(text) {
     .replace(/contains \(.*\)/gs, "contains (…)")
     .replace(/(Token|Escape sequence) ".*" is invalid/gs, '$1 "…" is invalid')
     .replace(/".*" is (out of range|not a valid (?:binary|hexadecimal) digit)/gs, '"…" is $1')
-    .replace(/time zone ".*" not recognized/gs, 'time zone "…" not recognized')
+    .replace(/(time zone|unit) ".*" not (recognized|supported)/gs, '$1 "…" not $2')
+    .replace(/time zone ".*" must not include/gs, 'time zone "…" must not include')
+    .replace(/time zone abbreviation ".*"/gs, 'time zone abbreviation "…"')
     .replace(/invalid value ".*" for "/gs, 'invalid value "…" for "')
     .replace(/Unexpected ".*" character/gs, 'Unexpected "…" character')
     .replace(/but found ".*"/gs, 'but found "…"')
@@ -123,14 +128,20 @@ function maskPg(text) {
 const AFTER_LEADING_VALUE = [" is out of range for type ", " is not a valid binary digit", " is not a valid hexadecimal digit"];
 
 // A message (after a stack's "Error: " header) that starts with a value and
-// was cut off inside it ('"Anna') or inside the text after it
-// ('"Anna" is out of ra').
+// was cut off inside it ('"Anna', '"Anna "Bo') or inside the text after it
+// ('"Anna" is out of ra'). A quote right before a letter or digit opens a
+// quote inside the value rather than closing it, so the value is still open.
+// pg follows a closing quote with a space or punctuation, so an identifier
+// that starts the message ('"games" is not a sequence') is kept. One followed
+// by nothing or by the start of a value's text is masked ('"games"' →
+// '"…"', '"games" is ' → '"…" is '), which only ever masks more.
 function maskLeadingValue(text) {
   const m = /^((?:[\w$.]*[Ee]rror: )?)"(.*)$/s.exec(text);
   if (!m) return text;
   const close = m[2].lastIndexOf('"');
   if (close < 0) return `${m[1]}"…`;
   const rest = m[2].slice(close + 1);
+  if (/^[\p{L}\p{N}]/u.test(rest)) return `${m[1]}"…`;
   return AFTER_LEADING_VALUE.some(after => rest.startsWith(after) || after.startsWith(rest)) ? `${m[1]}"…"${rest}` : text;
 }
 
