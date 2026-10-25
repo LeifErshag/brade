@@ -102,6 +102,13 @@ function maskPg(text) {
     .replace(/: ".*"/gs, ': "…"');
 }
 
+// Masks the part of a stack before its first frame, i.e. the message the
+// stack was captured with.
+function maskStackHead(stack) {
+  const frames = stack.search(/\n\s+at /);
+  return frames < 0 ? maskPg(stack) : maskPg(stack.slice(0, frames)) + stack.slice(frames);
+}
+
 // pg's DatabaseError carries the server's severity ("ERROR", "FATAL", …).
 function isPgError(err) {
   return typeof err.severity === "string";
@@ -125,7 +132,10 @@ function serializeError(err, causes = 0) {
     // The stack starts with the message, so mask it the same way.
     const stack = redact(err.stack);
     const message = redact(err.message);
-    out.stack = pg && message ? stack.split(message).join(out.message) : stack;
+    if (!pg) out.stack = stack;
+    // The head is masked as well, in case the message was changed after the
+    // stack was captured and the stack still holds the old one.
+    else out.stack = maskStackHead(message ? stack.split(message).join(out.message) : stack);
   }
   if (err.cause !== undefined) {
     out.cause = causes < MAX_CAUSES ? serializeError(err.cause, causes + 1) : "[too deep]";
@@ -190,11 +200,18 @@ export function format(entry, json = useJson()) {
 }
 
 // The string, number and boolean fields that can be read without throwing,
-// for the fallback line.
+// for the fallback line. undefined if the fields can't be listed (e.g. a
+// Proxy whose ownKeys trap throws), so the message is still kept.
 function plainFields(fields) {
-  if (!isPlainObject(fields)) return undefined;
+  let keys;
+  try {
+    if (!isPlainObject(fields)) return undefined;
+    keys = Object.keys(fields);
+  } catch {
+    return undefined;
+  }
   const out = {};
-  for (const key of Object.keys(fields)) {
+  for (const key of keys) {
     try {
       const value = fields[key];
       if (["string", "number", "boolean"].includes(typeof value)) out[key] = value;

@@ -162,6 +162,26 @@ describe("buildEntry", () => {
     expect(buildEntry("error", "m", { err: new Error('bad value: "x"') }).err.message).toBe('bad value: "x"');
   });
 
+  test("masks a pg stack whose message was changed after it was captured", () => {
+    const err = Object.assign(new Error('invalid input syntax for type uuid: "Anna\nSvensson"'), {
+      severity: "ERROR", code: "22P02",
+    });
+    void err.stack; // V8 builds the stack text on first read
+    err.message = 'invalid input syntax for type uuid: "Bertil"';
+    const e = buildEntry("error", "m", { err });
+    expect(e.err.stack.split("\n")[0]).toBe('Error: invalid input syntax for type uuid: "…"');
+    expect(e.err.stack).toMatch(/\n\s+at /);
+    expect(JSON.stringify(e)).not.toMatch(/Anna|Svensson|Bertil/);
+
+    // A new message that still appears in the stack (shortened, or "Error").
+    for (const shorter of ["invalid input syntax for type uuid", "Error"]) {
+      const short = Object.assign(new Error('invalid input syntax for type uuid: "Anna"'), { severity: "ERROR" });
+      void short.stack;
+      short.message = shorter;
+      expect(buildEntry("error", "m", { err: short }).err.stack).not.toContain("Anna");
+    }
+  });
+
   test("keeps object keys of a Map apart", () => {
     const e = buildEntry("info", "m", {
       map: new Map([[{ id: 1 }, "a"], [{ id: 2 }, "b"], ["token", "tok-1"], ["roomId", "R"]]),
@@ -260,6 +280,14 @@ describe("log", () => {
     expect(entry).toMatchObject({ msg: "still here", roomId: "R", userId: "u1", tries: 2 });
     expect(entry).not.toHaveProperty("ctx");
     expect(JSON.stringify(entry)).not.toContain("tok-1");
+  });
+
+  test("the fallback line keeps the message when the fields cannot be listed", () => {
+    process.env.LOG_FORMAT = "json";
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    const fields = new Proxy({}, { ownKeys() { throw new Error("no"); } });
+    expect(() => log.error("keep me", fields)).not.toThrow();
+    expect(JSON.parse(error.mock.calls[0][0]).msg).toBe("keep me");
   });
 
   test.each([
