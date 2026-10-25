@@ -3,8 +3,8 @@ import react from "eslint-plugin-react";
 import globals from "globals";
 
 // Browser globals that are easy to use by mistake, e.g. a misspelled or
-// undeclared `name` or `event` would otherwise pass no-undef. Copied from the
-// confusing-browser-globals package (create-react-app). Use `window.<name>` when
+// undeclared `name` or `event` would otherwise pass no-undef. Copied from
+// confusing-browser-globals@1.0.11 (create-react-app). Use `window.<name>` when
 // one is really meant.
 const confusingBrowserGlobals = [
   "addEventListener", "blur", "close", "closed", "confirm", "defaultStatus",
