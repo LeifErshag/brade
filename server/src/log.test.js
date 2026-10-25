@@ -195,6 +195,32 @@ describe("buildEntry", () => {
     expect(stack.split("\n").slice(1)).toEqual(frames);
   });
 
+  // A new message that is the tail of the old one, or its start cut just
+  // before a line that looks like a frame.
+  test.each([
+    ['invalid input syntax for type uuid: "Anna Svensson"', 'n"'],
+    ['invalid input syntax for type uuid: "Anna Svensson"', '"Anna Svensson"'],
+    ['invalid input syntax for type uuid: "x"\n    at Anna Svensson"', 'invalid input syntax for type uuid: "x"'],
+    ["Key (a)=(x\n    at Anna Svensson)", "Key (a)=(x"],
+  ])("masks a pg stack whose message %j was cut to %j", (old, cut) => {
+    const err = Object.assign(new Error(old), { severity: "ERROR" });
+    void err.stack;
+    err.message = cut;
+    expect(buildEntry("error", "m", { err }).err.stack).not.toMatch(/Anna|Svensson/);
+  });
+
+  test("masks only the message in a pg stack whose message is unchanged", () => {
+    const err = Object.assign(new Error('"games" is not a sequence'), { severity: "ERROR", code: "42809" });
+    const e = buildEntry("error", "m", { err });
+    expect(e.err.message).toBe('"games" is not a sequence');
+    expect(e.err.stack).toBe(err.stack);
+
+    const bad = Object.assign(new Error('invalid input syntax for type uuid: "Anna"'), { severity: "ERROR" });
+    const frames = bad.stack.slice(bad.stack.indexOf("\n"));
+    expect(buildEntry("error", "m", { err: bad }).err.stack)
+      .toBe(`Error: invalid input syntax for type uuid: "…"${frames}`);
+  });
+
   test("keeps object keys of a Map apart", () => {
     const e = buildEntry("info", "m", {
       map: new Map([[{ id: 1 }, "a"], [{ id: 2 }, "b"], ["token", "tok-1"], ["roomId", "R"]]),
