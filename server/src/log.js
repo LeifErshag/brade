@@ -104,12 +104,12 @@ function describe(value) {
 // frame-like lines of a changed message). A ': "' value is the end of
 // pg's message, so it is masked to the end of the text even if it holds a
 // '"' itself. A message that starts with an identifier ('"games" is not a
-// sequence', 'relation "games" does not exist') is kept. A stack's
-// "Name: " header is split off first (see maskStackHead), so the text is
-// only ever a message, and a value right after its first ': ' is masked
-// too. A value whose closing quote is missing, or a message cut
-// off after a value that starts it (only our own code can cut one off), is
-// masked too. This covers the forms pg uses for constraint, input and range
+// sequence', 'relation "games" does not exist') is kept. No header is
+// spared here: maskStackHead splits a stack's "Name: " header off when it
+// can tell one, so a text that starts with something like "Name: " (a
+// renamed error's stack head) is masked from its first ': "'. A value whose
+// closing quote is missing, or a message cut off after a value that starts
+// it (only our own code can cut one off), is masked too. This covers the forms pg uses for constraint, input and range
 // errors and the ones above; a value quoted some other way would still be
 // logged, so user text should be validated before it reaches the database.
 function maskPg(text) {
@@ -130,9 +130,8 @@ function maskPg(text) {
 // What follows a value that starts pg's message.
 const AFTER_LEADING_VALUE = [" is out of range for type ", " is not a valid binary digit", " is not a valid hexadecimal digit"];
 
-// A message that starts with a value and
-// was cut off inside it ('"Anna', '"Anna "Bo') or inside the text after it
-// ('"Anna" is out of ra'). A quote right before a letter or digit opens a
+// A message that starts with a value and was cut off inside it ('"Anna',
+// '"Anna "Bo') or inside the text after it ('"Anna" is out of ra'). A quote right before a letter or digit opens a
 // quote inside the value rather than closing it, so the value is still open.
 // pg follows a closing quote with a space or punctuation, so an identifier
 // that starts the message ('"games" is not a sequence') is kept. One followed
@@ -163,7 +162,10 @@ const STACK_FRAME = /^\s+at .*(?::\d+:\d+\)?|\(?<anonymous>\)?|\(native\)|\(inde
 // "…Error: " header is taken for one; with any other name the whole head is
 // masked as a message, so a value after its first ': ' is masked to the end
 // ('Database Error: "…'), because a guessed header may really be the start
-// of a message that a ': "' value follows.
+// of a message that a ': "' value follows. This is stricter on purpose than
+// stackHeader's guess, which only locates a message and never keeps text
+// that maskPg would mask; splitting off that looser guess here would leave
+// a ': "' value after it to maskLeadingValue's weaker rules.
 function maskStackHead(stack, name) {
   const lines = stack.split("\n");
   const first = firstFrame(lines);
