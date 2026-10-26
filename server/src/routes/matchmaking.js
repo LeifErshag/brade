@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { v4 as uuid } from "uuid";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireUser } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { getRedis, keys, TTL } from "../db/redis.js";
 import { query } from "../db/postgres.js";
@@ -15,7 +15,7 @@ const JoinSchema = z.object({
 });
 
 // ── POST /api/matchmaking/join ────────────────────────────────────────────────
-router.post("/join", requireAuth, validate(JoinSchema), asyncHandler(async (req, res) => {
+router.post("/join", requireUser, validate(JoinSchema), asyncHandler(async (req, res) => {
   const { matchLength } = req.body;
   const userId = req.userId;
   const redis  = getRedis();

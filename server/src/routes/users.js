@@ -1,6 +1,6 @@
 ﻿import { Router } from "express";
 import { z } from "zod";
-import { requireAuth } from "../middleware/auth.js";
+import { requireUser } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { query } from "../db/postgres.js";
 import { asyncHandler } from "../middleware/asyncHandler.js";
@@ -11,7 +11,7 @@ const patchMeSchema = z.object({
   display_name: z.string().trim().min(1, "Name too short").max(50, "Name too long"),
 });
 
-router.patch("/me", requireAuth, validate(patchMeSchema), asyncHandler(async (req, res) => {
+router.patch("/me", requireUser, validate(patchMeSchema), asyncHandler(async (req, res) => {
   const { rows } = await query(
     `UPDATE users SET display_name = $1
      WHERE id = $2
@@ -22,7 +22,7 @@ router.patch("/me", requireAuth, validate(patchMeSchema), asyncHandler(async (re
   return res.json(rows[0]);
 }));
 
-router.get("/me", requireAuth, asyncHandler(async (req, res) => {
+router.get("/me", requireUser, asyncHandler(async (req, res) => {
   const { rows } = await query(
     `SELECT id, display_name, avatar_url, elo, wins, losses, created_at
      FROM users WHERE id = $1`,
@@ -57,7 +57,7 @@ export function escapeLike(s) {
   return s.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
-router.get("/search", requireAuth, validate(searchQuerySchema, "query"), asyncHandler(async (req, res) => {
+router.get("/search", requireUser, validate(searchQuerySchema, "query"), asyncHandler(async (req, res) => {
   const { q } = req.query;
   const { rows } = await query(
     `SELECT id, display_name, avatar_url FROM users

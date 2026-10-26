@@ -133,7 +133,7 @@ async function connectToRoom(ws, roomId, userId, isGuest, guestDisplayName) {
     const hadGuest = room.hasGuest === true;
     let blackInfo;
     if (isGuest) {
-      blackInfo = { display_name: guestDisplayName, avatar_url: null };
+      blackInfo = { display_name: guestDisplayName, avatar_url: null, isGuest: true };
     } else {
       const { rows: [player] } = await query(
         `SELECT display_name, avatar_url FROM users WHERE id = $1`,

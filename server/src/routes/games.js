@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { v4 as uuid } from "uuid";
 import { z } from "zod";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireUser } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { getRedis, keys, TTL } from "../db/redis.js";
 import { query } from "../db/postgres.js";
@@ -10,6 +10,7 @@ import { AI_USER_ID, AI_DISPLAY } from "../game/ai.js";
 import { signGuestToken, verifyAccessToken } from "../auth/tokens.js";
 import { asyncHandler } from "../middleware/asyncHandler.js";
 import { roomSnapshot } from "../ws/roomSnapshot.js";
+import { GuestNameSchema } from "./guestName.js";
 
 const router = Router();
 
@@ -24,6 +25,14 @@ const CreateAiGuestGameSchema = z.object({
   matchLength: z.union([
     z.literal(1), z.literal(3), z.literal(5), z.literal(7),
   ]).default(5),
+  displayName: GuestNameSchema.default("Guest"),
+});
+
+const CreateGuestGameSchema = z.object({
+  matchLength: z.union([
+    z.literal(1), z.literal(3), z.literal(5), z.literal(7),
+  ]).default(5),
+  displayName: GuestNameSchema,
 });
 
 // Tutorial games take no options: always one game vs the tutorial AI, which
@@ -32,7 +41,7 @@ const CreateAiGuestGameSchema = z.object({
 const CreateTutorialSchema = z.object({}).strict().default({});
 
 // ── POST /api/games — create a new game room ──────────────────────────────────
-router.post("/", requireAuth, validate(CreateGameSchema), asyncHandler(async (req, res) => {
+router.post("/", requireUser, validate(CreateGameSchema), asyncHandler(async (req, res) => {
   const { matchLength, opponent } = req.body;
   const isAi  = opponent === "ai";
   const roomId = uuid().slice(0, 8).toUpperCase();
@@ -118,13 +127,52 @@ router.post("/", requireAuth, validate(CreateGameSchema), asyncHandler(async (re
   return res.status(201).json({ roomId, inviteUrl });
 }));
 
+// ── POST /api/games/guest — create a human lobby without logging in ─────────
+// Issues a guest token in the same response. White = guest host; the opponent
+// (guest or signed-in) takes black through the invite link. The room is
+// flagged `hasGuest`, so the match is unrated (see ws/handlers.js).
+router.post("/guest", validate(CreateGuestGameSchema), asyncHandler(async (req, res) => {
+  const { matchLength, displayName } = req.body;
+  const roomId  = uuid().slice(0, 8).toUpperCase();
+  const guestId = uuid();
+  const token   = signGuestToken(guestId, displayName);
+
+  const roomState = {
+    roomId,
+    matchLength,
+    createdBy:  guestId,
+    hasGuest:   true,
+    guestColor: "white",
+    players:    { white: guestId, black: null },
+    playerInfo: {
+      white: { display_name: displayName, avatar_url: null, isGuest: true },
+      black: null,
+    },
+    ready:     { white: false, black: false },
+    status:    "waiting",
+    gameState: null,
+    createdAt: Date.now(),
+  };
+
+  const redis = getRedis();
+  await redis.set(keys.room(roomId), JSON.stringify(roomState), "EX", TTL.room);
+
+  // white_id NULL because the guest has no DB user row
+  await query(
+    `INSERT INTO games (room_id, white_id, match_length) VALUES ($1, NULL, $2)`,
+    [roomId, matchLength]
+  );
+
+  const inviteUrl = `${process.env.CLIENT_ORIGIN}/game/${roomId}`;
+  return res.status(201).json({ roomId, inviteUrl, token, guestId });
+}));
+
 // ── POST /api/games/ai-guest — create an AI game without logging in ──────────
 // Issues a guest token in the same response. White = guest, Black = AI.
 router.post("/ai-guest", validate(CreateAiGuestGameSchema), asyncHandler(async (req, res) => {
-  const { matchLength } = req.body;
+  const { matchLength, displayName: guestDisplayName } = req.body;
   const roomId  = uuid().slice(0, 8).toUpperCase();
   const guestId = uuid();
-  const guestDisplayName = "Guest";
   const token   = signGuestToken(guestId, guestDisplayName);
 
   // Ensure the AI system user exists in the DB (idempotent)
@@ -147,7 +195,7 @@ router.post("/ai-guest", validate(CreateAiGuestGameSchema), asyncHandler(async (
     guestColor:   "white",
     players:      { white: guestId, black: AI_USER_ID },
     playerInfo:   {
-      white: { display_name: guestDisplayName, avatar_url: null },
+      white: { display_name: guestDisplayName, avatar_url: null, isGuest: true },
       black: AI_DISPLAY,
     },
     ready:     { white: true, black: true },
@@ -205,7 +253,7 @@ router.post("/tutorial", validate(CreateTutorialSchema), asyncHandler(async (req
     const guestId = uuid();
     guest      = { guestId, token: signGuestToken(guestId, "Guest") };
     playerId   = guestId;
-    playerInfo = { display_name: "Guest", avatar_url: null };
+    playerInfo = { display_name: "Guest", avatar_url: null, isGuest: true };
   }
 
   const gs = initGame();
