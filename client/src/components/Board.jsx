@@ -227,22 +227,30 @@ export default function Board({
   const canMove = isMyTurn && gs.phase === "moving";
   const noMoves = canMove && gs.legalMoves.length === 0;
 
-  // Space rolls the dice. Skipped while typing (e.g. the problem report form)
-  // or while a modal (the rules drawer, the problem report) is open. preventDefault stops
-  // the page scrolling and stops Space also clicking a focused button, such
-  // as Resign.
+  // Space rolls the dice. A focused control outside the board (a text field,
+  // Rules, the tutorial coach's buttons) keeps Space for itself, and so does
+  // an open modal: the problem report <dialog>, or the rules drawer, which
+  // stays mounted with aria-hidden while closed. preventDefault stops the
+  // page scrolling and stops Space also clicking a focused Resign button.
+  // rollSentFor allows one roll per game state, so two quick presses don't
+  // send ROLL twice.
+  const wrapRef = useRef(null);
   const rollRef = useRef(null);
-  rollRef.current = !readOnly && canRoll ? onRoll : null;
+  const rollSentFor = useRef(null);
+  rollRef.current = !readOnly && canRoll && rollSentFor.current !== gs
+    ? () => { rollSentFor.current = gs; onRoll(); }
+    : null;
   useEffect(() => {
     const onKey = (e) => {
       if (e.code !== "Space" || e.repeat || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
       const el = e.target;
-      if (el instanceof HTMLElement
-        && (el.isContentEditable || el.closest("input, textarea, select"))) return;
-      if (document.querySelector('dialog[open], [aria-modal="true"]')) return;
+      if (el instanceof HTMLElement && el !== document.body && !wrapRef.current?.contains(el)
+        && (el.isContentEditable || el.closest("input, textarea, select, button, a, [role=button]"))) return;
+      if (document.querySelector('dialog[open], [aria-modal="true"]:not([aria-hidden="true"])')) return;
       if (!rollRef.current) return;
       e.preventDefault();
       rollRef.current();
+      rollRef.current = null;
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -429,7 +437,7 @@ export default function Board({
     : t("board.othersTurn", { name: nameOf(gs.turn) }));
 
   return (
-    <div style={S.wrap}>
+    <div ref={wrapRef} style={S.wrap}>
       {/* Score */}
       <div style={S.score}>
         <div style={S.scoreItem}>
