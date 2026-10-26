@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../i18n/I18nContext.jsx";
 
 // ── SVG Layout Constants ─────────────────────────────────────────────────────
@@ -122,6 +122,9 @@ function OffTray({ color, n, glowing, onClick }) {
 }
 
 // ── Styles for HTML elements ─────────────────────────────────────────────────
+// Rendered width of the board (see S.svg), shared with the control row below it.
+const BOARD_CSS_W = `min(100%, calc(max(200px, 100vh - 300px) * ${W / H}))`;
+
 const S = {
   wrap: { fontFamily: "Georgia, serif" },
   score: { display: "flex", gap: 24, justifyContent: "center", alignItems: "center", marginBottom: 8 },
@@ -143,7 +146,7 @@ const S = {
   // both control rows and the one-line spectator count Game.jsx shows under
   // the board, so that line never makes a capped page scroll.
   svg: {
-    display: "block", width: `min(100%, calc(max(200px, 100vh - 300px) * ${W / H}))`,
+    display: "block", width: BOARD_CSS_W,
     height: "auto", aspectRatio: `${W} / ${H}`, maxWidth: W,
     maxHeight: "max(200px, calc(100vh - 300px))", margin: "0 auto",
     borderRadius: 10, boxShadow: "0 8px 40px #00000099",
@@ -155,9 +158,11 @@ const S = {
     display: "flex", gap: 8, justifyContent: "center", alignItems: "center",
     flexWrap: "nowrap", height: 52, marginTop: 6,
   },
+  // As wide as the drawn board, waiting text centred and Resign pushed to the
+  // board's right edge, well away from Roll so it isn't hit by mistake.
   controlsSub: {
-    display: "flex", gap: 12, justifyContent: "center", alignItems: "center",
-    flexWrap: "nowrap", minHeight: 34,
+    display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 12, alignItems: "center",
+    width: BOARD_CSS_W, maxWidth: W, margin: "0 auto", minHeight: 34,
   },
   diceGroup: { display: "flex", gap: 6, alignItems: "center", flexShrink: 0 },
   die: { width: "clamp(32px, 9vw, 44px)", height: "clamp(32px, 9vw, 44px)", display: "block" },
@@ -170,11 +175,12 @@ const S = {
     borderRadius: 8, padding: "9px 22px", fontSize: 14, cursor: "pointer", fontFamily: "Georgia, serif",
   },
   btnResign: {
+    gridColumn: 3, justifySelf: "end",
     background: "#2a1400", color: "#6b3a10", border: "1px solid #3a1a00",
     borderRadius: 8, padding: "6px 14px", fontSize: 13, cursor: "pointer", fontFamily: "Georgia, serif",
   },
   // Always rendered (hidden on your own turn) so Resign never moves sideways.
-  waiting: { color: "#6b3a10", fontSize: 13, whiteSpace: "nowrap" },
+  waiting: { gridColumn: 2, color: "#6b3a10", fontSize: 13, whiteSpace: "nowrap" },
   // line-height 1 keeps the bold notice inside the fixed 18px status line.
   junker: { color: "#e8b86d", fontSize: 13, lineHeight: 1, fontWeight: "bold", letterSpacing: 1 },
 };
@@ -220,6 +226,35 @@ export default function Board({
   const canRoll = isMyTurn && gs.phase === "rolling";
   const canMove = isMyTurn && gs.phase === "moving";
   const noMoves = canMove && gs.legalMoves.length === 0;
+
+  // Space rolls the dice. A focused control outside the board (a text field,
+  // Rules, the tutorial coach's buttons) keeps Space for itself, and so does
+  // an open modal: the problem report <dialog>, or the rules drawer, which
+  // stays mounted with aria-hidden while closed. preventDefault stops the
+  // page scrolling and stops Space also clicking a focused Resign button.
+  // rollSentFor allows one roll per game state, so two quick presses don't
+  // send ROLL twice.
+  const wrapRef = useRef(null);
+  const rollRef = useRef(null);
+  const rollSentFor = useRef(null);
+  rollRef.current = !readOnly && canRoll && rollSentFor.current !== gs
+    ? () => { rollSentFor.current = gs; onRoll(); }
+    : null;
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.code !== "Space" || e.repeat || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+      const el = e.target;
+      if (el instanceof HTMLElement && el !== document.body && !wrapRef.current?.contains(el)
+        && (el.isContentEditable || el.closest("input, textarea, select, button, a, [role=button]"))) return;
+      if (document.querySelector('dialog[open], [aria-modal="true"]:not([aria-hidden="true"])')) return;
+      if (!rollRef.current) return;
+      e.preventDefault();
+      rollRef.current();
+      rollRef.current = null;
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const legalFroms = canMove ? new Set(gs.legalMoves.map(m => m.from)) : new Set();
   const legalDests = selected !== null
@@ -402,7 +437,7 @@ export default function Board({
     : t("board.othersTurn", { name: nameOf(gs.turn) }));
 
   return (
-    <div style={S.wrap}>
+    <div ref={wrapRef} style={S.wrap}>
       {/* Score */}
       <div style={S.score}>
         <div style={S.scoreItem}>
@@ -480,7 +515,7 @@ export default function Board({
       <div style={S.controls}>
         {diceAll && <div style={S.diceGroup}>{diceAll}</div>}
         {!readOnly && canRoll && (
-          <button style={S.btnRoll} onClick={onRoll}>{t("board.roll")}</button>
+          <button style={S.btnRoll} onClick={onRoll} aria-keyshortcuts="Space">{t("board.roll")}</button>
         )}
         {!readOnly && noMoves && (
           <button style={S.btnPass} onClick={onPass}>{t("board.pass")}</button>
