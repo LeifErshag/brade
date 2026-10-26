@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Bräde</title>
+  <!-- Board -->
+  <rect x="2" y="2" width="60" height="60" rx="13" fill="#2a1400" stroke="#6b3a10" stroke-width="3"/>
+  <!-- Tongue (board point) -->
+  <path d="M10 9 H40 L25 54 Z" fill="#c0392b" stroke="#e8b86d" stroke-width="3" stroke-linejoin="round"/>
+  <!-- Die -->
+  <g transform="rotate(14 44 44)">
+    <rect x="31" y="31" width="26" height="26" rx="5.5" fill="#fbf3e4" stroke="#2a1400" stroke-width="3"/>
+    <g fill="#2a1400">
+      <circle cx="37.5" cy="37.5" r="3"/>
+      <circle cx="44" cy="44" r="3"/>
+      <circle cx="50.5" cy="50.5" r="3"/>
+    </g>
+  </g>
+</svg>
