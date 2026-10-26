@@ -30,6 +30,17 @@ describe("profileFields", () => {
   test("falls back to a placeholder name", () => {
     expect(profileFields("discord", { id: "1" }).name).toBe("Player");
     expect(profileFields("microsoft", { id: "1" }).name).toBe("Player");
+    expect(profileFields("google", { id: "1", displayName: "   " }).name).toBe("Player");
+  });
+
+  test("trims names and clamps them to the 50-character display_name column", () => {
+    const long = "Lastname, Firstname (Department of Something / Company AB)";
+    expect(profileFields("microsoft", { id: "1", displayName: `  ${long}  ` }).name)
+      .toBe(long.slice(0, 50));
+    // Truncation counts code points, so a trailing emoji is kept whole.
+    const emoji = profileFields("discord", { id: "1", global_name: `${"å".repeat(49)}😀😀` }).name;
+    expect(Array.from(emoji)).toHaveLength(50);
+    expect(emoji.endsWith("😀")).toBe(true);
   });
 });
 

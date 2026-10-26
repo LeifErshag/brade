@@ -15,7 +15,7 @@ Online multiplayer implementation of Svenskt Bräde (Swedish Tables), based on t
 | Real-time | WebSockets (ws) |
 | Game state | Redis |
 | Persistent data | PostgreSQL |
-| Auth | OAuth (Google + GitHub) via Passport.js |
+| Auth | OAuth (Google, GitHub, Microsoft, Discord) via Passport.js |
 | Hosting | Render.com |
 | CI/CD | GitHub Actions → Render auto-deploy |
 

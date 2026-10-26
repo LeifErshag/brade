@@ -59,6 +59,8 @@ passport.use(new MicrosoftStrategy(
   makeOAuthHandler("microsoft")
 ));
 
+// passport-discord is unmaintained and mishandles errors on the `connections`
+// and `guilds` scopes (done() can fire twice), so request `identify` only.
 passport.use(new DiscordStrategy(
   {
     clientID:     process.env.DISCORD_CLIENT_ID,
