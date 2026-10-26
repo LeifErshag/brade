@@ -109,9 +109,10 @@ function describe(value) {
 // can tell one, so a text that starts with something like "Name: " (a
 // renamed error's stack head) is masked from its first ': "'. A value whose
 // closing quote is missing, or a message cut off after a value that starts
-// it (only our own code can cut one off), is masked too. This covers the forms pg uses for constraint, input and range
-// errors and the ones above; a value quoted some other way would still be
-// logged, so user text should be validated before it reaches the database.
+// it (only our own code can cut one off), is masked too. This covers the
+// forms pg uses for constraint, input and range errors and the ones above;
+// a value quoted some other way would still be logged, so user text should
+// be validated before it reaches the database.
 function maskPg(text) {
   return maskLeadingValue(redact(text)
     .replace(/=\(.*\)/gs, "=(…)")
@@ -131,8 +132,9 @@ function maskPg(text) {
 const AFTER_LEADING_VALUE = [" is out of range for type ", " is not a valid binary digit", " is not a valid hexadecimal digit"];
 
 // A message that starts with a value and was cut off inside it ('"Anna',
-// '"Anna "Bo') or inside the text after it ('"Anna" is out of ra'). A quote right before a letter or digit opens a
-// quote inside the value rather than closing it, so the value is still open.
+// '"Anna "Bo') or inside the text after it ('"Anna" is out of ra'). A
+// quote right before a letter or digit opens a quote inside the value
+// rather than closing it, so the value is still open.
 // pg follows a closing quote with a space or punctuation, so an identifier
 // that starts the message ('"games" is not a sequence') is kept. One followed
 // by nothing or by the start of a value's text is masked ('"games"' →
@@ -152,6 +154,10 @@ function maskLeadingValue(text) {
 // "    at new Promise (<anonymous>)", "    at async Promise.all (index 0)".
 const STACK_FRAME = /^\s+at .*(?::\d+:\d+\)?|\(?<anonymous>\)?|\(native\)|\(index \d+\))$/;
 
+// The only header maskStackHead takes for a renamed error: "…Error: ". It is
+// kept apart from stackHeader's looser guess on purpose (see maskStackHead).
+const ERROR_HEADER = /^[\w$.]*[Ee]rror: /;
+
 // Masks the part of a stack before its frames, i.e. the message the stack
 // was captured with. The frames are the lines at the end that look like
 // frames, so a line of the message that looks like one ("    at …") is still
@@ -159,18 +165,19 @@ const STACK_FRAME = /^\s+at .*(?::\d+:\d+\)?|\(?<anonymous>\)?|\(native\)|\(inde
 // A frame-like line the engine wrote some other way is masked too. The
 // stack's "Name: " header is kept and the message after it masked on its
 // own. If the name was changed since the stack was captured, only an
-// "…Error: " header is taken for one; with any other name the whole head is
-// masked as a message, so a value after its first ': ' is masked to the end
-// ('Database Error: "…'), because a guessed header may really be the start
-// of a message that a ': "' value follows. This is stricter on purpose than
-// stackHeader's guess, which only locates a message and never keeps text
-// that maskPg would mask; splitting off that looser guess here would leave
-// a ': "' value after it to maskLeadingValue's weaker rules.
+// "…Error: " header (ERROR_HEADER) is taken for one; with any other name
+// the whole head is masked as a message, so a value after its first ': ' is
+// masked to the end ('Database Error: "…'), because a guessed header may
+// really be the start of a message that a ': "' value follows. This is
+// stricter on purpose than stackHeader's guess, which only locates a
+// message and never keeps text that maskPg would mask; splitting off that
+// looser guess here would leave a ': "' value after it to
+// maskLeadingValue's weaker rules.
 function maskStackHead(stack, name) {
   const lines = stack.split("\n");
   const first = firstFrame(lines);
   const head = lines.slice(0, first).join("\n");
-  const header = namedHeader(head, name) ?? /^[\w$.]*[Ee]rror: /.exec(head)?.[0] ?? "";
+  const header = namedHeader(head, name) ?? ERROR_HEADER.exec(head)?.[0] ?? "";
   return [header + maskPg(head.slice(header.length)), ...lines.slice(first)].join("\n");
 }
 
@@ -191,7 +198,8 @@ function namedHeader(stack, name) {
 // The "Name: " header a stack starts with. A name changed since the stack
 // was captured falls back to a guess: the text up to the first ': ', if it
 // holds no '"' or '(' (which start the values maskPg masks), so the text a
-// wrong guess leaves out holds no value.
+// wrong guess leaves out holds no value. maskStackHead uses the stricter
+// ERROR_HEADER instead.
 function stackHeader(stack, name) {
   return namedHeader(stack, name) ?? /^[^"(\n]*?: /.exec(stack)?.[0] ?? "";
 }
