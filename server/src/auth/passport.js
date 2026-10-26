@@ -1,15 +1,16 @@
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { Strategy as GitHubStrategy } from "passport-github2";
+import { Strategy as MicrosoftStrategy } from "passport-microsoft";
+import { Strategy as DiscordStrategy } from "passport-discord";
 import { query } from "../db/postgres.js";
 import { cookieStateStore } from "./stateStore.js";
+import { profileFields } from "./profile.js";
 
 function makeOAuthHandler(provider) {
   return async (_accessToken, _refreshToken, profile, done) => {
     try {
-      const oauthId   = profile.id;
-      const name      = profile.displayName || profile.username || "Player";
-      const avatar    = profile.photos?.[0]?.value || null;
+      const { oauthId, name, avatar } = profileFields(provider, profile);
 
       // Upsert user — create on first login, update avatar/name on subsequent logins
       const { rows } = await query(
@@ -45,6 +46,27 @@ passport.use(new GitHubStrategy(
     store:        cookieStateStore,
   },
   makeOAuthHandler("github")
+));
+
+passport.use(new MicrosoftStrategy(
+  {
+    clientID:     process.env.MICROSOFT_CLIENT_ID,
+    clientSecret: process.env.MICROSOFT_CLIENT_SECRET,
+    callbackURL:  process.env.MICROSOFT_CALLBACK_URL,
+    tenant:       "common", // personal (Outlook/Hotmail) and work/school accounts
+    store:        cookieStateStore,
+  },
+  makeOAuthHandler("microsoft")
+));
+
+passport.use(new DiscordStrategy(
+  {
+    clientID:     process.env.DISCORD_CLIENT_ID,
+    clientSecret: process.env.DISCORD_CLIENT_SECRET,
+    callbackURL:  process.env.DISCORD_CALLBACK_URL,
+    store:        cookieStateStore,
+  },
+  makeOAuthHandler("discord")
 ));
 
 export default passport;

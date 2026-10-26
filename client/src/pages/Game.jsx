@@ -102,7 +102,7 @@ const S = {
   guestSub:    { color: "#a07840", fontSize: 13, marginBottom: 24 },
   btnGuest:    { background: "#6b3a10", color: "#e8b86d", border: "none", borderRadius: 8, padding: "11px 28px", fontSize: 15, cursor: "pointer", width: "100%", marginBottom: 16 },
   orDivider:   { color: "#4a2800", fontSize: 12, margin: "0 0 16px" },
-  loginRow:    { display: "flex", gap: 10, justifyContent: "center" },
+  loginRow:    { display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" },
   btnLogin:    { background: "#3a1a00", color: "#a07840", border: "1px solid #6b3a10", borderRadius: 8, padding: "8px 18px", fontSize: 13, cursor: "pointer", textDecoration: "none" },
 
   // Toasts (fixed, bottom-center)
@@ -399,6 +399,8 @@ export default function Game() {
         <div style={S.loginRow}>
           <a href={`${API}/auth/google`} style={S.btnLogin}>Google</a>
           <a href={`${API}/auth/github`} style={S.btnLogin}>GitHub</a>
+          <a href={`${API}/auth/microsoft`} style={S.btnLogin}>Microsoft</a>
+          <a href={`${API}/auth/discord`} style={S.btnLogin}>Discord</a>
         </div>
         <Link to="/" style={{ display: "block", marginTop: 20, color: "#6b3a10", fontSize: 12 }}>{t("common.backToHome")}</Link>
       </div>

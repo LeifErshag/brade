@@ -361,6 +361,8 @@ export default function Home() {
               <div style={S.row}>
                 <a href={`${API}/auth/google`} style={S.btnPrimary}>{t("common.signInWith", { provider: "Google" })}</a>
                 <a href={`${API}/auth/github`} style={S.btnSecondary}>{t("common.signInWith", { provider: "GitHub" })}</a>
+                <a href={`${API}/auth/microsoft`} style={S.btnSecondary}>{t("common.signInWith", { provider: "Microsoft" })}</a>
+                <a href={`${API}/auth/discord`} style={S.btnSecondary}>{t("common.signInWith", { provider: "Discord" })}</a>
               </div>
               <div style={{ marginTop: 16, display: "flex", gap: 10, justifyContent: "center" }}>
                 <Link to="/leaderboard" style={{ ...S.btnSecondary, fontSize: 12 }}>{t("common.leaderboard")}</Link>
