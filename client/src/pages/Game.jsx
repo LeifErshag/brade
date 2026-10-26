@@ -10,6 +10,7 @@ import LanguageToggle, { LanguageBar } from "../components/LanguageToggle.jsx";
 import { useI18n } from "../i18n/I18nContext.jsx";
 import { clearLogContext, setLogContext } from "../remoteLog.js";
 import ReportProblem from "../components/ReportProblem.jsx";
+import { GUEST_NAME_MAX, loadGuestName, saveGuestName } from "../guestName.js";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -100,6 +101,7 @@ const S = {
   guestBox:    { textAlign: "center", maxWidth: 340, margin: "0 auto" },
   guestTitle:  { color: "#e8b86d", fontSize: 20, marginBottom: 8 },
   guestSub:    { color: "#a07840", fontSize: 13, marginBottom: 24 },
+  guestName:   { width: "100%", boxSizing: "border-box", background: "#2a1400", color: "#e8b86d", border: "1px solid #6b3a10", borderRadius: 6, padding: "9px 12px", fontSize: 14, outline: "none", marginBottom: 12 },
   btnGuest:    { background: "#6b3a10", color: "#e8b86d", border: "none", borderRadius: 8, padding: "11px 28px", fontSize: 15, cursor: "pointer", width: "100%", marginBottom: 16 },
   orDivider:   { color: "#4a2800", fontSize: 12, margin: "0 0 16px" },
   loginRow:    { display: "flex", gap: 10, justifyContent: "center" },
@@ -126,6 +128,7 @@ export default function Game() {
     () => sessionStorage.getItem(`guest_id_${roomId}`) ?? null
   );
   const [guestJoining, setGuestJoining] = useState(false);
+  const [guestName, setGuestName]       = useState(loadGuestName);
 
   const [room, setRoom]                     = useState(null);
   const [junkerNotice, setJunkerNotice]     = useState(null);
@@ -229,10 +232,17 @@ export default function Game() {
   }, [searchQuery]);
 
   async function handleJoinAsGuest() {
+    const displayName = guestName.trim();
+    if (!displayName) return;
     setGuestJoining(true);
     try {
-      const res = await fetch(`${API}/api/guest`, { method: "POST" });
+      const res = await fetch(`${API}/api/guest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ displayName }),
+      });
       if (res.ok) {
+        saveGuestName(displayName);
         const { token: gt, guestId: gid } = await res.json();
         sessionStorage.setItem(`guest_token_${roomId}`, gt);
         sessionStorage.setItem(`guest_id_${roomId}`,    gid);
@@ -388,10 +398,19 @@ export default function Game() {
       <div style={S.guestBox}>
         <h2 style={S.guestTitle}>{t("game.invitedTitle")}</h2>
         <p style={S.guestSub}>{t("game.invitedSub")}</p>
+        <input
+          style={S.guestName}
+          placeholder={t("home.guestNamePlaceholder")}
+          aria-label={t("home.guestNameLabel")}
+          maxLength={GUEST_NAME_MAX}
+          value={guestName}
+          onChange={e => setGuestName(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && handleJoinAsGuest()}
+        />
         <button
           style={S.btnGuest}
           onClick={handleJoinAsGuest}
-          disabled={guestJoining}
+          disabled={guestJoining || !guestName.trim()}
         >
           {guestJoining ? t("common.joining") : t("game.playAsGuest")}
         </button>
@@ -439,6 +458,7 @@ export default function Game() {
                   {room.matchLength === 1 ? t("game.matchLengthOne") : t("game.matchLength", { n: room.matchLength })}
                 </span>
               )}
+              {room?.hasGuest && <span style={S.matchLen}>{t("game.notRated")}</span>}
             </>
           )}
           {wsStatus === "disconnected" && <span style={S.disconnected}>{t("game.disconnected")}</span>}
@@ -545,8 +565,9 @@ export default function Game() {
               </div>
             )}
 
-            {/* Invite — only show to the host, and only if no guest has joined yet */}
-            {isHost && !room.hasGuest && (
+            {/* Invite — only show to the host, and only if no guest has joined
+                yet. A guest-hosted room has hasGuest from the start. */}
+            {isHost && !(room.hasGuest && room.players.black) && (
               <div style={S.inviteSection}>
                 <h3 style={S.sectionTitle}>{t("game.inviteTitle")}</h3>
                 <div style={S.inviteRow}>
@@ -555,14 +576,17 @@ export default function Game() {
                     {copyFeedback ? t("game.copied") : t("game.copyLink")}
                   </button>
                 </div>
-                <input
-                  style={S.searchInput}
-                  placeholder={t("game.searchPlaceholder")}
-                  maxLength={50}
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                />
-                {searchResults.length > 0 && (
+                {/* Searching for players needs a signed-in user. */}
+                {user && (
+                  <input
+                    style={S.searchInput}
+                    placeholder={t("game.searchPlaceholder")}
+                    maxLength={50}
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                  />
+                )}
+                {user && searchResults.length > 0 && (
                   <ul style={S.searchResults}>
                     {searchResults.map(u => (
                       <li key={u.id} style={S.searchResult}>
@@ -727,6 +751,7 @@ function MatchResult({ room, myColor }) {
       {myEloAfter && (
         <div style={S.resultElo}>{t("result.yourElo", { elo: myEloAfter })}</div>
       )}
+      {r.unrated && <div style={S.resultElo}>{t("game.notRated")}</div>}
       <Link to="/" style={{ color: "#a07840", fontSize: 14 }}>{t("common.backToHome")}</Link>
     </div>
   );

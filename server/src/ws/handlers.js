@@ -118,15 +118,15 @@ async function handleRoomMessage({ msg, userId, roomId, ws }) {
         ws && send(ws, { type: "ERROR", message: "Both players must be ready" }); break;
       }
 
-      let wElo, bElo;
       if (room.hasGuest) {
-        // Guest game: only look up the host's ELO; guest has no DB record
-        const { rows: [whiteRow] } = await query(
-          `SELECT elo FROM users WHERE id = $1`, [room.players.white]
-        );
-        wElo = whiteRow?.elo ?? 1200;
-        bElo = 1200;
-        // Don't update games table with black_id — guest has no DB user row
+        // Unrated guest game: no ELO. Link a signed-in black player to the
+        // games row so it shows in their history; a guest has no users row.
+        if (!isGuestSeat(room, "black")) {
+          await query(
+            `UPDATE games SET black_id = $2 WHERE room_id = $1`,
+            [roomId, room.players.black]
+          );
+        }
       } else {
         // Fetch ELOs for both players
         const { rows: players } = await query(
@@ -134,8 +134,8 @@ async function handleRoomMessage({ msg, userId, roomId, ws }) {
           [[room.players.white, room.players.black]]
         );
         const eloMap = Object.fromEntries(players.map(p => [p.id, p.elo]));
-        wElo = eloMap[room.players.white] ?? 1200;
-        bElo = eloMap[room.players.black] ?? 1200;
+        const wElo = eloMap[room.players.white] ?? 1200;
+        const bElo = eloMap[room.players.black] ?? 1200;
 
         // Persist black player + starting ELOs into the games record
         await query(
@@ -670,6 +670,16 @@ function endMatchState(room) {
  *
  * @param {boolean} [forceMatchOver=false]  true for RESIGN (ends match immediately)
  */
+// Whether the player in `color` is a guest (no users row). Guest seats are
+// marked with `playerInfo.isGuest`. Rooms created before that flag had exactly
+// one guest, recorded by `guestColor` (default black).
+function isGuestSeat(room, color) {
+  if (room.playerInfo?.[color]?.isGuest === true) return true;
+  const flagged = ["white", "black"].some(c => room.playerInfo?.[c]?.isGuest === true);
+  if (flagged) return false;
+  return room.hasGuest === true && (room.guestColor ?? "black") === color;
+}
+
 async function handleGameOver(redis, roomId, room, result, forceMatchOver = false) {
   clearExpectimaxCache(roomId);
   const { winner, winType, points, monk } = result;
@@ -711,11 +721,8 @@ async function handleGameOver(redis, roomId, room, result, forceMatchOver = fals
 
     // ── Guest game: skip ELO, record result without guest's user row ─────
     if (room.hasGuest) {
-      // Default guestColor = "black" preserves earlier host-vs-guest behaviour
-      const guestColor    = room.guestColor ?? "black";
-      const nonGuestColor = guestColor === "white" ? "black" : "white";
-      const winnerIsGuest = matchWinner === guestColor;
-      // winner_id must reference an existing user — null if guest won
+      // winner_id must reference an existing user — null if a guest won
+      const winnerId = isGuestSeat(room, matchWinner) ? null : room.players[matchWinner];
       await query(
         `UPDATE games
             SET winner_id   = $2,
@@ -725,12 +732,12 @@ async function handleGameOver(redis, roomId, room, result, forceMatchOver = fals
                 black_score = $6,
                 ended_at    = now()
           WHERE room_id = $1`,
-        [roomId, winnerIsGuest ? null : room.players[nonGuestColor], winType, monk ?? false,
+        [roomId, winnerId, winType, monk ?? false,
          room.score.white, room.score.black]
       );
       room.status      = "finished";
       endMatchState(room);
-      room.matchResult = { winner: matchWinner, winType, score: room.score };
+      room.matchResult = { winner: matchWinner, winType, score: room.score, unrated: true };
       await saveRoom(redis, roomId, room);
       broadcastState(roomId, room);
       broadcastToRoom(roomId, { type: "MATCH_OVER", winner: matchWinner, score: room.score, winType });

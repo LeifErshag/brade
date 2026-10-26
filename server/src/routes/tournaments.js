@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireUser } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { query } from "../db/postgres.js";
 import {
@@ -22,7 +22,7 @@ const CreateSchema = z.object({
 });
 
 // ── POST /api/tournaments ─────────────────────────────────────────────────────
-router.post("/", requireAuth, validate(CreateSchema), asyncHandler(async (req, res) => {
+router.post("/", requireUser, validate(CreateSchema), asyncHandler(async (req, res) => {
   const { name, tournament_type, match_length, max_players, total_rounds } = req.body;
   const creatorId = req.userId;
 
@@ -105,7 +105,7 @@ router.get("/:id", asyncHandler(async (req, res) => {
 }));
 
 // ── POST /api/tournaments/:id/join ────────────────────────────────────────────
-router.post("/:id/join", requireAuth, asyncHandler(async (req, res) => {
+router.post("/:id/join", requireUser, asyncHandler(async (req, res) => {
   const { id }   = req.params;
   const userId   = req.userId;
 
@@ -182,7 +182,7 @@ router.post("/:id/cancel", requireAuth, asyncHandler(async (req, res) => {
 }));
 
 // ── POST /api/tournaments/:id/start ──────────────────────────────────────────
-router.post("/:id/start", requireAuth, asyncHandler(async (req, res) => {
+router.post("/:id/start", requireUser, asyncHandler(async (req, res) => {
   const { id } = req.params;
   const userId = req.userId;
 

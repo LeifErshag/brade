@@ -4,6 +4,7 @@ import { useAuth } from "../AuthContext.jsx";
 import { OFFICIAL_RULES_URL } from "../components/RulesContent.jsx";
 import { LanguageBar } from "../components/LanguageToggle.jsx";
 import { useI18n } from "../i18n/I18nContext.jsx";
+import { GUEST_NAME_MAX, loadGuestName, saveGuestName } from "../guestName.js";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -47,6 +48,10 @@ const S = {
     borderRadius: 6, padding: "8px 12px", fontSize: 13, width: 130, textTransform: "uppercase",
     outline: "none",
   },
+  nameInput: {
+    background: "#3a1a00", color: "#e8b86d", border: "1px solid #6b3a10",
+    borderRadius: 6, padding: "8px 12px", fontSize: 13, width: 200, outline: "none",
+  },
   error: { color: "#c0392b", fontSize: 12, marginTop: 6 },
   tutorial:     { marginTop: 20 },
   tutorialHint: { color: "#a07840", fontSize: 12, margin: "8px auto 0", maxWidth: 340, lineHeight: 1.5 },
@@ -72,6 +77,8 @@ export default function Home() {
   const [createError, setCreateError]   = useState(null);
   const [startingTutorial, setStartingTutorial] = useState(false);
   const [tutorialError, setTutorialError]       = useState(null);
+  const [guestName, setGuestName]               = useState(loadGuestName);
+  const trimmedGuestName = guestName.trim();
 
   // Matchmaking
   const [mmStatus, setMmStatus]       = useState("idle"); // "idle" | "waiting"
@@ -139,9 +146,10 @@ export default function Home() {
         const res = await fetch(`${API}/api/games/ai-guest`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ matchLength }),
+          body: JSON.stringify({ matchLength, displayName: trimmedGuestName }),
         });
         if (res.ok) {
+          saveGuestName(trimmedGuestName);
           const data = await res.json();
           sessionStorage.setItem(`guest_token_${data.roomId}`, data.token);
           sessionStorage.setItem(`guest_id_${data.roomId}`,    data.guestId);
@@ -202,12 +210,25 @@ export default function Home() {
     setCreating(true);
     setCreateError(null);
     try {
-      const res = await authFetch("/api/games", {
-        method: "POST",
-        body: JSON.stringify({ matchLength }),
-      });
+      // A signed-out player hosts as a guest: the server issues a guest token
+      // with the room, and the match is unrated.
+      const res = isGuest
+        ? await fetch(`${API}/api/games/guest`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ matchLength, displayName: trimmedGuestName }),
+          })
+        : await authFetch("/api/games", {
+            method: "POST",
+            body: JSON.stringify({ matchLength }),
+          });
       if (res.ok) {
         const data = await res.json();
+        if (data.token) {
+          saveGuestName(trimmedGuestName);
+          sessionStorage.setItem(`guest_token_${data.roomId}`, data.token);
+          sessionStorage.setItem(`guest_id_${data.roomId}`,    data.guestId);
+        }
         navigate(`/game/${data.roomId}`);
       } else if (res.status === 401) {
         setCreateError({ key: "error.sessionExpired" });
@@ -228,6 +249,9 @@ export default function Home() {
       return;
     }
     setJoinError(null);
+    // Signed out: the game page asks for a name and joins as a guest. (The room
+    // lookup below needs a signed-in user.)
+    if (isGuest) { navigate(`/game/${code}`); return; }
     setJoining(true);
     try {
       const res = await authFetch(`/api/games/${code}`);
@@ -370,8 +394,16 @@ export default function Home() {
               <hr style={S.divider} />
 
               <div style={S.playSection}>
-                <p style={S.sectionLabel}>{t("home.playAiGuest")}</p>
+                <p style={S.sectionLabel}>{t("home.playAsGuest")}</p>
                 <div style={S.playRow}>
+                  <input
+                    style={S.nameInput}
+                    placeholder={t("home.guestNamePlaceholder")}
+                    aria-label={t("home.guestNameLabel")}
+                    maxLength={GUEST_NAME_MAX}
+                    value={guestName}
+                    onChange={e => setGuestName(e.target.value)}
+                  />
                   <select
                     value={matchLength}
                     onChange={e => setMatchLength(Number(e.target.value))}
@@ -380,14 +412,37 @@ export default function Home() {
                   >
                     {matchLengthOptions}
                   </select>
-                  <button onClick={handleCreateAi} disabled={creatingAi} style={S.btnPrimary}>
+                </div>
+                <div style={{ ...S.playRow, marginTop: 12 }}>
+                  <button onClick={handleCreate} disabled={creating || !trimmedGuestName} style={S.btnPrimary}>
+                    {creating ? t("common.creating") : t("home.createButton")}
+                  </button>
+                  <button onClick={handleCreateAi} disabled={creatingAi || !trimmedGuestName} style={S.btnPrimary}>
                     {creatingAi ? t("common.starting") : t("home.playAi")}
                   </button>
                 </div>
-                <p style={{ ...S.subtitle, fontSize: 12, marginTop: 12 }}>
-                  {t("home.signInHint")}
-                </p>
                 {createError && <p style={S.error}>{msg(createError)}</p>}
+
+                <p style={{ ...S.sectionLabel, marginTop: 20 }}>{t("home.joinWithCode")}</p>
+                <div style={S.playRow}>
+                  <input
+                    style={S.input}
+                    placeholder={t("home.roomCodePlaceholder")}
+                    maxLength={8}
+                    value={roomCode}
+                    onChange={e => {
+                      setJoinError(null);
+                      setRoomCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""));
+                    }}
+                    onKeyDown={e => e.key === "Enter" && handleJoin()}
+                  />
+                  <button onClick={handleJoin} style={S.btnPrimary}>{t("common.join")}</button>
+                </div>
+                {joinError && <p style={S.error}>{msg(joinError)}</p>}
+
+                <p style={{ ...S.subtitle, fontSize: 12, marginTop: 16 }}>
+                  {t("home.guestHint")}
+                </p>
               </div>
             </>
           )}
