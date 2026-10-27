@@ -33,6 +33,26 @@ router.get("/github/callback",
   asyncHandler(issueTokens)
 );
 
+// ── Microsoft OAuth ───────────────────────────────────────────────────────────
+router.get("/microsoft",
+  rateLimitAuth,
+  passport.authenticate("microsoft", { scope: ["User.Read"], session: false })
+);
+router.get("/microsoft/callback",
+  oauthCallback(passport, "microsoft", `${CLIENT}/?error=auth`),
+  asyncHandler(issueTokens)
+);
+
+// ── Discord OAuth ─────────────────────────────────────────────────────────────
+router.get("/discord",
+  rateLimitAuth,
+  passport.authenticate("discord", { scope: ["identify"], session: false })
+);
+router.get("/discord/callback",
+  oauthCallback(passport, "discord", `${CLIENT}/?error=auth`),
+  asyncHandler(issueTokens)
+);
+
 // ── Refresh access token ──────────────────────────────────────────────────────
 router.post("/refresh", asyncHandler(async (req, res) => {
   const token = req.signedCookies?.refresh_token;
