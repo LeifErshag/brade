@@ -334,7 +334,7 @@ const VISIBLE_PROPS = new Set(["msg", "message", "title", "label", "text", "plac
 // Calls whose string arguments reach the screen.
 const SINK_CALL = /^(pushToast|alert|confirm|prompt|set\w*(Error|Err|Feedback|Msg|Message|Notice|Text|Label|Title))$/;
 // Exact strings allowed as literals (brand names, notation).
-const ALLOW = new Set(["Bräde", "Google", "GitHub", "ELO", "OK"]);
+const ALLOW = new Set(["Bräde", "Google", "GitHub", "Microsoft", "Discord", "ELO", "OK"]);
 
 const hasLetter = s => /\p{L}/u.test(s);
 const looksTechnical = s =>

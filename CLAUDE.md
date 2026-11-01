@@ -43,7 +43,7 @@ psql postgresql://postgres:dev@localhost:5432/brade -f server/src/db/migrations/
 - `client/` — React 18 + Vite SPA
 
 ### Auth flow
-1. User clicks OAuth button → redirected to `/auth/google` or `/auth/github`
+1. User clicks OAuth button → redirected to `/auth/google`, `/auth/github`, `/auth/microsoft` or `/auth/discord`
 2. Passport callback issues a short-lived JWT + httpOnly refresh token cookie
 3. Server passes the access token in the URL **fragment** (`#token=...`) — never in query string
 4. `AuthCallback.jsx` extracts the token, stores in `sessionStorage`, strips the fragment
@@ -96,7 +96,7 @@ Rule discrepancies between the engine and the official rules are tracked in `doc
 
 ## Environment variables
 
-Copy `server/.env.example` → `server/.env` and `client/.env.example` → `client/.env`. Required server vars: `DATABASE_URL`, `REDIS_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `GOOGLE_CLIENT_ID/SECRET`, `GITHUB_CLIENT_ID/SECRET`, `CLIENT_ORIGIN`, `COOKIE_SECRET`.
+Copy `server/.env.example` → `server/.env` and `client/.env.example` → `client/.env`. Required server vars: `DATABASE_URL`, `REDIS_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `GOOGLE_CLIENT_ID/SECRET`, `GITHUB_CLIENT_ID/SECRET`, `MICROSOFT_CLIENT_ID/SECRET`, `DISCORD_CLIENT_ID/SECRET` (plus a `*_CALLBACK_URL` for each provider), `CLIENT_ORIGIN`, `COOKIE_SECRET`.
 
 ## Deployment
 
