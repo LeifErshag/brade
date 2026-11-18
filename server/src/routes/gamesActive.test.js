@@ -74,6 +74,7 @@ describe("GET /api/games/active", () => {
   });
 
   test("no unfinished games → empty list without touching Redis", async () => {
+    query.mockResolvedValue({ rows: [] });
     const res = await get(signAccessToken(ME));
     expect(await res.json()).toEqual([]);
     expect(redisMget).not.toHaveBeenCalled();
