@@ -147,6 +147,10 @@ export default {
   },
 
   home: {
+    activeGamesLabel: "Games in progress",
+    activeInRoom: "You are active in room {roomId}",
+    activeVs: "Against {name} · score {mine}–{their}",
+    rejoin: "Rejoin",
     subtitle: "Swedish Tables",
     learn: "Learn to play",
     learnHint: "A practice game against the computer with the rules explained as you play. It doesn’t count in the statistics.",

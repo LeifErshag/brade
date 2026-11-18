@@ -53,6 +53,13 @@ const S = {
     borderRadius: 6, padding: "8px 12px", fontSize: 13, width: 200, outline: "none",
   },
   error: { color: "#c0392b", fontSize: 12, marginTop: 6 },
+  activeBox: {
+    margin: "24px auto 0", maxWidth: 420, padding: "14px 16px",
+    border: "1px solid #e8b86d", borderRadius: 10, background: "#3a1a00",
+  },
+  activeRow:  { display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" },
+  activeText: { color: "#e8b86d", fontSize: 14, margin: 0, textAlign: "left" },
+  activeSub:  { color: "#a07840", fontSize: 12, margin: "4px 0 0", textAlign: "left" },
   tutorial:     { marginTop: 20 },
   tutorialHint: { color: "#a07840", fontSize: 12, margin: "8px auto 0", maxWidth: 340, lineHeight: 1.5 },
   footer:     { marginTop: 40, paddingTop: 14, borderTop: "1px solid #4a2800", maxWidth: 420, marginLeft: "auto", marginRight: "auto" },
@@ -85,6 +92,24 @@ export default function Home() {
   const [mmQueueSize, setMmQueueSize] = useState(0);
   const [mmWaitSecs, setMmWaitSecs]   = useState(0);
   const pollRef = useRef(null);
+
+  // Games the signed-in user is still playing, so they can get back in after
+  // navigating away. Best effort: a failed lookup just hides the banner.
+  const [activeGames, setActiveGames] = useState([]);
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await authFetch("/api/games/active");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data)) setActiveGames(data);
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [user, authFetch]);
+  const shownGames = user ? activeGames : [];
 
   // Clean up polling on unmount
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
@@ -288,6 +313,28 @@ export default function Home() {
         <div style={S.center}>
           <h1 style={S.title}>Bräde</h1>
           <p style={S.subtitle}>{t("home.subtitle")}</p>
+
+          {shownGames.length > 0 && (
+            <div style={S.activeBox} role="region" aria-label={t("home.activeGamesLabel")}>
+              {shownGames.map((g, i) => (
+                <div key={g.roomId} style={{ ...S.activeRow, marginTop: i ? 12 : 0 }}>
+                  <div>
+                    <p style={S.activeText}>{t("home.activeInRoom", { roomId: g.roomId })}</p>
+                    <p style={S.activeSub}>
+                      {t("home.activeVs", {
+                        name:  g.opponentName || "?",
+                        mine:  g.score?.[g.color] ?? 0,
+                        their: g.score?.[g.color === "white" ? "black" : "white"] ?? 0,
+                      })}
+                    </p>
+                  </div>
+                  <button onClick={() => navigate(`/game/${g.roomId}`)} style={S.btnPrimary}>
+                    {t("home.rejoin")}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div style={S.tutorial}>
             <button onClick={handleTutorial} disabled={startingTutorial} style={S.btnPrimary}>

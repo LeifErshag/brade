@@ -147,6 +147,10 @@ export default {
   },
 
   home: {
+    activeGamesLabel: "Pågående spel",
+    activeInRoom: "Du är aktiv i rum {roomId}",
+    activeVs: "Mot {name} · ställning {mine}–{their}",
+    rejoin: "Återanslut",
     subtitle: "Svenskt brädspel",
     learn: "Lär dig spela",
     learnHint: "Ett övningsparti mot datorn där reglerna förklaras medan du spelar. Räknas inte i statistiken.",
