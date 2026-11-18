@@ -288,21 +288,23 @@ router.post("/tutorial", validate(CreateTutorialSchema), asyncHandler(async (req
 // Lets the home page offer "rejoin" after a player has navigated away from a
 // game. Candidates come from unfinished games rows; Redis is the authority on
 // whether the room is still live (rows of expired/abandoned rooms keep
-// ended_at NULL forever). Registered before /:roomId so it isn't parsed as a
-// room id.
+// ended_at NULL forever, as do never-started invite rooms; the lookback window
+// keeps those from crowding a live game out of the limit). Registered before
+// /:roomId so it isn't parsed as a room id.
 router.get("/active", requireUser, asyncHandler(async (req, res) => {
   const { rows } = await query(
     `SELECT room_id FROM games
       WHERE (white_id = $1 OR black_id = $1) AND ended_at IS NULL
+        AND started_at > now() - interval '7 days'
       ORDER BY started_at DESC
-      LIMIT 10`,
+      LIMIT 20`,
     [req.userId]
   );
   if (rows.length === 0) return res.json([]);
 
   const raws = await getRedis().mget(...rows.map(r => keys.room(r.room_id)));
   const active = [];
-  for (const raw of raws) {
+  for (const [i, raw] of raws.entries()) {
     if (!raw) continue;
     let room;
     try { room = JSON.parse(raw); } catch { continue; }
@@ -312,7 +314,7 @@ router.get("/active", requireUser, asyncHandler(async (req, res) => {
     if (!color) continue;
     const oppColor = color === "white" ? "black" : "white";
     active.push({
-      roomId:       room.roomId,
+      roomId:       rows[i].room_id,
       matchLength:  room.matchLength,
       isAi:         room.isAi ?? false,
       score:        room.score ?? { white: 0, black: 0 },
